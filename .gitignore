@@ -3,6 +3,12 @@ __pycache__/
 *.pyc
 .venv/
 
+# PyInstaller build output - the .exe files belong on a GitHub Release
+# (binary downloads), never committed into git history/repo size
+build/
+dist/
+*.spec
+
 # IDE
 .idea/
 
