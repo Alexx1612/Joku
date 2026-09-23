@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# IDE
+.idea/
+
+# Agent workspace scaffolding - not part of the game
+.agents/
+.claude/
+AGENTS.md
+IDENTITY.md
+SOUL.md
+USER.md
+
+# Player save data / runtime state - not source code
+accounts/
+achievements/
+characters/
+friends/
+vaults/
