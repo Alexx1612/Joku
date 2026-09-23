@@ -1078,7 +1078,7 @@ class CoopClient:
 
         if self.zone in ("realm", "bonus") and self.tilemap and self.you:
             tile_here = self.tilemap.tile_at(self.you.pos.x, self.you.pos.y)
-            self.weather_fx.update(dt, world.WEATHER_FOR_GROUND.get(tile_here))
+            self.weather_fx.update(dt, world.weather_for_tile(tile_here))
             self._dust_cd = max(0.0, self._dust_cd - dt)
             if (self._dust_cd <= 0 and self._prev_you_pos is not None
                     and self.you.pos.distance_to(self._prev_you_pos) > 2):
@@ -1466,6 +1466,8 @@ class CoopClient:
         vfx.draw(s, self.cam)
         ui.draw_damage_popups(s, self.cam, self.popups)
         ui.draw_day_night_overlay(s, self.light_level, self.blood_moon)
+        if self.zone != "bonus":
+            ui.draw_day_night_clock(s, self.light_level, self.blood_moon)
         self.weather_fx.draw(s)
         self._draw_speech_bubbles(s)
         self._draw_hover_tooltip()

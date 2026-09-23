@@ -39,7 +39,7 @@ from game import accounts
 from game import characters
 from game import clipboard
 from game.entities import Player, Bag, Portal, NexusBot, find_nearby_bag, bag_by_id, withdraw_from_bag
-from game.realm_sim import RealmSim, auto_aim_direction, DUNGEON_THEMES, BONUS_DIFFICULTIES, DAY_LENGTH
+from game.realm_sim import RealmSim, auto_aim_direction, DUNGEON_THEMES, BONUS_DIFFICULTIES
 from game.items import load_vault, save_vault, vault_exists, VAULT_SLOTS, VAULT_CHEST_SIZE, PERMANENT_POTION_CAP
 
 (STATE_INTRO, STATE_NAME_ENTRY, STATE_CLASS_SELECT, STATE_NEXUS, STATE_REALM, STATE_BONUS,
@@ -1193,7 +1193,7 @@ class Game:
         self.cam.pos.y += dy
         mm.reveal(p.pos)
         tile_here = sim.realm_map.tile_at(p.pos.x, p.pos.y)
-        self.weather_fx.update(dt, world.WEATHER_FOR_GROUND.get(tile_here))
+        self.weather_fx.update(dt, world.weather_for_tile(tile_here))
         self._dust_cd = max(0.0, self._dust_cd - dt)
         if self._dust_cd <= 0 and p.pos.distance_to(prev_pos) > 2:
             self._dust_cd = 0.15
@@ -1405,7 +1405,7 @@ class Game:
         ui.draw_damage_popups(s, self.cam, self.popups)
         ui.draw_day_night_overlay(s, sim.light_level, sim.blood_moon_active)
         if not sim.is_bonus_room:
-            ui.draw_day_night_clock(s, sim.day_time, DAY_LENGTH, sim.blood_moon_active)
+            ui.draw_day_night_clock(s, sim.light_level, sim.blood_moon_active)
         self.weather_fx.draw(s)
         ui.draw_hud(s, name, sim.kill_count, sim.boss is not None)
         if self._portal_prompt is not None:

@@ -22,6 +22,29 @@ from game.items import (make_starter_weapon, make_starter_ability, Item, SLOT_WE
                          PET_RARITY_START_LEVEL, PET_LEVEL_XP_STEP, PET_FEED_XP_PER_TIER,
                          pet_ability_stats)
 
+
+def _circle_clear(is_solid_fn, cx, cy, radius):
+    """True if a circle of the given radius centered at (cx, cy) does NOT
+    overlap any SOLID tile - checks the center plus the 4 cardinal points on
+    the circle's own edge (a cheap 5-point approximation of the entity's
+    real footprint), instead of the old single-center-point check. This is
+    the standard "swept circle vs grid" technique: far more accurate than a
+    bare center check (which let up to a full `radius` px of the visible
+    sprite clip into a wall before anything blocked it) without the classic
+    footgun of literal full-sprite-silhouette collision - a genuinely
+    pixel-perfect mask would snag a character's edge pixels on every wall
+    corner and read as "getting stuck," which is why real action games use a
+    smaller, forgiving hitbox shape even when the sprite itself is more
+    detailed. Only 5 is_solid() calls (cheap dict/list lookups, not pixel
+    math) per axis-check, so this stays affordable at this project's own
+    already-profiled enemy counts (see ACTIVE_SIM_RADIUS's own measured-cost
+    comments elsewhere in this codebase)."""
+    if is_solid_fn(cx, cy):
+        return False
+    return not (is_solid_fn(cx + radius, cy) or is_solid_fn(cx - radius, cy)
+                or is_solid_fn(cx, cy + radius) or is_solid_fn(cx, cy - radius))
+
+
 LEVEL_CAP = 20
 
 # base stats @ level 1, and which stats grow on level-up (cycled)
@@ -88,6 +111,12 @@ class Player:
         self._fire_cd = 0.0
         self._hit_flash = 0.0
         self._regen_acc = 0.0
+        self._t = 0.0  # time accumulator for draw-only animation (walk cycle/idle bob) -
+        # same shape as Enemy._t, just never previously existed on Player. Incremented
+        # every net_update() tick; never affects gameplay, purely a draw()-time visual.
+        self._fire_flash_t = 0.0  # >0 briefly after a real shot - see player_fire() in
+        # realm_sim.py (the single choke point every class's shot goes through) and draw()
+        self._is_moving = False  # set every net_update() tick - draw()-only, drives walk-cycle vs idle bob
 
         self.weapon = make_starter_weapon(cls_name)
         self.armor = None
@@ -310,7 +339,8 @@ class Player:
         at 0.8x) - looked up from the player's CURRENT tile, same as real RotMG
         terrain-speed tiles.
         """
-        if move.length_squared() > 0:
+        self._is_moving = move.length_squared() > 0  # draw()-only: drives walk-cycle vs idle bob
+        if self._is_moving:
             move = pygame.Vector2(move).normalize()
             self.facing = move
             mult = speed_mult_fn(self.pos.x, self.pos.y) if speed_mult_fn else 1.0
@@ -318,17 +348,21 @@ class Player:
             if is_solid is None:
                 self.pos += delta
             else:
-                # resolve per-axis so sliding along a wall still works
+                # resolve per-axis so sliding along a wall still works - each
+                # axis now checks the player's real collision circle (see
+                # _circle_clear), not just its bare center point
                 new_x = self.pos.x + delta.x
-                if not is_solid(new_x, self.pos.y):
+                if _circle_clear(is_solid, new_x, self.pos.y, self.radius):
                     self.pos.x = new_x
                 new_y = self.pos.y + delta.y
-                if not is_solid(self.pos.x, new_y):
+                if _circle_clear(is_solid, self.pos.x, new_y, self.radius):
                     self.pos.y = new_y
 
         self.pos.x = max(world_bounds[0], min(world_bounds[2], self.pos.x))
         self.pos.y = max(world_bounds[1], min(world_bounds[3], self.pos.y))
 
+        self._t += dt  # draw-only animation clock - ticks regardless of movement (idle bob needs it too)
+        self._fire_flash_t = max(0.0, self._fire_flash_t - dt)
         self._fire_cd = max(0.0, self._fire_cd - dt)
         self._hit_flash = max(0.0, self._hit_flash - dt)
         self.ability_cd = max(0.0, self.ability_cd - dt)
@@ -373,13 +407,57 @@ class Player:
             self.alive = False
         return real
 
+    WALK_CYCLE_SPEED = 9.0    # rad/sec-equivalent - tuned for a natural walking cadence
+    IDLE_BOB_SPEED = 2.2
+    IDLE_BOB_AMPLITUDE = 1.5  # px
+    FIRE_FLASH_DURATION = 0.12
+    FIRE_FLASH_NUDGE = 3      # px, forward along .facing at the flash's peak
+
     def draw(self, surf, cam):
+        # Uses the GLOBAL clock (pygame.time.get_ticks()), same reasoning the
+        # existing shield-pulse effect below already relies on: self._t only
+        # advances for the LOCALLY-simulated player (net_update() is never
+        # called client-side for a remote co-op peer, only reconstructed from
+        # snapshots), so a shared clock keeps the animation's PHASE consistent
+        # for any Player instance, while self._is_moving/self.facing (real
+        # per-entity state) decide WHICH animation actually plays. A remote
+        # peer's _is_moving stays at its __init__ default (False) since it's
+        # never locally net_update()'d, so peers get the idle bob only, never
+        # a wrong/mismatched walk-cycle - an honest, proportionate scope for a
+        # lightweight visual, not a new networked-animation-state system.
+        t = pygame.time.get_ticks() / 1000.0
         img = sprites.player_sprite(self.cls_name)
-        r = img.get_rect(center=cam(self.pos))
+        is_moving = self._is_moving
+        if is_moving:
+            leg_phase = math.sin(t * self.WALK_CYCLE_SPEED)
+            offset_y = 0.0
+        else:
+            leg_phase = 0.0
+            offset_y = math.sin(t * self.IDLE_BOB_SPEED) * self.IDLE_BOB_AMPLITUDE
+        cx, cy = cam(self.pos)
+        cy += offset_y
+        if self._fire_flash_t > 0:
+            nudge_frac = self._fire_flash_t / self.FIRE_FLASH_DURATION
+            cx += self.facing.x * self.FIRE_FLASH_NUDGE * nudge_frac
+            cy += self.facing.y * self.FIRE_FLASH_NUDGE * nudge_frac
+        r = img.get_rect(center=(cx, cy))
         surf.blit(img, r)
+        if is_moving:
+            # two small leg accents at the sprite's bottom edge, alternating -
+            # "move the legs a little" - drawn as a thin extra step after the
+            # cached base sprite blit, never baked into the cached surface, so
+            # sprites.player_sprite()'s cache is completely untouched
+            leg_dx = leg_phase * 4
+            leg_y = r.bottom - 3
+            pygame.draw.circle(surf, (30, 30, 35), (int(r.centerx - 5 + leg_dx), int(leg_y)), 3)
+            pygame.draw.circle(surf, (30, 30, 35), (int(r.centerx + 5 - leg_dx), int(leg_y)), 3)
         if self._hit_flash > 0:
             flash = img.copy()
             flash.fill((255, 60, 60, 120), special_flags=pygame.BLEND_RGBA_MULT)
+            surf.blit(flash, r)
+        if self._fire_flash_t > 0:
+            flash = img.copy()
+            flash.fill((255, 240, 180, 90), special_flags=pygame.BLEND_RGBA_MULT)
             surf.blit(flash, r)
         if self.shield_hp > 0:
             pulse = 1.0 + 0.08 * math.sin(pygame.time.get_ticks() / 120.0)
@@ -842,11 +920,14 @@ class Enemy:
         if tile_map is None:
             self.pos += delta
             return
+        # each axis checks the enemy's real collision circle (see
+        # _circle_clear), not just its bare center point - same fix as
+        # Player.net_update, same reasoning
         new_x = self.pos.x + delta.x
-        if not tile_map.is_solid(new_x, self.pos.y):
+        if _circle_clear(tile_map.is_solid, new_x, self.pos.y, self.radius):
             self.pos.x = new_x
         new_y = self.pos.y + delta.y
-        if not tile_map.is_solid(self.pos.x, new_y):
+        if _circle_clear(tile_map.is_solid, self.pos.x, new_y, self.radius):
             self.pos.y = new_y
 
     def update(self, dt, player_pos, bullets_out, tile_map=None):

@@ -675,13 +675,21 @@ class RealmSim:
         Must run AFTER _generate_lairs() but BEFORE _populate_all_lairs() so
         the tightened spawn radius set below actually takes effect."""
         toughest_by_biome = {}
+        second_by_biome = {}  # each biome's SECOND-toughest lair - used below to place
+        # that biome's visual terrace (plan section 2) at a position distinct from its
+        # landmark building, never the same lair
         for lair in self.lairs:
             biome_name = world.GROUND_TO_BIOME_NAME.get(self.realm_map.tile_at(lair["pos"].x, lair["pos"].y))
             if biome_name is None:
                 continue
             current = toughest_by_biome.get(biome_name)
             if current is None or lair["difficulty_scale"] > current["difficulty_scale"]:
+                second_by_biome[biome_name] = current  # demote the old #1 to #2
                 toughest_by_biome[biome_name] = lair
+            else:
+                prev_second = second_by_biome.get(biome_name)
+                if prev_second is None or lair["difficulty_scale"] > prev_second["difficulty_scale"]:
+                    second_by_biome[biome_name] = lair
         # real bug caught in testing: two different biomes' "toughest lair" positions
         # can land close enough together (especially near a biome-region border) that
         # their building rects collide - whichever got stamped second would silently
@@ -705,6 +713,24 @@ class RealmSim:
             lair["spawn_min_tiles"] = 2
             lair["spawn_max_tiles"] = max(rect.w, rect.h) // 2
 
+        # visual terracing (plan section 2 - "levels/stairs/walls for a more
+        # 3D look") - one per biome, at that biome's SECOND-toughest lair so
+        # it's never the same spot as its landmark building, reusing the
+        # SAME placed_rects overlap-avoidance check above (a terrace never
+        # overlaps a building, and vice versa, since both checks share this
+        # one list). A biome with only one lair (no real second-toughest one
+        # exists) simply gets no terrace rather than risking reusing/
+        # overlapping the building's own lair - a rare skip, not a bug.
+        for biome_name, lair in second_by_biome.items():
+            if lair is None:
+                continue
+            center_tile = (int(lair["pos"].x // TILE), int(lair["pos"].y // TILE))
+            candidate_rect = world.terrace_rect(center_tile)
+            if any(candidate_rect.inflate(4, 4).colliderect(r) for r in placed_rects):
+                continue
+            rect = world.stamp_terrace(self.realm_map.grid, center_tile, biome_name)
+            placed_rects.append(rect)
+
     def _stamp_islands(self):
         """"The Reforging" storyline: stamps 10 small standalone island zones
         as coastal peninsulas evenly spaced by angle around the map
@@ -727,8 +753,8 @@ class RealmSim:
             angle = (2 * math.pi * i) / n
             dx, dy = math.cos(angle), math.sin(angle)
             # walk outward from the map center until hitting water - that's the
-            # coastline at this angle - then anchor a bit further out, into the
-            # water, so the stamped circle overlaps both real shore and open sea
+            # real mainland coastline at this angle, and last_land is the exact
+            # shore point the walkway below connects FROM
             x, y = cx, cy
             last_land = (int(cx), int(cy))
             for _ in range(max(grid_w, grid_h)):
@@ -740,12 +766,40 @@ class RealmSim:
                 if grid[iy][ix] == world.WATER:
                     break
                 last_land = (ix, iy)
+            # anchor a real distance PAST the coastline - reusing
+            # world.coastline_radius (the SAME smooth formula make_realm()
+            # itself used to carve the coastline shape) as the base, rather
+            # than the raw walked last_land distance, since a small inland
+            # pond/decoration-patch water tile can make the walk above stop
+            # well short of the true coastline (confirmed empirically: at
+            # some angles the walked distance and the formula's value matched
+            # exactly, at others the walk stopped over 100 tiles early on an
+            # inland pond) - the smooth formula is immune to that noise. A
+            # fixed water-gap (12% of the map's own size) pushes the anchor a
+            # real distance further out into open water at EVERY angle,
+            # scaling with map size rather than being a guessed constant -
+            # islands now read as clearly out at the map's edges, not just a
+            # few tiles off the coast. The growing gap back to the mainland
+            # shore is bridged by a real colored plank walkway
+            # (world.stamp_walkway, below) instead of a short hop.
+            water_gap = min(grid_w, grid_h) * 0.12
+            target_r = world.coastline_radius(angle) + water_gap
             margin = world.ISLAND_RADIUS + 3
-            ax = min(max(last_land[0] + int(dx * 4), margin), grid_w - margin)
-            ay = min(max(last_land[1] + int(dy * 4), margin), grid_h - margin)
+            ax = min(max(int(cx + dx * target_r), margin), grid_w - margin)
+            ay = min(max(int(cy + dy * target_r), margin), grid_h - margin)
             if any(math.hypot(ax - c[0], ay - c[1]) < world.ISLAND_RADIUS * 2.5 for c in placed_centers):
                 continue  # too close to an already-placed island - rare, skip rather than overlap it
             rect, center_tile = world.stamp_island(grid, (ax, ay), theme)
+            # stop the walkway at the island's EDGE, not its exact center -
+            # targeting center_tile directly would lay planks straight over
+            # the landmark tile stamp_island just placed there (a real bug
+            # caught by actually checking the island's core tile afterward,
+            # not just "did it run without crashing")
+            dist_to_center = math.hypot(center_tile[0] - last_land[0], center_tile[1] - last_land[1])
+            edge_frac = max(0.0, (dist_to_center - world.ISLAND_RADIUS) / dist_to_center) if dist_to_center > 0 else 0.0
+            walkway_end = (last_land[0] + (center_tile[0] - last_land[0]) * edge_frac,
+                           last_land[1] + (center_tile[1] - last_land[1]) * edge_frac)
+            world.stamp_walkway(grid, last_land, walkway_end, world.WALKWAY_PLANK_TILE[i])
             placed_centers.append(center_tile)
             center_world = pygame.Vector2(center_tile[0] * TILE + TILE / 2, center_tile[1] * TILE + TILE / 2)
             # cooldown starts at 0 (not a delay) so every island's first guardian
@@ -1488,6 +1542,7 @@ class RealmSim:
         (already appended to self.bullets) so a caller can also broadcast them.
         """
         from game.constants import damage_roll
+        p._fire_flash_t = p.FIRE_FLASH_DURATION  # brief recoil-nudge + tint - see Player.draw()
         dmg = damage_roll(p.weapon.min_dmg, p.weapon.max_dmg, p.total_stat("att"))
         motion = ("boomerang" if p.weapon.is_ut and p.weapon.name == BOOMERANG_UT_NAMES.get(p.cls_name)
                   else "straight")

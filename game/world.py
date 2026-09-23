@@ -72,13 +72,6 @@ SPEED_MULT = {WATER: 0.8, NEXUS_FOUNTAIN: 0.8, SNOW: 0.93, ICE: 0.88}
 # which weather effect a ground tile implies (purely client-side particles, except
 # where noted in realm_sim.py) - "try to make more of this a real ecosystem" extends
 # to the sky, not just the mobs on the ground
-WEATHER_FOR_GROUND = {
-    GRASS: "rain", GRASS2: "rain", SWAMP: "rain", JUNGLE: "rain",
-    SNOW: "snow", ICE: "snow",
-    SAND: "sand", WASTELAND: "sand",
-    ASH: "ash",
-}
-
 # Godlands-style biome regions, each with its own ground tile and enemy-lair flavour -
 # ten distinct zones (not just patches) spread across the continent, RotMG's real
 # "beaches/lowlands at the edges, godlands in the middle" gradient (see
@@ -112,7 +105,37 @@ GROUND_TO_BIOME_NAME = {
 BIOME_PROP_KINDS = ["rock", "bush", "flowers", "boulder", "puddle", "skull", "stump", "grasstuft", "debris", "tree",
                      "vine", "small_pile", "moss_patch", "cracked_ground", "mushroom_cluster",
                      "root_tangle", "cobweb", "rune_marking", "fallen_log", "ash_pile", "gravel_patch",
-                     "water_stain"]
+                     "water_stain",
+                     # 5 more (was 22, now 27) - kept to 5, not the 8 first considered, so
+                     # 10 biomes x 27 kinds = 270 ids stays safely under the dungeon-prop
+                     # block's 800 start with a real buffer (500+270=770), matching this
+                     # file's own established id-spacing convention rather than crowding
+                     # right up against the next block like the earlier 15->22 growth did
+                     "pebbles", "wildflower_patch", "dead_tree", "berry_bush", "reed_cluster"]
+# Per-biome WEIGHTED selection (mirrors BIOME_LAIR_KIND_SETS' existing weighted-
+# random.choices pattern) instead of a uniform random.choice across the whole
+# shared list - "more flowers/trees/rocks matching the biome" actually means
+# something now: forest leans tree/bush/flowers, desert leans rock/boulder/
+# gravel, swamp leans reed/puddle/moss, etc. A biome not listed here (or a
+# kind not listed for it) falls back to weight 1, so nothing is ever excluded
+# outright - just skewed toward what actually belongs there.
+BIOME_PROP_WEIGHT_OVERRIDES = {
+    "forest": {"tree": 6, "bush": 5, "flowers": 4, "wildflower_patch": 4, "berry_bush": 3, "grasstuft": 3},
+    "desert": {"rock": 5, "boulder": 5, "gravel_patch": 4, "skull": 3, "cracked_ground": 3, "pebbles": 3},
+    "swamp": {"puddle": 5, "moss_patch": 4, "reed_cluster": 5, "water_stain": 4, "mushroom_cluster": 3},
+    "tundra": {"stump": 4, "dead_tree": 4, "debris": 3, "fallen_log": 3, "rock": 2},
+    "highlands": {"rock": 5, "boulder": 5, "gravel_patch": 4, "pebbles": 4, "cracked_ground": 3},
+    "ashlands": {"ash_pile": 6, "skull": 4, "cracked_ground": 4, "dead_tree": 4, "debris": 3},
+    "jungle": {"tree": 6, "vine": 5, "mushroom_cluster": 4, "root_tangle": 4, "berry_bush": 3},
+    "wasteland": {"skull": 5, "debris": 5, "gravel_patch": 4, "dead_tree": 3, "ash_pile": 3},
+    "ice": {"rock": 3, "boulder": 3, "dead_tree": 3, "debris": 2},
+    "cave": {"mushroom_cluster": 5, "cobweb": 5, "rune_marking": 3, "root_tangle": 3, "small_pile": 3},
+}
+
+
+def _biome_prop_weights(biome_name):
+    overrides = BIOME_PROP_WEIGHT_OVERRIDES.get(biome_name, {})
+    return [overrides.get(k, 1) for k in BIOME_PROP_KINDS]
 BIOME_PROP_TILE = {}
 # Starts at 500, NOT right after VAULT_RUNE=42 - deliberately leaves a large
 # gap (43-499) for the shared tile-enum block above to keep growing without
@@ -121,10 +144,12 @@ BIOME_PROP_TILE = {}
 # would have overrun the dungeon-prop block's old 700 start) - these ids are
 # never persisted (grids are regenerated fresh every RealmSim instance, never
 # saved to disk or carried across a version), so renumbering the whole scheme
-# here is safe. Current block map: biome props 500-719, dungeon props
-# 800-960, tall props 1000-1101, building walls 1150-1159 - each block leaves
-# a real buffer before the next, matching this file's established spacing
-# convention. Keep this comment's numbers in sync if any block grows again.
+# here is safe. Current block map: biome props 500-769 (grew from 22 to 27
+# kinds - kept to +5, not +8, specifically to preserve a real buffer before
+# the next block), dungeon props 800-960, tall props 1000-1101, building
+# walls 1150-1159 - each block leaves a real buffer before the next, matching
+# this file's established spacing convention. Keep this comment's numbers in
+# sync if any block grows again.
 _next_biome_prop_id = 500
 for _biome_name in GROUND_TO_BIOME_NAME.values():
     for _kind in BIOME_PROP_KINDS:
@@ -138,6 +163,34 @@ for _biome_name in GROUND_TO_BIOME_NAME.values():
 for (_biome_name, _kind), _tile_id in BIOME_PROP_TILE.items():
     _ground_tile = next(g for g, name in GROUND_TO_BIOME_NAME.items() if name == _biome_name)
     TILE_COLORS[_tile_id] = TILE_COLORS[_ground_tile]
+
+# Every tile id (ground OR decoration) resolved back to its owning biome name -
+# fixes a real bug: weather used to be looked up by the EXACT tile id underfoot
+# (WEATHER_FOR_GROUND, keyed only by the 10 base ground ids below), so standing
+# on any decoration tile (a rock/bush/flower/etc - a DIFFERENT id) made the
+# lookup return nothing and silently turn weather off mid-biome. Resolving
+# through the biome NAME first means weather now stays stable across an
+# entire biome region regardless of which exact tile is underfoot.
+TILE_TO_BIOME_NAME = dict(GROUND_TO_BIOME_NAME)
+for (_biome_name, _kind), _tile_id in BIOME_PROP_TILE.items():
+    TILE_TO_BIOME_NAME[_tile_id] = _biome_name
+
+WEATHER_FOR_BIOME = {
+    "forest": "rain", "swamp": "rain", "jungle": "rain",
+    "tundra": "snow", "ice": "snow",
+    "desert": "sand", "wasteland": "sand",
+    "ashlands": "ash",
+    # "highlands"/"cave" intentionally absent - no weather, matching
+    # WEATHER_FOR_GROUND's existing omission of STONE/CAVE
+}
+
+
+def weather_for_tile(tile_id):
+    """Resolves ANY tile id - ground or decoration - to its biome's weather
+    kind (or None). Use this instead of the old WEATHER_FOR_GROUND.get(tile)
+    everywhere weather is looked up from the player's current tile."""
+    return WEATHER_FOR_BIOME.get(TILE_TO_BIOME_NAME.get(tile_id))
+
 
 # Dungeon-theme decoration props (make_bonus_room()) - 7 themes x N shared
 # hand-painted prop kinds + 1 unique special per theme
@@ -322,6 +375,67 @@ for _isl_area, _landmark_kind in ISLAND_LANDMARK_KIND.items():
     TALL_PROP_KIND_BY_ID[_next_island_id] = _landmark_kind
     _next_island_id += 1
 
+# Colored wooden walkways connecting the mainland shore to each (now much
+# farther out) island - "a walkway made of colored wood... each color for
+# each island." One flat plank tile id per island INDEX (not per theme -
+# every island gets its own distinct color regardless of shard/choir), 10
+# total, starting at 1330 (a real buffer past the island-prop block above,
+# which ends at 1322 - matches this file's own established spacing
+# convention). Flat, fully-opaque ground-replacing tiles (same rendering
+# convention as BIOME_PROP_TILE, not the transparent tall-prop convention -
+# a plank is a floor surface, not a standalone object), and deliberately
+# never added to SOLID since it's a walkable bridge over open water.
+WALKWAY_PLANK_COLORS = [
+    (160, 60, 50),    # 0 red-stained
+    (190, 110, 40),   # 1 orange-stained
+    (200, 170, 50),   # 2 yellow-stained
+    (80, 140, 60),    # 3 green-stained
+    (50, 140, 130),   # 4 teal-stained
+    (60, 100, 170),   # 5 blue-stained
+    (120, 80, 160),   # 6 purple-stained
+    (190, 90, 140),   # 7 pink-stained
+    (140, 100, 60),   # 8 natural wood brown
+    (110, 110, 115),  # 9 weathered driftwood gray
+]
+WALKWAY_PLANK_TILE = {}
+_next_walkway_id = 1330
+for _wi, _wcolor in enumerate(WALKWAY_PLANK_COLORS):
+    WALKWAY_PLANK_TILE[_wi] = _next_walkway_id
+    TILE_COLORS[_next_walkway_id] = _wcolor
+    _next_walkway_id += 1
+
+
+def stamp_walkway(grid, from_tile, to_tile, plank_tile_id):
+    """Carves a 2-tile-wide line of plank tiles connecting a mainland shore
+    point to a relocated island's anchor. Not a perfectly straight ruled
+    line - each tile along the path gets a small perpendicular jitter via
+    _tile_hash (the same deterministic, non-gameplay-RNG trick already used
+    elsewhere in this file for organic edges - see stamp_island), so it
+    reads as a real rustic bridge, not a ruler-drawn stripe. plank_tile_id
+    is never added to SOLID (see WALKWAY_PLANK_TILE above), since it's a
+    walkable bridge over open water."""
+    grid_h, grid_w = len(grid), len(grid[0])
+    fx, fy = from_tile
+    tx, ty = to_tile
+    dist = math.hypot(tx - fx, ty - fy)
+    if dist < 1:
+        return
+    dx, dy = (tx - fx) / dist, (ty - fy) / dist
+    perp_x, perp_y = -dy, dx
+    steps = max(1, int(dist))
+    for i in range(steps + 1):
+        t = i / steps
+        px = fx + (tx - fx) * t
+        py = fy + (ty - fy) * t
+        jitter = (_tile_hash(int(px), int(py)) % 100) / 100.0 - 0.5  # -0.5..0.5 tiles
+        px += perp_x * jitter
+        py += perp_y * jitter
+        for w_off in (0, 1):  # 2-tile-wide
+            gx = int(round(px + perp_x * w_off))
+            gy = int(round(py + perp_y * w_off))
+            if 0 <= gx < grid_w and 0 <= gy < grid_h:
+                grid[gy][gx] = plank_tile_id
+
 
 LAIR_BUILDING_SIZE = (10, 14)  # (room_w, room_h) - shared by lair_building_rect and stamp_lair_building
 
@@ -372,13 +486,14 @@ def stamp_lair_building(grid, center_tile, biome_name):
             grid[yy][xx] = wall_tile if on_border else floor_tile
 
     prop_kinds = BIOME_PROP_KINDS
+    prop_weights = _biome_prop_weights(biome_name)
     claimed = set()
     for _ in range(random.randint(4, 7)):
         px = random.randint(rect.left + 1, rect.right - 2)
         py = random.randint(rect.top + 1, rect.bottom - 2)
         if (px, py) in claimed:
             continue
-        grid[py][px] = BIOME_PROP_TILE[(biome_name, random.choice(prop_kinds))]
+        grid[py][px] = BIOME_PROP_TILE[(biome_name, random.choices(prop_kinds, weights=prop_weights)[0])]
         claimed.add((px, py))
 
     # tall totems/poles/pillars specifically against the interior walls (one
@@ -447,6 +562,90 @@ def stamp_island(grid, anchor_tile, theme):
     ys = [p[1] for p in claimed] or [ay]
     rect = pygame.Rect(min(xs), min(ys), max(xs) - min(xs) + 1, max(ys) - min(ys) + 1)
     return rect, (ax, ay)
+
+
+# ------------------------------------------------------- visual terracing --
+# "Levels/stairs/walls for a more 3D look" (plan section 2) - deliberately a
+# VISUAL effect only, not real elevation/collision: a terrace's interior and
+# its cliff-lip ring are both perfectly normal, fully walkable 2D ground
+# tiles (never added to SOLID) - the "3D" read comes entirely from reusing
+# the SAME two-tone shaded-band/edge-outline trick TileMap.draw() already
+# applies to any SOLID tile (see the `t in SOLID` block below), extended to
+# also cover cliff-lip tiles specifically via CLIFF_EDGE_TILE_IDS - so a
+# terrace's edge LOOKS like a real ledge without ever blocking movement or
+# needing any "which floor is the player on" logic anywhere else in the
+# game. NOTE (fork coordination): allocated at 1400+, clearly past every
+# other block's current allocation in this file (island props reach ~1340) -
+# a sibling change may also claim new ids around here; re-check for
+# collisions when reconciling.
+TERRACE_RADIUS = 5  # smaller than ISLAND_RADIUS/REALM_START_RADIUS - a modest landmark feature, not a zone
+CLIFF_EDGE_TILE = {}
+TERRACE_STAIR_TILE = {}
+_next_terrace_id = 1400
+for _biome_name in GROUND_TO_BIOME_NAME.values():
+    _ground_tile = next(g for g, name in GROUND_TO_BIOME_NAME.items() if name == _biome_name)
+    CLIFF_EDGE_TILE[_biome_name] = _next_terrace_id
+    TILE_COLORS[_next_terrace_id] = TILE_COLORS[_ground_tile]
+    _next_terrace_id += 1
+for _biome_name in GROUND_TO_BIOME_NAME.values():
+    _ground_tile = next(g for g, name in GROUND_TO_BIOME_NAME.items() if name == _biome_name)
+    TERRACE_STAIR_TILE[_biome_name] = _next_terrace_id
+    TILE_COLORS[_next_terrace_id] = TILE_COLORS[_ground_tile]
+    _next_terrace_id += 1
+CLIFF_EDGE_TILE_IDS = set(CLIFF_EDGE_TILE.values())  # checked by TileMap.draw() to extend the
+# existing SOLID-only pseudo-3D shading to these (still non-solid) tiles too
+
+
+def terrace_rect(anchor_tile):
+    """Pure geometry (no mutation) - lets a caller check a candidate terrace
+    for overlap against other landmarks BEFORE committing to it, same
+    calling convention as lair_building_rect() above."""
+    ax, ay = anchor_tile
+    return pygame.Rect(ax - TERRACE_RADIUS, ay - TERRACE_RADIUS, TERRACE_RADIUS * 2, TERRACE_RADIUS * 2)
+
+
+def stamp_terrace(grid, anchor_tile, biome_name):
+    """Carves one small raised-looking terrace: a jittered-circle interior
+    (same technique as stamp_island/stamp_realm_start) re-textured with the
+    biome's OWN ground tile (no new tile id needed for the platform surface
+    itself), ringed by a one-tile-wide walkable CLIFF_EDGE_TILE lip on its
+    lower half (the shaded-band trick below reads as a drop-off there), with
+    1-2 walkable TERRACE_STAIR_TILE tiles breaking the ring so it's always
+    reachable on foot, not just visually implied. Returns the terrace's rect
+    (tile space) so a caller can overlap-check it against other landmarks."""
+    grid_h, grid_w = len(grid), len(grid[0])
+    ax, ay = anchor_tile
+    ground_tile = next(g for g, name in GROUND_TO_BIOME_NAME.items() if name == biome_name)
+    claimed = set()
+    for yy in range(ay - TERRACE_RADIUS - 1, ay + TERRACE_RADIUS + 2):
+        for xx in range(ax - TERRACE_RADIUS - 1, ax + TERRACE_RADIUS + 2):
+            if not (0 <= yy < grid_h and 0 <= xx < grid_w):
+                continue
+            dist = math.hypot(xx - ax, yy - ay)
+            jitter = (_tile_hash(xx, yy) % 200) / 100.0 - 1.0  # -1.0..+0.99, same stable-jitter idiom
+            if dist <= TERRACE_RADIUS + jitter:
+                grid[yy][xx] = ground_tile
+                claimed.add((xx, yy))
+
+    # cliff lip: a ring on the LOWER half only (dy > 0) - reads as one real
+    # downhill edge rather than a fully-enclosed rim on every side, matching
+    # how the researched "terraces connect via one bridge/stair edge" pattern
+    # actually looks (an edge you approach from one side, not a walled pit)
+    edge_ring = [(xx, yy) for (xx, yy) in claimed
+                 if (yy - ay) > 0 and TERRACE_RADIUS - 1 <= math.hypot(xx - ax, yy - ay) <= TERRACE_RADIUS]
+    stair_tile = TERRACE_STAIR_TILE[biome_name]
+    cliff_tile = CLIFF_EDGE_TILE[biome_name]
+    if edge_ring:
+        edge_ring.sort(key=lambda p: p[0])  # deterministic left-to-right order
+        stair_count = min(2, len(edge_ring))
+        stair_positions = {edge_ring[i * (len(edge_ring) - 1) // max(1, stair_count - 1 if stair_count > 1 else 1)]
+                            for i in range(stair_count)} if stair_count else set()
+        for (xx, yy) in edge_ring:
+            grid[yy][xx] = stair_tile if (xx, yy) in stair_positions else cliff_tile
+
+    xs = [p[0] for p in claimed] or [ax]
+    ys = [p[1] for p in claimed] or [ay]
+    return pygame.Rect(min(xs), min(ys), max(xs) - min(xs) + 1, max(ys) - min(ys) + 1)
 
 
 REALM_START_RADIUS = 9  # tile radius of the stamped starting-area plaza
@@ -877,6 +1076,15 @@ for (_isl_biome, _isl_kind), _isl_tid in ISLAND_PROP_TILE.items():
         f"island_{_isl_biome}_{_isl_kind}", [_flat_tex(TILE_COLORS[_isl_tid])],
         subdir=f"decorations/islands/{_isl_biome}")
 
+# Walkway plank tiles (WALKWAY_PLANK_TILE above) - 10 tile ids, one per
+# island index, same one-hand-painted-variant-per-id pattern (falls back to
+# a flat color texture if no PNG is painted, so this ships correct with
+# zero new art required).
+_WALKWAY_PLANK_TEX = {}
+for _wi, _wtid in WALKWAY_PLANK_TILE.items():
+    _WALKWAY_PLANK_TEX[_wtid] = _load_tile_variants(
+        f"walkway_plank_{_wi}", [_flat_tex(TILE_COLORS[_wtid])], subdir="decorations/walkways")
+
 # Per-dungeon-theme wall textures (see DUNGEON_THEMES in realm_sim.py) - hand-painted
 # variants load in front of these same as the biome floors above, falling back to a
 # tinted version of the plain rock-crack generator per theme colour.
@@ -934,6 +1142,7 @@ _TEX_BY_TILE.update(_BIOME_PROP_TEX)
 _TEX_BY_TILE.update(_DUNGEON_PROP_TEX)
 _TEX_BY_TILE.update(_NEXUS_PROP_TEX)
 _TEX_BY_TILE.update(_ISLAND_PROP_TEX)
+_TEX_BY_TILE.update(_WALKWAY_PLANK_TEX)
 _TEX_BY_TILE.update({BUILDING_WALL_TILE[_b]: _tex for _b, _tex in _BUILDING_WALL_TEX.items()})
 
 
@@ -941,6 +1150,27 @@ def _tile_hash(tx, ty):
     n = (tx * 374761393 + ty * 668265263) & 0xffffffff
     n = (n ^ (n >> 13)) * 1274126177 & 0xffffffff
     return n ^ (n >> 16)
+
+
+def coastline_radius(angle):
+    """The Realm's own organic coastline shape at a given angle from map
+    center (a sum of a few sine terms at different angle-frequencies, same
+    "cheap coherent-ish noise" trick as _warp below) - module-level (not a
+    make_realm()-local closure like before) specifically so RealmSim's
+    island-placement code can call the SAME formula make_realm() actually
+    used to carve the coastline, instead of duplicating or guessing at it.
+    make_realm() itself now just aliases its local `island_radius` name to
+    this function - the returned values are bit-for-bit identical to before
+    this was extracted, since max_r here is computed from the same
+    REALM_W/REALM_H module constants make_realm() already uses for its own
+    local max_r."""
+    max_r = min(REALM_W, REALM_H) / 2 - 3
+    r = max_r * 0.78
+    r += max_r * 0.13 * math.sin(angle * 3 + 1.3)
+    r += max_r * 0.08 * math.sin(angle * 5 + 0.7)
+    r += max_r * 0.05 * math.sin(angle * 7 + 2.1)
+    r += max_r * 0.04 * math.sin(angle * 11 + 0.4)
+    return max(max_r * 0.4, r)
 
 
 def make_realm():
@@ -968,13 +1198,7 @@ def make_realm():
     cx, cy = w / 2, h / 2
     max_r = min(w, h) / 2 - 3
 
-    def island_radius(angle):
-        r = max_r * 0.78
-        r += max_r * 0.13 * math.sin(angle * 3 + 1.3)
-        r += max_r * 0.08 * math.sin(angle * 5 + 0.7)
-        r += max_r * 0.05 * math.sin(angle * 7 + 2.1)
-        r += max_r * 0.04 * math.sin(angle * 11 + 0.4)
-        return max(max_r * 0.4, r)
+    island_radius = coastline_radius
 
     # Which radius band a tile falls in decides which 4 (outer) or 6 (inner) biome
     # types are even eligible there - a smooth, explicit radial rule instead of
@@ -1055,43 +1279,54 @@ def make_realm():
     # identity table trick as _warp above for the same reason: this is evaluated for
     # several biomes on every land tile, so raw math.sin() calls here would undo the
     # earlier perf work that keeps make_realm() inside its ~3s budget.
+    AFFINITY_OCTAVES = 5  # was a flat 3 independent-random terms (no octave relationship
+    # between them) - the real fBm/multi-octave technique researched for this rehaul:
+    # each successive octave's frequency DOUBLES and its amplitude HALVES relative to a
+    # single randomized base frequency, so a biome's field is coarse large-scale shape
+    # (low octave, high amplitude) with progressively finer detail layered on top (high
+    # octave, low amplitude) - real terrain-generation practice for "organic, not
+    # regular/lobed" region shapes, confirmed via research, versus the old flat sum of
+    # 3 EQUALLY-weighted, independently-random-frequency terms (which stayed closer to
+    # its predecessor's still-fairly-regular boundaries - "diamond shapes" - since so
+    # few terms of comparable strength rarely cancel into a genuinely organic outline).
+    # Each octave still gets its own independently-randomized DIRECTION/phase (this
+    # codebase's affinity field is a sum of plane waves, not a single coherent noise
+    # function sampled at different scales, so per-octave direction variety is what
+    # actually produces multi-directional, non-parallel level-set curvature - see the
+    # comment above this function for why a single shared direction would fail).
     def _affinity_tables():
         xa_list, xb_list, yc_list, yd_list = [], [], [], []
-        for _term in range(3):
-            # Frequency directly controls biome region size - lowered ~1.5x from the
-            # original (0.006, 0.02) per the user's explicit "huger areas, not
-            # combined" request. Measured via a standalone connected-component
-            # analysis (patches per biome + average patch size) across many seeds
-            # before landing on this range: the original produced 6-10 separate,
-            # scattered patches per biome (avg ~1200 sample-cells each); this range
-            # consolidates that down to ~2-4 bigger patches per biome (avg ~2400
-            # cells, roughly double) while keeping per-biome land-area fairness in
-            # the same ballpark as before (worst-case ~0.20 vs. ~0.24 originally -
-            # going much lower than this starts risking a biome getting near-zero
-            # territory on an unlucky seed, confirmed empirically).
-            freq = random.uniform(0.004, 0.0133)
+        # base frequency picked the same way as before (still controls overall biome
+        # region SIZE, unrelated to the octave count/detail level above)
+        freq = random.uniform(0.004, 0.0133)
+        amplitude = 1.0
+        for _octave in range(AFFINITY_OCTAVES):
             theta = random.uniform(0, math.tau)
             fx, fy = freq * math.cos(theta), freq * math.sin(theta)
             phase = random.uniform(0, math.tau)
-            xa_list.append([math.sin(x * fx + phase) for x in range(w)])
-            xb_list.append([math.cos(x * fx + phase) for x in range(w)])
+            xa_list.append([amplitude * math.sin(x * fx + phase) for x in range(w)])
+            xb_list.append([amplitude * math.cos(x * fx + phase) for x in range(w)])
             yc_list.append([math.cos(y * fy) for y in range(h)])
             yd_list.append([math.sin(y * fy) for y in range(h)])
+            freq *= 2.0
+            amplitude *= 0.5
         return xa_list, xb_list, yc_list, yd_list
 
     _affinity_by_biome = {bt: _affinity_tables() for bt in (BIOME_TIER_OUTER + BIOME_TIER_INNER)}
 
     def _affinity(bt, x, y):
         xa, xb, yc, yd = _affinity_by_biome[bt]
-        return (xa[0][x] * yc[0][y] + xb[0][x] * yd[0][y]
-                + xa[1][x] * yc[1][y] + xb[1][x] * yd[1][y]
-                + xa[2][x] * yc[2][y] + xb[2][x] * yd[2][y])
+        total = 0.0
+        for i in range(AFFINITY_OCTAVES):
+            total += xa[i][x] * yc[i][y] + xb[i][x] * yd[i][y]
+        return total
 
-    TIE_MARGIN = 0.15  # narrowed from 0.5 - the user wants biomes "not combined" (less
-    # salt-and-pepper mixing right at a boundary); a narrower margin means only truly
-    # razor-thin ties ever dither-blend, giving a crisper edge instead of a wide fuzzy
-    # ecotone band, while still avoiding a perfectly hard/aliased line entirely. Deep
-    # inside a region the runner-up's affinity is far behind and this never triggers.
+    TIE_MARGIN = 0.22  # widened from 0.15 (which was itself narrowed from an original 0.5
+    # per an earlier, explicit "biomes feel too combined/salt-and-peppered" complaint) -
+    # this rehaul specifically asked for smoother, less hard-cut region borders, so this
+    # nudges back toward a real blended ecotone band WITHOUT fully reverting to the old
+    # 0.5 that caused that earlier complaint - a deliberate middle ground, not a revert.
+    # Deep inside a region the runner-up's affinity is far behind and this never triggers.
 
     grid = [[WATER for _ in range(w)] for _ in range(h)]
     land = [[False] * w for _ in range(h)]
@@ -1162,7 +1397,7 @@ def make_realm():
         biome_name = GROUND_TO_BIOME_NAME.get(grid[py][px])
         if biome_name is None:
             continue
-        kind = random.choice(BIOME_PROP_KINDS)
+        kind = random.choices(BIOME_PROP_KINDS, weights=_biome_prop_weights(biome_name))[0]
         grid[py][px] = BIOME_PROP_TILE[(biome_name, kind)]
 
     # decorative patches (rock outcrops, dirt clearings, small ponds) - land only,
@@ -1938,7 +2173,7 @@ class TileMap:
                         surf.blit(variants[_tile_hash(tx, ty) % len(variants)], (px, py))
                     else:
                         pygame.draw.rect(surf, color, (px, py, C.TILE, C.TILE))
-                if t in SOLID:
+                if t in SOLID or t in CLIFF_EDGE_TILE_IDS:
                     # ground shadow: a soft dark crescent tinted over the tile's own
                     # ALREADY-drawn bottom third - reads the same as a shadow cast at
                     # the wall's base, a near-free "this has real height" cue this

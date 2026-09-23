@@ -140,10 +140,42 @@ def check_trade_panel_hover_and_highlight():
     print("check_trade_panel_hover_and_highlight: PASSED")
 
 
+def check_day_night_clock():
+    from game.entities import Player
+    rect = ui.day_night_clock_rect()
+    p = Player("wizard", "X", pid="p1")
+    p.pet = None
+    assert ui.pet_panel_rect(p) is None
+    from game.entities import Pet
+    p.pet = Pet("hatchling", p.pos)
+    assert not rect.colliderect(ui.pet_panel_rect(p)), "clock must not overlap the pet panel"
+    for ll in (1.0, 0.5, 0.0):
+        ui.draw_day_night_clock(screen, ll, blood_moon=False)
+    ui.draw_day_night_clock(screen, 0.1, blood_moon=True)
+
+    # real end-to-end integration test through the ACTUAL call site, not just the ui
+    # function in isolation - this is exactly the bug class that shipped once already:
+    # draw_day_night_clock()'s signature was simplified but main.py's call site was
+    # never updated to match, and it was only caught by the user actually running the app
+    import main as main_module
+    game = main_module.Game()
+    game.start_run("wizard")
+    game.enter_realm()
+    game.draw()  # would raise TypeError if any ui call site's args don't match its signature
+    from game.realm_sim import DAY_LENGTH
+    for frac in (0.0, 0.25, 0.5, 0.75):
+        game.realm_sim.day_time = frac * DAY_LENGTH
+        game.draw()
+    game.realm_sim.blood_moon_active = True
+    game.draw()
+    print("check_day_night_clock: PASSED")
+
+
 if __name__ == "__main__":
     check_portal_label_overlap()
     check_peer_label_overlap()
     check_class_select_and_death_screen_hover()
     check_help_menu_click_dispatch()
     check_trade_panel_hover_and_highlight()
+    check_day_night_clock()
     print("PASSED: HUD interactivity + text-overlap checks all green.")

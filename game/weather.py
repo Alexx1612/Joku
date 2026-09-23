@@ -1,6 +1,11 @@
 """
 Purely cosmetic per-biome weather particles (rain/snow/sand/ash), derived from
-whichever ground tile the local player is standing on - see world.WEATHER_FOR_GROUND.
+whichever BIOME the local player is currently standing in (resolved from any
+tile - ground or decoration - back to its owning biome) - see
+world.weather_for_tile()/WEATHER_FOR_BIOME. Resolving through the biome name
+first (rather than the exact tile id) means weather stays stable across a
+whole region even when the player is standing on a decoration tile, not just
+bare ground.
 No server sync needed: every client derives its own weather from its own player's
 position, so this stays cheap and never touches the authoritative simulation
 (except for the one small real gameplay hook - snow/ice slowing movement - which
