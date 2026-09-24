@@ -91,6 +91,22 @@ class GhostBag:
         self.tier_color = tuple(d["tier_color"]) if d.get("tier_color") else (200, 200, 200)
 
 
+class GhostChest:
+    """Client-side mirror of a server-owned BazaarChest - separate from
+    GhostBag since a chest's net_state() carries a skin index, not a
+    bag_color/tier_color/name (see BazaarChest.net_state)."""
+    def __init__(self, d):
+        self.id = d["id"]
+        self.pos = pygame.Vector2(d["x"], d["y"])
+        self.skin_idx = d.get("skin_idx", 0)
+        self.count = d.get("count", 0)
+
+    def draw(self, surf, cam):
+        p = cam(self.pos)
+        img = sprites.chest_sprite(self.skin_idx, filled=self.count > 0)
+        surf.blit(img, (p[0] - img.get_width() // 2, p[1] - img.get_height() // 2 + 3))
+
+
 class GhostBot:
     draw = NexusBot.draw
 
@@ -308,6 +324,7 @@ class CoopClient:
         self.realm_minimap = None
         self.bonus_minimap = None
         self.auto_fire_enabled = False
+        self.right_panel_mode = "inventory"  # Tab key: switches inventory vs. pet stats in the right dock
         self._dash_pending = False  # set on a Shift keydown, sent once then cleared - see _send_input().
         self.popups = []
         self._ui_click_active = False  # suppresses firing while a UI click (e.g. inventory) is held
@@ -1016,6 +1033,12 @@ class CoopClient:
             self.link.send({"type": "action", "action": "unequip", "slot": origin[1]})
         elif origin[0] == "backpack" and dest[0] == "pet":
             self.link.send({"type": "action", "action": "feed_pet", "idx": origin[1]})
+        elif origin[0] == "backpack" and dest[0] == "bag":
+            # deposit INTO the open container - server rejects this unless it's
+            # actually a BazaarChest (see server.py's "chest_deposit" handler)
+            if origin[1] < len(self.you.backpack):
+                self.link.send({"type": "action", "action": "chest_deposit",
+                                 "bag_id": self.open_bag_id, "idx": origin[1]})
 
     def _class_select_key(self, key):
         cols, n = ui._CLASS_COLS, len(ui.CLASS_ORDER)
@@ -1053,6 +1076,8 @@ class CoopClient:
             self.feed.insert(0, [f"Auto-fire {'ON' if self.auto_fire_enabled else 'OFF'}",
                                   (150, 220, 255) if self.auto_fire_enabled else (170, 170, 180), 4.0])
             self.feed = self.feed[:4]
+        elif key == pygame.K_TAB and self.zone in ("nexus", "bazaar", "realm", "bonus"):
+            self.right_panel_mode = "pet" if self.right_panel_mode == "inventory" else "inventory"
         elif pygame.K_1 <= key <= pygame.K_8:
             self.link.send({"type": "action", "action": "equip", "idx": key - pygame.K_1})
         elif key == pygame.K_l:
@@ -1118,9 +1143,21 @@ class CoopClient:
             self.state = STATE_ERROR
             return
 
-        theme_zone = self._THEME_ZONE_FOR_ZONE.get(self.zone)
-        if theme_zone is not None:
-            audio.play_theme(theme_zone)
+        # vault_open is an overlay flag on top of zone "vault_room" (the chest
+        # menu never changes self.zone - see open_vault handling below), so it
+        # needs its own check here rather than a plain dict lookup on self.zone.
+        if self.vault_open:
+            audio.play_theme("vault")
+        elif self.zone == "bonus":
+            # a real distinct track per dungeon theme instead of one generic
+            # "dungeon" track for all of them - resolved from the label
+            # string already relayed over the network (self.theme_name),
+            # since the raw theme key isn't sent to co-op clients today.
+            audio.play_theme(audio.dungeon_zone_for_label(self.theme_name))
+        else:
+            theme_zone = self._THEME_ZONE_FOR_ZONE.get(self.zone)
+            if theme_zone is not None:
+                audio.play_theme(theme_zone)
 
         if not self.chat_open and not self.help_open:
             keys = pygame.key.get_pressed()
@@ -1319,7 +1356,8 @@ class CoopClient:
             # (enemy-hit feedback now comes from the "sound" list above - family-tinted
             # play_mob_hit() instead of one generic play_enemy_hit() for every kind)
         elif self.zone == "bazaar":
-            self.bazaar_ground_items = [GhostBag(d) for d in snap.get("ground_items", [])]
+            self.bazaar_ground_items = [GhostChest(d) if d.get("is_chest") else GhostBag(d)
+                                        for d in snap.get("ground_items", [])]
             if len(you.backpack) > self._prev_backpack_len:
                 audio.play_pickup()
             self._prev_backpack_len = len(you.backpack)
@@ -1471,6 +1509,20 @@ class CoopClient:
             ui.draw_context_menu(s, self.context_menu["pos"], self.context_menu["name"],
                                   self._context_menu_labels(), mp)
 
+    def _draw_right_switch_panel(self, s, mp):
+        """Tab key switches this dock slot between the inventory grid and pet
+        stats - only one is ever drawn per frame, with a small tab-label strip
+        above it so the key is discoverable. Falls back to inventory if
+        there's no pet to show, so Tab can never leave a blank panel."""
+        mode = self.right_panel_mode
+        if mode == "pet" and getattr(self.you, "pet", None) is None:
+            mode = "inventory"
+        ui.draw_panel_tabs(s, mode)
+        if mode == "pet":
+            ui.draw_pet_panel(s, self.you, dragging=self.drag_from is not None)
+        else:
+            ui.draw_inventory(s, self.you, mp, dragging_from=self.drag_from)
+
     def _draw_hub(self, tmap, mm, name, hint_text):
         s = self.screen
         if mm.full_map_open:
@@ -1505,8 +1557,7 @@ class CoopClient:
         ui.draw_fps_counter(s, self.clock.get_fps())
         mp = pygame.mouse.get_pos()
         ui.draw_player_panel(s, self.you, auto_fire=False)
-        ui.draw_pet_panel(s, self.you, dragging=self.drag_from is not None)
-        ui.draw_inventory(s, self.you, mp, dragging_from=self.drag_from)
+        self._draw_right_switch_panel(s, mp)
         dragged = self._dragged_item()
         if dragged:
             ui.draw_dragged_item(s, dragged, mp)
@@ -1581,8 +1632,7 @@ class CoopClient:
                                  phase2_quest_target=self.phase2_quest_target)
         mp = pygame.mouse.get_pos()
         ui.draw_player_panel(s, self.you, auto_fire=self.auto_fire_enabled)
-        ui.draw_pet_panel(s, self.you, dragging=self.drag_from is not None)
-        ui.draw_inventory(s, self.you, mp, dragging_from=self.drag_from)
+        self._draw_right_switch_panel(s, mp)
         dragged = self._dragged_item()
         if dragged:
             ui.draw_dragged_item(s, dragged, mp)

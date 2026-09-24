@@ -86,6 +86,87 @@ def check_biome_regions_are_organic_not_regular():
     print("check_biome_regions_are_organic_not_regular: PASSED")
 
 
+def _convex_hull(points):
+    """Monotone chain, no external deps. points: list of (x, y). Returns hull
+    vertices in CCW order (len < 3 if degenerate)."""
+    pts = sorted(set(points))
+    if len(pts) < 3:
+        return pts
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower = []
+    for p in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+    upper = []
+    for p in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+    return lower[:-1] + upper[:-1]
+
+
+def _polygon_area(hull):
+    if len(hull) < 3:
+        return 0.0
+    total = 0.0
+    n = len(hull)
+    for i in range(n):
+        x1, y1 = hull[i]
+        x2, y2 = hull[(i + 1) % n]
+        total += x1 * y2 - x2 * y1
+    return abs(total) / 2.0
+
+
+# A REAL macro-silhouette check the perimeter/sqrt(area) roughness metric
+# above genuinely can't catch (confirmed by rendering actual seeded realms to
+# PNGs and looking at them: the inner-tier biome cluster showed visibly
+# straighter/more diamond-like boundaries than the outer tier, while still
+# passing the roughness check above just fine, since fine-scale octave noise
+# texture on the EDGE was enough to pass that test even though the overall
+# SHAPE traced out something close to a simple convex polygon). This test
+# instead measures how much smaller the actual filled region is than its own
+# convex hull - a true diamond/square/regular-polygon region IS its own
+# convex hull (ratio ~1.0, no concavity anywhere); a genuinely organic,
+# lobed/concave region is measurably smaller than its hull, since the hull
+# "fills in" every concave dent and bay the real irregular outline has.
+HULL_FILL_RATIO_CEILING = 0.92  # a real diamond/regular-polygon region would sit near 1.0
+
+
+def check_biome_regions_are_not_convex_diamonds():
+    seeds_checked = 0
+    ratios = []
+    for seed in (1, 2, 3):
+        random.seed(seed)
+        grid = world.make_realm()
+        h, w = len(grid), len(grid[0])
+        for biome_ground_tile in set(world.BIOME_GROUND.values()):
+            points = [(x, y) for y in range(h) for x in range(w) if grid[y][x] == biome_ground_tile]
+            area = len(points)
+            if area < 200:
+                continue  # too small this seed to measure a meaningful hull - not a failure
+            hull = _convex_hull(points)
+            hull_area = _polygon_area(hull)
+            if hull_area <= 0:
+                continue
+            ratio = area / hull_area
+            ratios.append(ratio)
+            assert ratio < HULL_FILL_RATIO_CEILING, (
+                f"seed {seed} tile {biome_ground_tile}: fill/hull ratio {ratio:.3f} is at or "
+                f"above {HULL_FILL_RATIO_CEILING} - this region is nearly its own convex hull, "
+                f"i.e. it reads as a simple diamond/regular polygon at the macro scale, not a "
+                f"genuinely lobed/concave organic shape")
+        seeds_checked += 1
+    assert seeds_checked == 3
+    print(f"measured {len(ratios)} biome-region fill/hull ratios across 3 seeds "
+          f"(range {min(ratios):.3f}-{max(ratios):.3f}, ceiling {HULL_FILL_RATIO_CEILING})")
+    print("check_biome_regions_are_not_convex_diamonds: PASSED")
+
+
 if __name__ == "__main__":
     check_biome_regions_are_organic_not_regular()
+    check_biome_regions_are_not_convex_diamonds()
     print("PASSED: biome-shape irregularity checks all green.")

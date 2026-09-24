@@ -139,6 +139,16 @@ class Player:
         self.alive = True
         self.kills = 0
         self.spawn_time = 0.0
+        # Echo-currency passive accrual (Batch 14) - separate from self.xp
+        # (which resets every level-up, see gain_xp) and from the account-
+        # wide banked total in accounts.py. _echo_xp_progress accumulates
+        # ALL XP earned this life and never resets; every 1000 it banks 1
+        # real echo immediately (see RealmSim._reward). _echoes_this_life
+        # tracks how many that's been so far, so a permadeath bonus can be
+        # a real multiple of what THIS life actually earned, not a flat
+        # level-based guess.
+        self._echo_xp_progress = 0
+        self._echoes_this_life = 0
         # e.g. "the Bloodied" - NOT loaded from disk here (this constructor runs on every
         # network snapshot reconstruction too, at 20-30Hz; a file read per tick per player
         # would be a real perf regression). Real gameplay entry points (server join/respawn,
@@ -561,6 +571,8 @@ class Player:
             potions_used=dict(self.potions_used),
             temp_buffs={k: list(v) for k, v in self.temp_buffs.items()},
             fishing_state=self.fishing_state,
+            echo_xp_progress=self._echo_xp_progress,
+            echoes_this_life=self._echoes_this_life,
         )
 
     @staticmethod
@@ -588,6 +600,8 @@ class Player:
         p.potions_used = {**p.potions_used, **d.get("potions_used", {})}
         p.temp_buffs = {k: tuple(v) for k, v in d.get("temp_buffs", {}).items()}
         p.fishing_state = d.get("fishing_state")
+        p._echo_xp_progress = d.get("echo_xp_progress", 0)
+        p._echoes_this_life = d.get("echoes_this_life", 0)
         return p
 
     @staticmethod
@@ -774,6 +788,38 @@ ENEMY_KINDS = {
                           radius=13, aggro_range=300, leash_range=460),
     "choir_warden": dict(kind="choir_warden", rank="elite", hp=215, speed=45, pattern="charge", dmg=(6, 13),
                           radius=16, aggro_range=270, leash_range=440),
+    # Batch 14 Track B1 - named mini-bosses leading the flare/song wave for the
+    # first 5 islands (see realm_sim.ISLAND_THEMES/_tick_island_events). Real
+    # "rank": "boss" tier - meaningfully tougher than any anchor/elite guardian
+    # (~2.7-3x an anchor's hp) since the wave now brings a smaller escort
+    # instead of 3 more elites, but still open-world/co-op scaled, well under
+    # a full dungeon boss's hp (thorn_warden=1700) since this is meant to be
+    # a real fight, not a wall, for however many players happen to be nearby.
+    "cinder_colossus": dict(kind="cinder_colossus", rank="boss", hp=600, speed=40, pattern="spread", dmg=(8, 16),
+                             radius=22, aggro_range=99999, leash_range=99999),
+    "rubble_warlord": dict(kind="rubble_warlord", rank="boss", hp=560, speed=60, pattern="charge", dmg=(7, 15),
+                            radius=20, aggro_range=99999, leash_range=99999),
+    "ashreach_revenant": dict(kind="ashreach_revenant", rank="boss", hp=580, speed=48, pattern="spiral",
+                               dmg=(7, 15), radius=21, aggro_range=99999, leash_range=99999),
+    "choir_sovereign": dict(kind="choir_sovereign", rank="boss", hp=590, speed=42, pattern="volley", dmg=(7, 15),
+                             radius=21, aggro_range=99999, leash_range=99999),
+    "coral_leviathan": dict(kind="coral_leviathan", rank="boss", hp=610, speed=36, pattern="burst", dmg=(8, 16),
+                             radius=22, aggro_range=99999, leash_range=99999),
+    # Batch 14 Track B2 - named mini-bosses leading the flare/song wave for the
+    # last 5 islands, same "boss" rank/tier convention Track B1 established
+    # above (rank normalized from B2's original "elite" during integration to
+    # stay consistent - these are meant to get the same boss-tier treatment,
+    # e.g. hit_kind "hit_boss" in vfx and BOSS_KINDS sprite scaling).
+    "thornrock_colossus": dict(kind="thornrock_colossus", rank="boss", hp=620, speed=38, pattern="burst",
+                                dmg=(9, 17), radius=19, aggro_range=99999, leash_range=99999),
+    "ashenreach_devourer": dict(kind="ashenreach_devourer", rank="boss", hp=600, speed=55, pattern="charge",
+                                 dmg=(8, 16), radius=17, aggro_range=99999, leash_range=99999),
+    "tideglass_warden": dict(kind="tideglass_warden", rank="boss", hp=580, speed=40, pattern="spiral",
+                              dmg=(8, 16), radius=18, aggro_range=99999, leash_range=99999),
+    "driftbell_matriarch": dict(kind="driftbell_matriarch", rank="boss", hp=560, speed=50, pattern="volley",
+                                 dmg=(7, 15), radius=17, aggro_range=99999, leash_range=99999),
+    "abyssal_choirmaster": dict(kind="abyssal_choirmaster", rank="boss", hp=640, speed=42, pattern="spread",
+                                 dmg=(8, 16), radius=18, aggro_range=99999, leash_range=99999),
     # a stationary, damageable dungeon decoration - see realm_sim.SECRET_QUEST_KINDS'
     # "kill_totems" quest. speed=0 is safe (movement code is pure multiplication,
     # nothing divides by speed); neutral=True reuses the existing never-aggroes/
@@ -1648,6 +1694,75 @@ BAG_LOOT_RADIUS = 45  # matches RealmSim.LOOT_RADIUS - also used by the Bazaar's
                        # which has no RealmSim wrapper to hang a matching constant off of
 
 
+CHEST_SKIN_NAMES = ["bronze", "silver", "gold", "ruby"]
+
+
+class BazaarChest(Bag):
+    """A permanent, shared Bazaar container - NOT a Bag drop: it never expires
+    (BAG_LIFETIME doesn't apply) and never disappears when emptied (a Bag's
+    update() culls itself once len(items)==0, which would delete a chest the
+    first time someone took its last item). Reuses Bag's items list/
+    add_item/remove_item/is_full as-is; only survival + look differ. Opened
+    via the exact same find_nearby_bag/bag_by_id/open_bag_id flow as a
+    ground Bag (see main.py._try_loot) - not the Vault's full-screen menu -
+    but unlike a loot bag, items can also be DEPOSITED into it (see
+    deposit_to_bag below), since nothing else would ever put loot here."""
+
+    def __init__(self, pos, skin_idx=0):
+        super().__init__(items=[], pos=pos, dropped_by=None, rarity_key="brown")
+        self.life = float("inf")
+        self.skin_idx = skin_idx % len(CHEST_SKIN_NAMES)
+
+    def update(self, dt):
+        self.age += dt
+        return True  # never culled by life or emptiness
+
+    def can_be_taken_by(self, pid):
+        return True  # a shared community chest, not anyone's personal drop
+
+    def draw(self, surf, cam):
+        from game import sprites
+        p = cam(self.pos)
+        img = sprites.chest_sprite(self.skin_idx, filled=len(self.items) > 0)
+        surf.blit(img, (p[0] - img.get_width() // 2, p[1] - img.get_height() // 2 + 3))
+
+    def net_state(self):
+        return dict(id=self.id, x=round(self.pos.x, 1), y=round(self.pos.y, 1),
+                    is_chest=True, skin_idx=self.skin_idx, count=len(self.items))
+
+
+# Four fixed tile positions inside make_bazaar()'s 32x22 layout (world.py) -
+# rows 9 and 13 sit between the stall rows (3/6/15/18) and clear of the
+# central fountain (columns ~14-18), so all four are safe open floor.
+BAZAAR_CHEST_TILE_POSITIONS = [(5, 9), (27, 9), (5, 13), (27, 13)]
+
+
+def spawn_bazaar_chests():
+    """One BazaarChest per BAZAAR_CHEST_TILE_POSITIONS entry - called once
+    wherever bazaar_ground_items is first initialized (main.py single-player,
+    server.py co-op); never called on the client, which mirrors chests from
+    the server's own list/snapshot like every other Bazaar ground item."""
+    from game import constants as C
+    return [BazaarChest((tx * C.TILE + C.TILE // 2, ty * C.TILE + C.TILE // 2), skin_idx=i)
+            for i, (tx, ty) in enumerate(BAZAAR_CHEST_TILE_POSITIONS)]
+
+
+def deposit_to_bag(bags, bag_id, source_idx, player):
+    """The reverse of withdraw_from_bag - moves one item from the player's
+    backpack INTO an open container. Only meant to be called for a
+    BazaarChest (a regular loot Bag has no business receiving deposits -
+    see Bag's own docstring - callers gate this themselves; kept as a plain
+    function rather than a Bag/BazaarChest method split so the pattern
+    matches withdraw_from_bag exactly). Returns the deposited Item, or None
+    if the container/index isn't valid or the container is full."""
+    bag = bag_by_id(bags, bag_id)
+    if bag is None or source_idx < 0 or source_idx >= len(player.backpack) or bag.is_full():
+        return None
+    item = player.backpack.pop(source_idx)
+    bag.add_item(item)
+    return item
+
+
 def find_nearby_bag(bags, pos, pid, radius=BAG_LOOT_RADIUS):
     """The closest bag in `bags` that `pid` is allowed to open (right-click) - shared
     by RealmSim.find_nearby_bag() and the Bazaar's plain ground_items list, which has
@@ -1814,73 +1929,102 @@ class Portal:
         self.t += dt
         return self.life > 0
 
+    # A neutral stone-grey shared by every kind's archway frame - the color
+    # differentiation between kinds lives entirely in the glowing doorway
+    # interior (glow/ring/core), not the stone itself, so every portal reads
+    # as "the same kind of thing" (a doorway) at a glance.
+    ARCH_STONE = (58, 54, 50)
+    ARCH_STONE_LIGHT = (82, 77, 71)
+
     def draw(self, surf, cam):
         p = cam(self.pos)
         pulse = 1.0 + 0.15 * math.sin(self.t * 4)
         r = int(14 * pulse)
         glow, ring, core = self.KIND_COLORS.get(self.kind, self.KIND_COLORS["ambient"])
-        if self.kind == "realm_exit":
-            self._draw_beacon(surf, p, r, glow, ring, core)
+        self._draw_archway(surf, p, r, glow, ring, core)
+        # Small per-kind detail layered on the shared archway shape - enough
+        # to stay readable at a glance (a calm swirl for a safe entrance, a
+        # crack for the boss-phase escalation, instability for a shard rift,
+        # a light spill for the safe way out) without four different base
+        # shapes like before. "ambient"/"island_link" get no extra overlay
+        # (a plain archway), which is itself how they stay visually distinct
+        # from "entrance" despite otherwise-identical KIND_COLORS.
+        if self.kind == "entrance":
+            self._draw_calm_swirl_overlay(surf, p, r, core)
         elif self.kind == "phase2":
-            self._draw_rift_spikes(surf, p, r, glow, ring, core)
+            self._draw_crack_overlay(surf, p, r, core)
         elif self.kind == "dungeon_shard":
-            self._draw_torn_rift(surf, p, r, glow, ring, core)
-        elif self.kind == "entrance":
-            self._draw_vortex(surf, p, r, glow, ring, core)
-        else:
-            pygame.draw.circle(surf, glow, p, r + 3)
-            pygame.draw.circle(surf, ring, p, r)
-            pygame.draw.circle(surf, core, p, max(2, r - 6))
+            self._draw_unstable_overlay(surf, p, r, ring)
+        elif self.kind == "realm_exit":
+            self._draw_light_spill_overlay(surf, p, r, glow)
 
-    def _draw_vortex(self, surf, p, r, glow, ring, core):
-        """entrance - a slowly rotating double-arc swirl on top of the base ring,
-        reads as an active portal actively drawing you in."""
-        pygame.draw.circle(surf, glow, p, r + 3)
-        pygame.draw.circle(surf, ring, p, r, width=3)
-        pygame.draw.circle(surf, core, p, max(2, r - 7))
+    def _draw_archway(self, surf, p, r, glow, ring, core):
+        """The one shared "dungeon door" silhouette every portal/Vault/Bazaar
+        entrance now uses (see game/world.py's tile-overlay draw for the
+        Vault/Bazaar version of this same shape) - two stone side pillars, a
+        curved stone lintel across the top, and a glowing doorway interior
+        colored by the kind's own glow/ring/core triple. Replaces four
+        previously-unrelated hand-coded shapes (a swirl, a beacon, spikes, a
+        torn rift) with one consistent "this is a door into somewhere" read,
+        while the interior color keeps every kind tellable apart."""
+        px, py = p
+        pillar_w = max(3, int(r * 0.4))
+        pillar_h = int(r * 2.1)
+        top = py - pillar_h // 2
+
+        # Outer glow behind the whole archway.
+        glow_d = int(r * 3.2)
+        glow_surf = pygame.Surface((glow_d, glow_d), pygame.SRCALPHA)
+        pygame.draw.circle(glow_surf, (*glow, 110), (glow_d // 2, glow_d // 2), int(r * 1.35))
+        surf.blit(glow_surf, (px - glow_d // 2, py - glow_d // 2))
+
+        # Stone side pillars + a curved lintel connecting them.
+        pygame.draw.rect(surf, self.ARCH_STONE, (px - r - pillar_w, top, pillar_w, pillar_h), border_radius=2)
+        pygame.draw.rect(surf, self.ARCH_STONE, (px + r, top, pillar_w, pillar_h), border_radius=2)
+        pygame.draw.rect(surf, self.ARCH_STONE_LIGHT, (px - r - pillar_w, top, pillar_w, 4))
+        pygame.draw.rect(surf, self.ARCH_STONE_LIGHT, (px + r, top, pillar_w, 4))
+        arch_rect = (px - r - pillar_w, top - r, (r + pillar_w) * 2, r * 2)
+        pygame.draw.arc(surf, self.ARCH_STONE, arch_rect, 0, math.pi, max(3, pillar_w))
+
+        # Glowing doorway interior - the actual "portal" part, colored per kind.
+        inner_rect = (px - r, top, r * 2, pillar_h)
+        pygame.draw.ellipse(surf, ring, inner_rect)
+        pad = max(2, pillar_w // 2)
+        pygame.draw.ellipse(surf, core, (px - r + pad, top + pad, r * 2 - pad * 2, pillar_h - pad * 2))
+
+    def _draw_calm_swirl_overlay(self, surf, p, r, core):
+        """entrance - a slow double-arc swirl inside the doorway, reads as an
+        active, safe portal drawing you in (vs. ambient's plain glow)."""
         rect = (p[0] - r, p[1] - r, r * 2, r * 2)
         for off in (0, math.pi):
             ang = self.t * 2.2 + off
             pygame.draw.arc(surf, core, rect, ang, ang + math.pi * 0.7, 2)
 
-    def _draw_beacon(self, surf, p, r, glow, ring, core):
-        """realm_exit - a calm upward light beam + a ground ring instead of a
-        closed circle, reads as "safe way out" rather than "into danger"."""
-        beam_h = int(r * 3.2)
-        beam_w = max(3, int(r * 0.55))
-        beam_surf = pygame.Surface((beam_w, beam_h), pygame.SRCALPHA)
-        for i in range(beam_h):
-            a = int(150 * (1 - i / beam_h))
-            pygame.draw.line(beam_surf, (*core, a), (0, beam_h - i), (beam_w, beam_h - i))
-        beam_rect = beam_surf.get_rect(midbottom=(p[0], p[1] + r * 0.4))
-        surf.blit(beam_surf, beam_rect)
-        pygame.draw.ellipse(surf, glow, (p[0] - r - 3, p[1] + r * 0.15, (r + 3) * 2, int(r * 0.9)))
-        pygame.draw.ellipse(surf, ring, (p[0] - r, p[1] + r * 0.25, r * 2, int(r * 0.6)), width=2)
-
-    def _draw_rift_spikes(self, surf, p, r, glow, ring, core):
-        """phase2 - a jagged, spiked rift instead of a clean ring, reads as
+    def _draw_crack_overlay(self, surf, p, r, core):
+        """phase2 - jagged crack lines through the doorway, reads as
         aggressive/dangerous for the boss-phase escalation moment."""
-        pygame.draw.circle(surf, glow, p, r + 4)
-        n = 8
-        pts = []
-        for i in range(n * 2):
-            ang = (i / (n * 2)) * math.tau + self.t * 3
-            rad = (r + 5) if i % 2 == 0 else max(2, r - 5)
-            pts.append((p[0] + math.cos(ang) * rad, p[1] + math.sin(ang) * rad))
-        pygame.draw.polygon(surf, ring, pts)
-        pygame.draw.circle(surf, core, p, max(2, r - 8))
+        n = 5
+        for i in range(n):
+            ang = (i / n) * math.tau + self.t * 1.5
+            x0, y0 = p[0], p[1]
+            x1 = p[0] + math.cos(ang) * r * 0.9
+            y1 = p[1] + math.sin(ang) * r * 0.9
+            pygame.draw.line(surf, core, (x0, y0), (x1, y1), 2)
 
-    def _draw_torn_rift(self, surf, p, r, glow, ring, core):
-        """dungeon_shard - a torn crack in reality (two crossing jagged lines)
-        instead of a smooth ring, distinct from entrance's swirl even though
-        they share a similar purple palette."""
-        pygame.draw.circle(surf, glow, p, r + 2)
+    def _draw_unstable_overlay(self, surf, p, r, ring):
+        """dungeon_shard - two crossing jittering lines through the doorway,
+        reads as an unstable, torn rift rather than a settled entrance."""
         for base_ang in (0.7, -0.7):
             ang = base_ang + math.sin(self.t * 1.5) * 0.1
             x0, y0 = p[0] - math.cos(ang) * r, p[1] - math.sin(ang) * r
             x1, y1 = p[0] + math.cos(ang) * r, p[1] + math.sin(ang) * r
-            pygame.draw.line(surf, ring, (x0, y0), (x1, y1), 3)
-        pygame.draw.circle(surf, core, p, max(2, r - 9))
+            pygame.draw.line(surf, ring, (x0, y0), (x1, y1), 2)
+
+    def _draw_light_spill_overlay(self, surf, p, r, glow):
+        """realm_exit - a soft light spilling out beneath the doorway, reads
+        as "safe way out" rather than "into danger"."""
+        spill_rect = (p[0] - r * 0.7, p[1] + r * 0.6, r * 1.4, r * 0.8)
+        pygame.draw.ellipse(surf, glow, spill_rect)
 
     def net_state(self):
         return dict(id=self.id, x=round(self.pos.x, 1), y=round(self.pos.y, 1), kind=self.kind,

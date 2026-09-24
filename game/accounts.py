@@ -134,10 +134,15 @@ def spend_echoes(name: str, amount: int) -> bool:
     return True
 
 
-def award_echoes_for_death(name: str, level: int) -> int:
-    """Called once per permadeath - the softer landing for the run that just
-    ended. Scaled by how far the character got, never by anything spent."""
-    amount = max(1, level // 2)
+def award_echoes_for_death(name: str, echoes_this_life: int) -> int:
+    """Called once per permadeath - a bonus ON TOP of whatever this life
+    already earned passively (RealmSim._reward banks 1 echo per 1000 XP,
+    live, while playing - never held back until death). The bonus is 2x
+    that life's own total, so death is never the ONLY way to earn Echoes,
+    but it's still a real, meaningful multiplier for the run that just
+    ended - not the old flat max(1, level // 2), which ignored how much
+    was already banked this life entirely."""
+    amount = 2 * max(0, echoes_this_life)
     add_echoes(name, amount)
     return amount
 

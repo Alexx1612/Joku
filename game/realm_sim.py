@@ -20,6 +20,9 @@ from game import achievements
 from game import vfx
 from game import crews
 from game import live_events
+from game import accounts
+
+ECHO_XP_PER_ECHO = 1000  # passive Echo-currency accrual rate (Batch 14) - see RealmSim._reward
 from game.entities import (Enemy, Bag, Portal, Obstacle, _mk_bullet, RANK_XP, BOSS_KINDS, BAG_MERGE_RADIUS,
                             BAG_MERGE_WINDOW, find_nearby_bag as _find_nearby_bag, bag_by_id as _bag_by_id,
                             withdraw_from_bag as _withdraw_from_bag)
@@ -236,11 +239,32 @@ ISLAND_THEMES = {
         "verb": "singing",
     },
 }
-ISLAND_NAMES = ["Emberfall Shard", "Coral Choir", "Frostbite Shard", "Pearlsong Spire",
-                "Bonewaste Shard", "Tideglass Sanctum", "Thornrock Shard",
-                "Driftbell Cloister", "Ashenreach Shard", "Abyssal Hymnal"]
+# Renamed to obvious alcohol-drink wordplay (each still one word swapped for a
+# similar-sounding real word, exactly the "Pina Colada -> Pine of the Coladas"
+# pattern requested), while keeping every island's existing shard/choir
+# elemental identity intact - drink names are generic recipe names, not
+# trademarked characters, so direct wordplay is fine.
+ISLAND_NAMES = ["Emberball Shard", "Coral Colada Choir", "Frostquiri Shard", "Pearlini Spire",
+                "Bonshine Shard", "Tidricane Sanctum", "Thorn-on-the-Rocks Shard",
+                "Driftai Cloister", "Ashioned Shard", "Abyssal Rumnal"]
 ISLAND_QUEST_INTERVAL = 300.0  # 5 minutes, per island independently
 ISLAND_WAVE_SIZE = 4           # guardians per flare/song wave, always including that theme's anchor mob
+
+# Batch 14 Track B1/B2: island idx -> a named mini-boss kind (see
+# entities.ENEMY_DEFS, rank="boss") that leads that island's wave instead of
+# the theme's generic anchor. Keyed by island idx as assigned in
+# _stamp_islands (0-9, one per ISLAND_NAMES entry, in list order) - only
+# islands with an entry here get a boss-led wave; any island not listed keeps
+# the plain anchor+guardians wave exactly as before. B1 covers indices 0-4,
+# B2 covers 5-9 - both add to this same dict, never overlapping keys.
+ISLAND_MINI_BOSS = {
+    0: "cinder_colossus", 1: "choir_sovereign", 2: "rubble_warlord",
+    3: "coral_leviathan", 4: "ashreach_revenant",
+    5: "tideglass_warden", 6: "thornrock_colossus", 7: "driftbell_matriarch",
+    8: "ashenreach_devourer", 9: "abyssal_choirmaster",
+}
+ISLAND_ESCORT_SIZE = 2  # a boss-led wave brings a SMALLER escort than a plain
+# guardian wave's 3 extra guardians - the boss itself is the real threat
 
 # A rare, server-wide-announced roaming World Boss incursion (open Realm only) -
 # deliberately separate from _maybe_spawn_boss's every-40-kill boss (tracked via
@@ -385,6 +409,11 @@ class RealmSim:
         # "The Reforging" storyline, open-Realm only (see _stamp_islands) - stays empty for bonus rooms
         self.landmarks = []  # [{"pos","biome","name","lore"}, ...] - one discoverable, non-combat POI
         # per biome (see _stamp_biome_buildings), open-Realm only, stays empty for bonus rooms
+        self.biome_vignettes = []  # [{"anchor","biome","template_idx"}, ...] - Track C (Batch 14)'s
+        # curated per-biome decoration clusters (see _stamp_biome_buildings) - recorded explicitly
+        # rather than re-derived from the grid, since vignettes deliberately reuse the SAME tile
+        # kinds the generic ambient scatter also uses (no new tile ids), which makes a grid-tile
+        # scan unable to tell "placed by a vignette" apart from "placed by the ambient scatter"
         self._landmark_visited = {}  # {pid: {landmark_idx, ...}} - SESSION-ONLY (never saved to any
         # file, matching "exploration reward doesn't need to survive permadeath") - reset whenever this
         # RealmSim instance is (re)created, exactly like every other per-tick/per-session sim state here
@@ -788,6 +817,66 @@ class RealmSim:
                 "biome": biome_name, "name": defn["name"], "lore": defn["lore"],
             })
 
+        # Curated biome decoration vignettes (Track C, Batch 14) - 20
+        # guaranteed hand-composed prop clusters per biome, additional to
+        # (never replacing) the existing generic ambient scatter stamped
+        # earlier in world.make_realm(). Land-tile rejection sampling (same
+        # idiom the generic scatter already uses: pick a random tile, check
+        # it actually belongs to this biome via GROUND_TO_BIOME_NAME) rather
+        # than lair-based anchoring, since 20-per-biome needs far more
+        # spatial spread than this realm's handful of lairs could offer.
+        # Reuses the SAME placed_rects list so vignettes never collide with
+        # buildings/terraces/landmarks/islands stamped above or below.
+        VIGNETTES_PER_BIOME = 20
+        MAX_ATTEMPTS_PER_VIGNETTE = 60  # some biomes (e.g. ice) can have a much
+        # smaller land area than others on a given seed - a too-low attempt
+        # budget starves them well short of 20 even though valid spots exist,
+        # just rarer to land on by uniform random sampling of the WHOLE grid.
+        # A smaller biome landing in the high teens instead of a full 20 is an
+        # acceptable rare shortfall (same convention the terrace/landmark
+        # loops already use), not worth chasing a perfect 20/20 every seed.
+        #
+        # Collision-check against a SNAPSHOT of placed_rects taken before this
+        # loop starts (buildings/terraces/landmarks/~30-40 rects), not the
+        # ever-growing list - checking every one of up to 200 vignette
+        # candidates against an ever-growing list of already-placed vignettes
+        # is an O(attempts x vignettes-so-far) cost that measurably regressed
+        # realm-gen time in testing. Vignette-vignette overlap is visually
+        # harmless for small ambient decoration clusters (same as the
+        # existing generic scatter, which never cross-checks itself either) -
+        # only overlapping a REAL structure (building/terrace/landmark/
+        # island) needs to be prevented. New vignette rects still get
+        # appended to the real placed_rects list so islands (stamped after
+        # this method returns) correctly avoid them.
+        structural_rects = list(placed_rects)
+        grid = self.realm_map.grid
+        grid_h, grid_w = len(grid), len(grid[0])
+        for biome_name in world.BIOME_VIGNETTE_TEMPLATES:
+            ground_tiles = {g for g, name in world.GROUND_TO_BIOME_NAME.items() if name == biome_name}
+            if not ground_tiles:
+                continue
+            placed = 0
+            template_idx = 0
+            for _ in range(VIGNETTES_PER_BIOME * MAX_ATTEMPTS_PER_VIGNETTE):
+                if placed >= VIGNETTES_PER_BIOME:
+                    break
+                ax = random.randint(3, grid_w - 4)
+                ay = random.randint(3, grid_h - 4)
+                if grid[ay][ax] not in ground_tiles:
+                    continue
+                candidate_rect = world.biome_vignette_rect((ax, ay))
+                if any(candidate_rect.inflate(2, 2).colliderect(r) for r in structural_rects):
+                    continue
+                rect = world.stamp_biome_vignette(grid, (ax, ay), biome_name, template_idx)
+                placed_rects.append(rect)
+                self.biome_vignettes.append({"anchor": (ax, ay), "biome": biome_name, "template_idx": template_idx})
+                placed += 1
+                template_idx += 1
+            # a biome with too little of its own land to fit 20 non-
+            # overlapping vignettes simply gets fewer - a rare shortfall on
+            # a small/fragmented biome region, not a bug (same "rare skip"
+            # convention as the terrace/landmark loops above).
+
     def _stamp_islands(self):
         """"The Reforging" storyline: stamps 10 small standalone island zones
         as coastal peninsulas evenly spaced by angle around the map
@@ -857,6 +946,10 @@ class RealmSim:
             walkway_end = (last_land[0] + (center_tile[0] - last_land[0]) * edge_frac,
                            last_land[1] + (center_tile[1] - last_land[1]) * edge_frac)
             world.stamp_walkway(grid, last_land, walkway_end, world.WALKWAY_PLANK_TILE[i])
+            # the walkway's landing point can overwrite a decoration stamp_island
+            # just placed at the island's edge - refill it so all 10 curated
+            # kinds always survive (see ensure_island_decorations' docstring)
+            world.ensure_island_decorations(grid, center_tile, theme)
             placed_centers.append(center_tile)
             center_world = pygame.Vector2(center_tile[0] * TILE + TILE / 2, center_tile[1] * TILE + TILE / 2)
             # cooldown starts at 0 (not a delay) so every island's first guardian
@@ -892,6 +985,14 @@ class RealmSim:
             slot = hub_center + pygame.Vector2(1, 0).rotate_rad(angle) * ring_radius
             self.portals.append(Portal(slot, life=float("inf"), kind="island_link",
                                         target_pos=(isl["pos"].x, isl["pos"].y), label=isl["label"]))
+            # A RETURN portal at the island itself, back to this same hub slot -
+            # without this, a player who fast-travels out via the portal above
+            # has no way back except walking the whole plank walkway. Offset
+            # slightly from isl["pos"] so it doesn't sit exactly on top of the
+            # landmark centerpiece stamp_island() already placed there.
+            return_pos = isl["pos"] + pygame.Vector2(0, TILE * 1.5)
+            self.portals.append(Portal(return_pos, life=float("inf"), kind="island_link",
+                                        target_pos=(slot.x, slot.y), label="Return"))
 
     def _populate_all_lairs(self):
         """Fills every lair up to its cap right away, so the continent is already
@@ -1175,7 +1276,11 @@ class RealmSim:
             if isl["cooldown"] > 0:
                 continue
             theme = ISLAND_THEMES[isl["theme"]]
-            wave = [theme["anchor"]] + [random.choice(theme["guardians"]) for _ in range(ISLAND_WAVE_SIZE - 1)]
+            mini_boss = ISLAND_MINI_BOSS.get(isl["idx"])
+            if mini_boss is not None:
+                wave = [mini_boss] + [random.choice(theme["guardians"]) for _ in range(ISLAND_ESCORT_SIZE)]
+            else:
+                wave = [theme["anchor"]] + [random.choice(theme["guardians"]) for _ in range(ISLAND_WAVE_SIZE - 1)]
             for kind in wave:
                 pos = self._find_spawn_pos_near(isl["pos"], min_tiles=2, max_tiles=6)
                 if pos is None:
@@ -1184,8 +1289,12 @@ class RealmSim:
                 enemy.island_idx = isl["idx"]
                 self.enemies.append(enemy)
                 isl["alive_guardians"] += 1
-            self.events.append((None, f"{isl['label']} is {theme['verb']}! Defenders have appeared.",
-                                 theme["color"]))
+            if mini_boss is not None:
+                boss_display = mini_boss.replace("_", " ").title()
+                msg = f"{isl['label']} is {theme['verb']}! {boss_display} has awoken!"
+            else:
+                msg = f"{isl['label']} is {theme['verb']}! Defenders have appeared."
+            self.events.append((None, msg, theme["color"]))
             self.vfx_events.append(("boss_appear", isl["pos"].x, isl["pos"].y, theme["color"]))
 
     def _progress_island_event(self, enemy, killer):
@@ -1425,7 +1534,20 @@ class RealmSim:
         cls_for_loot = killer.cls_name if killer else "wizard"
         if killer:
             killer.kills += 1
-            killer.gain_xp(RANK_XP[enemy.rank])
+            xp_gained = RANK_XP[enemy.rank]
+            killer.gain_xp(xp_gained)
+            # Echo passive accrual (Batch 14): bank 1 real echo to the ACCOUNT
+            # immediately for every ECHO_XP_PER_ECHO of cumulative lifetime XP
+            # crossed - not held back until death, so nothing is lost to a
+            # crash/disconnect, and a single big XP gain (e.g. a boss kill)
+            # can correctly cross more than one threshold at once.
+            before = killer._echo_xp_progress // ECHO_XP_PER_ECHO
+            killer._echo_xp_progress += xp_gained
+            after = killer._echo_xp_progress // ECHO_XP_PER_ECHO
+            new_echoes = after - before
+            if new_echoes > 0:
+                accounts.add_echoes(killer.name, new_echoes)
+                killer._echoes_this_life += new_echoes
             if killer.kills == 1:
                 self._grant_achievement(killer, "first_blood")
             if enemy.rank == "boss":

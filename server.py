@@ -26,7 +26,8 @@ from game import constants as C
 from game import world
 from game import accounts
 from game import characters
-from game.entities import Player, Bag, Portal, NexusBot, find_nearby_bag, bag_by_id, withdraw_from_bag
+from game.entities import (Player, Bag, Portal, NexusBot, find_nearby_bag, bag_by_id,
+                            withdraw_from_bag, BazaarChest, deposit_to_bag, spawn_bazaar_chests)
 from game.realm_sim import RealmSim, DUNGEON_THEMES, BONUS_DIFFICULTIES
 from game.items import (load_vault, save_vault, VAULT_SLOTS, VAULT_CHEST_SIZE, VAULT_CHEST_COUNT,
                          wish_fountain, apply_socket)
@@ -131,7 +132,7 @@ class ServerState:
         # pruned in step() whenever the instance it points to is cleaned up
         self.sessions = {}  # pid -> Session
         self.pending_actions = []  # [(pid, action_dict), ...]
-        self.bazaar_ground_items = []  # items players dropped in the Bazaar for others to grab
+        self.bazaar_ground_items = spawn_bazaar_chests()  # permanent chests + whatever players dropped
         self.chat_queue = []  # [(pid, zone, text), ...] - broadcast to same-zone snapshots this tick, then cleared
         self.trades = {}  # trade_id -> Trade
         self._next_trade_id = 1
@@ -334,7 +335,7 @@ def step(state, dt):
     # 5) deaths - permadeath, same as single-player
     for s in state.sessions.values():
         if s.zone in (ZONE_REALM, ZONE_BONUS) and not s.player.alive:
-            earned = accounts.award_echoes_for_death(s.player.name, s.player.level)
+            earned = accounts.award_echoes_for_death(s.player.name, s.player._echoes_this_life)
             s.death_info = dict(level=s.player.level, kills=s.player.kills, cls=s.player.cls_name,
                                  earned_echoes=earned)
             s.zone = ZONE_DEAD
@@ -433,6 +434,18 @@ def _apply_action(state, s, action):
             if item is not None:
                 send_msg(s.sock, {"type": "bag_state", "id": bag_id,
                                    "items": [it.to_json() for it in bag.items] if bag.items else []})
+    elif kind == "chest_deposit":
+        # only a BazaarChest can receive deposits - see deposit_to_bag's own
+        # docstring for why this isn't just folded into bag_withdraw's shape
+        bags = _bag_list_for_zone(state, s)
+        if bags is not None:
+            bag_id, source_idx = action.get("bag_id", -1), action.get("idx", -1)
+            bag = bag_by_id(bags, bag_id)
+            if isinstance(bag, BazaarChest):
+                item = deposit_to_bag(bags, bag_id, source_idx, p)
+                if item is not None:
+                    send_msg(s.sock, {"type": "bag_state", "id": bag_id,
+                                       "items": [it.to_json() for it in bag.items]})
     elif kind == "use_ability" and s.zone in (ZONE_REALM, ZONE_BONUS):
         sim = state.realm_sim if s.zone == ZONE_REALM else state.bonus_sims.get(s.bonus_sim_id)
         if sim is not None:

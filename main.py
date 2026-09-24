@@ -39,7 +39,8 @@ from game import accounts
 from game import characters
 from game import clipboard
 from game import live_events
-from game.entities import Player, Bag, Portal, NexusBot, find_nearby_bag, bag_by_id, withdraw_from_bag
+from game.entities import (Player, Bag, Portal, NexusBot, find_nearby_bag, bag_by_id,
+                            withdraw_from_bag, BazaarChest, deposit_to_bag, spawn_bazaar_chests)
 from game.realm_sim import RealmSim, auto_aim_direction, DUNGEON_THEMES, BONUS_DIFFICULTIES, AUTO_AIM_CONE_DEG
 from game.items import (load_vault, save_vault, vault_exists, VAULT_SLOTS, VAULT_CHEST_SIZE,
                          PERMANENT_POTION_CAP, identify_proc_kind, apply_socket, SLOT_WEAPON)
@@ -108,6 +109,7 @@ class Game:
         # consuming the item by accident
         self.DBLCLICK_MS = 350
         self.auto_fire_enabled = False  # I key: fires continuously without holding the mouse button
+        self.right_panel_mode = "inventory"  # Tab key: switches inventory vs. pet stats in the right dock
         self._fire_buffer = 0.0  # seconds left to auto-fire a click that landed just before
         # the weapon's cooldown cleared - see _handle_firing / FIRE_BUFFER_WINDOW
         self.chat_open = False
@@ -152,7 +154,7 @@ class Game:
         # per-call based on the player's current biome (see _update_sim); bonus dungeons get
         # their own theme-fixed AmbientEvents instance inside RealmSim itself
         self._dust_cd = 0.0  # footstep-dust cooldown, see _update_sim
-        self.bazaar_ground_items = []  # items players drop in the Bazaar for others to grab
+        self.bazaar_ground_items = spawn_bazaar_chests()  # permanent chests + whatever players drop
         self.death_info = None
 
     # ---------------------------------------------------------- lifecycle --
@@ -275,7 +277,7 @@ class Game:
             self.player.pos.x += C.TILE * 1.5
 
     def die(self):
-        earned = accounts.award_echoes_for_death(self.player_name, self.player.level)
+        earned = accounts.award_echoes_for_death(self.player_name, self.player._echoes_this_life)
         self.death_info = dict(level=self.player.level, kills=self.player.kills,
                                 cls=self.player.cls_name, earned_echoes=earned)
         # permadeath means what it says - the saved character (if any) is gone for
@@ -433,6 +435,9 @@ class Game:
                     self.auto_fire_enabled = not self.auto_fire_enabled
                     self.push_feed(f"Auto-fire {'ON' if self.auto_fire_enabled else 'OFF'}",
                                     (150, 220, 255) if self.auto_fire_enabled else (170, 170, 180))
+                elif (event.key == pygame.K_TAB
+                      and self.state in (STATE_NEXUS, STATE_BAZAAR, STATE_REALM, STATE_BONUS)):
+                    self.right_panel_mode = "pet" if self.right_panel_mode == "inventory" else "inventory"
                 elif event.key == pygame.K_SPACE and self.state in (STATE_REALM, STATE_BONUS):
                     self._use_ability()
                 elif (event.key in (pygame.K_LSHIFT, pygame.K_RSHIFT)
@@ -772,6 +777,16 @@ class Game:
                     self.push_feed(f"Fed {it.display_name} to your pet", (170, 220, 255))
                 else:
                     self.push_feed("Can't feed that to your pet", (220, 150, 90))
+        elif origin[0] == "backpack" and dest[0] == "bag":
+            # deposit INTO the currently-open container - only a BazaarChest accepts
+            # this (a regular loot Bag stays take-only, see withdraw_from_bag's own
+            # "bag -> backpack/equip only" docstring)
+            bag = self._current_bag()
+            if isinstance(bag, BazaarChest):
+                i = origin[1]
+                if i < len(p.backpack) and not bag.is_full():
+                    it = p.backpack.pop(i)
+                    bag.add_item(it)
 
     NAME_ENTRY_MAX_LEN = 16  # matches server.py's join-name cap, same identity system
 
@@ -1206,7 +1221,7 @@ class Game:
 
     _THEME_ZONE_FOR_STATE = {
         STATE_NEXUS: "nexus", STATE_BAZAAR: "bazaar", STATE_VAULT_ROOM: "nexus",
-        STATE_REALM: "realm", STATE_BONUS: "dungeon",
+        STATE_VAULT: "vault", STATE_REALM: "realm", STATE_BONUS: "dungeon",
     }
 
     def update(self, dt):
@@ -1224,9 +1239,15 @@ class Game:
             if self._autosave_cd <= 0:
                 self._autosave_cd = AUTOSAVE_INTERVAL
                 self._save_character_progress()
-        zone = self._THEME_ZONE_FOR_STATE.get(self.state)
-        if zone is not None:
-            audio.play_theme(zone)
+        if self.state == STATE_BONUS and self.bonus_sim is not None:
+            # a real distinct track per dungeon theme (Cave Warren, Frozen
+            # Crypt, ...) instead of one generic "dungeon" track for all of
+            # them - see game.audio.dungeon_zone_for_key.
+            audio.play_theme(audio.dungeon_zone_for_key(self.bonus_sim.theme_key))
+        else:
+            zone = self._THEME_ZONE_FOR_STATE.get(self.state)
+            if zone is not None:
+                audio.play_theme(zone)
         for m in self.feed:
             m[2] -= dt
         self.feed = [m for m in self.feed if m[2] > 0]
@@ -1448,6 +1469,21 @@ class Game:
             ui.draw_echo_shop_overlay(s, accounts.get_echoes(self.player_name), menu_items=items,
                                        selected_idx=self.echo_shop_selected, mouse_pos=pygame.mouse.get_pos())
 
+    def _draw_right_switch_panel(self, s, mp):
+        """Tab key (see handle_events) switches this dock slot between the
+        inventory grid and pet stats - only one is ever drawn per frame, with
+        a small tab-label strip above it so the key is discoverable. Falls
+        back to inventory if there's no pet to show, so Tab can never leave
+        the player looking at a blank panel."""
+        mode = self.right_panel_mode
+        if mode == "pet" and getattr(self.player, "pet", None) is None:
+            mode = "inventory"
+        ui.draw_panel_tabs(s, mode)
+        if mode == "pet":
+            ui.draw_pet_panel(s, self.player, dragging=self.drag_from is not None)
+        else:
+            ui.draw_inventory(s, self.player, mp, dragging_from=self.drag_from)
+
     def _draw_hub(self, tmap, mm, name, hint_text):
         s = self.screen
         if mm.full_map_open:
@@ -1481,8 +1517,7 @@ class Game:
         ui.draw_fps_counter(s, self.clock.get_fps())
         mp = pygame.mouse.get_pos()
         ui.draw_player_panel(s, self.player, auto_fire=False)
-        ui.draw_pet_panel(s, self.player, dragging=self.drag_from is not None)
-        ui.draw_inventory(s, self.player, mp, dragging_from=self.drag_from)
+        self._draw_right_switch_panel(s, mp)
         dragged = self._dragged_item()
         if dragged:
             ui.draw_dragged_item(s, dragged, mp)
@@ -1553,8 +1588,7 @@ class Game:
                                  phase2_quest_target=sim._phase2_quest_target)
         mp = pygame.mouse.get_pos()
         ui.draw_player_panel(s, self.player, auto_fire=self.auto_fire_enabled)
-        ui.draw_pet_panel(s, self.player, dragging=self.drag_from is not None)
-        ui.draw_inventory(s, self.player, mp, dragging_from=self.drag_from)
+        self._draw_right_switch_panel(s, mp)
         dragged = self._dragged_item()
         if dragged:
             ui.draw_dragged_item(s, dragged, mp)

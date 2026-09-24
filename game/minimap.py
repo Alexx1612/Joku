@@ -182,6 +182,17 @@ def draw_corner(surf, tilemap, mm, player_pos, peers=(), portals=(), enemies=())
     def local(wx, wy):
         return wx - origin_tx * C.TILE, wy - origin_ty * C.TILE
 
+    # Every dot below is projected from a world position that can legitimately
+    # fall outside the currently-cropped/zoomed view window (a boss blip is
+    # always shown regardless of exploration/distance, per _visible_enemy_blips,
+    # and any entity can simply be off past the radar's current crop) - without
+    # a clip, that projects to an arbitrary pixel anywhere on the full screen,
+    # not just outside the little map square. Clip strictly to the map's own
+    # inner content rect so nothing can ever render outside it; restore
+    # whatever clip the caller had (normally none) before drawing the
+    # zoom buttons/hint text below, which must NOT be clipped.
+    old_clip = surf.get_clip()
+    surf.set_clip(pygame.Rect(x, y, size, size))
     for pt in portals:
         lx, ly = local(pt.pos.x, pt.pos.y)
         _world_dot(surf, x, y, px_per_tile, lx, ly, (220, 120, 255), 3)
@@ -194,6 +205,7 @@ def draw_corner(surf, tilemap, mm, player_pos, peers=(), portals=(), enemies=())
                     outline=(255, 255, 255) if is_boss else None)
     plx, ply = local(player_pos.x, player_pos.y)
     _world_dot(surf, x, y, px_per_tile, plx, ply, (255, 230, 90), 3, outline=(0, 0, 0))
+    surf.set_clip(old_clip)
 
     font_s = pygame.font.SysFont("consolas", 12)
     for rect, delta in corner_zoom_button_rects():
@@ -227,7 +239,16 @@ def draw_full_map(surf, tilemap, mm, player_pos, peers=(), portals=(), zone_name
     crop_y0 = max(0, min(tilemap.h - view_h, int(player_pos.y / C.TILE - view_h / 2)))
     cropped = base.subsurface((crop_x0, crop_y0, view_w, view_h))
     scaled = pygame.transform.scale(cropped, (view_w * px_per_tile, view_h * px_per_tile))
-    surf.blit(scaled, (ox + crop_x0 * px_per_tile, oy + crop_y0 * px_per_tile))
+    map_rect = pygame.Rect(ox + crop_x0 * px_per_tile, oy + crop_y0 * px_per_tile,
+                            view_w * px_per_tile, view_h * px_per_tile)
+    surf.blit(scaled, map_rect.topleft)
+    # Same reasoning as draw_corner() above: a boss blip (or any entity beyond
+    # the current crop window) can project to a pixel well outside the actual
+    # rendered map image (which may itself be smaller than the full screen at
+    # low zoom) - clip strictly to that image's own rect, not the whole
+    # screen, then restore before drawing the title/hint text.
+    old_clip = surf.get_clip()
+    surf.set_clip(map_rect)
     for pt in portals:
         _world_dot(surf, ox, oy, px_per_tile, pt.pos.x, pt.pos.y, (220, 120, 255), 5, outline=(0, 0, 0))
     for peer in peers:
@@ -236,6 +257,7 @@ def draw_full_map(surf, tilemap, mm, player_pos, peers=(), portals=(), zone_name
         _world_dot(surf, ox, oy, px_per_tile, epos.x, epos.y, color, 6 if is_boss else 3,
                     outline=(255, 255, 255) if is_boss else (0, 0, 0))
     _world_dot(surf, ox, oy, px_per_tile, player_pos.x, player_pos.y, (255, 230, 90), 5, outline=(0, 0, 0))
+    surf.set_clip(old_clip)
     font_m = pygame.font.SysFont("consolas", 18, bold=True)
     font_s = pygame.font.SysFont("consolas", 14)
     title = font_m.render(f"{zone_name} - Map", True, (230, 220, 190))

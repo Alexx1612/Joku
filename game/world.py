@@ -351,6 +351,15 @@ for _biome_name in GROUND_TO_BIOME_NAME.values():
     TILE_COLORS[_next_building_wall_id] = TILE_COLORS[_ground_tile]  # flat fallback if art is ever missing
     _next_building_wall_id += 1
 SOLID.update(BUILDING_WALL_TILE.values())
+# A lair building's wall ring renders correctly (real texture, real two-tone
+# shading) but visually blends into ambient natural rock/cliff SOLID tiles of
+# a similar dark shade when they happen to sit nearby - confirmed by a real
+# rendered screenshot comparison, not assumed - so a building doesn't read as
+# "a constructed structure" at normal gameplay viewing distance even though
+# up close its walls are perfectly visible. Used below to give building
+# walls their own warmer, more saturated outline/shading distinct from
+# natural stone, regardless of what's next to them.
+BUILDING_WALL_TILE_IDS = set(BUILDING_WALL_TILE.values())
 
 # ------------------------------------------------------- island zones -----
 # "The Reforging" storyline (see RealmSim._stamp_islands): 10 small
@@ -578,10 +587,14 @@ def stamp_island(grid, anchor_tile, theme):
                 grid[yy][xx] = ground_tile
                 claimed.add((xx, yy))
 
+    # Exactly one of each of the theme's 10 curated prop kinds (ISLAND_PROP_KINDS
+    # above already lists exactly 10 per theme) - guarantees a real, full-variety
+    # 10-decoration island instead of a random 7-10 subset that could repeat
+    # kinds and skip others.
     scatter_candidates = [(xx, yy) for (xx, yy) in claimed if math.hypot(xx - ax, yy - ay) > 2]
     random.shuffle(scatter_candidates)
-    for (px, py) in scatter_candidates[:random.randint(7, 10)]:
-        grid[py][px] = ISLAND_PROP_TILE[(theme, random.choice(prop_kinds))]
+    for (px, py), kind in zip(scatter_candidates, prop_kinds):
+        grid[py][px] = ISLAND_PROP_TILE[(theme, kind)]
 
     grid[ay][ax] = TALL_PROP_TILE[(theme, ISLAND_LANDMARK_KIND[theme])]
 
@@ -589,6 +602,38 @@ def stamp_island(grid, anchor_tile, theme):
     ys = [p[1] for p in claimed] or [ay]
     rect = pygame.Rect(min(xs), min(ys), max(xs) - min(xs) + 1, max(ys) - min(ys) + 1)
     return rect, (ax, ay)
+
+
+def ensure_island_decorations(grid, center_tile, theme):
+    """Call this AFTER stamp_walkway() has run for this island - the plank
+    walkway's landing point sits right at the island's edge (see the caller
+    in RealmSim._stamp_islands), which is exactly where stamp_island()'s own
+    decoration scatter can place a prop, so a walkway can silently overwrite
+    one of the guaranteed 10 (confirmed: consistently drops to exactly 9,
+    never fewer, one overwritten tile). Re-checks all 10 curated kinds are
+    still present and refills any that got clobbered, onto any tile that's
+    still the island's own plain ground (never overwriting the landmark or
+    a walkway plank)."""
+    grid_h, grid_w = len(grid), len(grid[0])
+    ax, ay = center_tile
+    ground_tile = ISLAND_GROUND[theme]
+    prop_ids = {ISLAND_PROP_TILE[(theme, k)]: k for k in ISLAND_PROP_KINDS[theme]}
+    found_kinds = set()
+    plain_ground_candidates = []
+    r = ISLAND_RADIUS + 3
+    for yy in range(ay - r, ay + r + 1):
+        for xx in range(ax - r, ax + r + 1):
+            if not (0 <= yy < grid_h and 0 <= xx < grid_w):
+                continue
+            t = grid[yy][xx]
+            if t in prop_ids:
+                found_kinds.add(prop_ids[t])
+            elif t == ground_tile and math.hypot(xx - ax, yy - ay) > 2:
+                plain_ground_candidates.append((xx, yy))
+    missing = [k for k in ISLAND_PROP_KINDS[theme] if k not in found_kinds]
+    random.shuffle(plain_ground_candidates)
+    for kind, (px, py) in zip(missing, plain_ground_candidates):
+        grid[py][px] = ISLAND_PROP_TILE[(theme, kind)]
 
 
 # ------------------------------------------------------- visual terracing --
@@ -760,6 +805,86 @@ def stamp_landmark(grid, anchor_tile, biome_name):
     xs = [p[0] for p in claimed] or [ax]
     ys = [p[1] for p in claimed] or [ay]
     return pygame.Rect(min(xs), min(ys), max(xs) - min(xs) + 1, max(ys) - min(ys) + 1)
+
+
+# Track C (Batch 14): curated biome decoration "vignettes" - 20 guaranteed,
+# hand-composed small prop clusters per biome, distinct from the existing
+# generic ambient scatter (that stays exactly as-is). Each vignette reuses
+# ONLY already-registered BIOME_PROP_TILE kinds (zero new tile ids, zero
+# collision risk) arranged in a small deliberate pattern around an anchor,
+# so it reads as one composed "scene" (a mushroom ring, a fallen-log
+# clearing, etc.) instead of another independent random single-tile pick.
+# Two alternating templates per biome for variety across the 20 instances.
+BIOME_VIGNETTE_RADIUS = 2
+BIOME_VIGNETTE_TEMPLATES = {
+    "forest": [
+        [("wildflower_patch", 0, 0), ("mushroom_cluster", -1, -1), ("mushroom_cluster", 1, -1),
+         ("mushroom_cluster", -1, 1), ("mushroom_cluster", 1, 1)],  # a mushroom ring around a flower patch
+        [("tree", 0, 0), ("fallen_log", 1, 0), ("berry_bush", -1, 1), ("grasstuft", 0, 1)],  # fallen-log clearing
+    ],
+    "desert": [
+        [("puddle", 0, 0), ("gravel_patch", -1, 0), ("gravel_patch", 1, 0), ("pebbles", 0, 1)],  # a drying watering hole
+        [("boulder", 0, 0), ("rock", 1, 1), ("skull", -1, 1), ("cracked_ground", 0, 1)],  # sun-bleached remains
+    ],
+    "swamp": [
+        [("reed_cluster", 0, -1), ("reed_cluster", 0, 1), ("reed_cluster", -1, 0), ("puddle", 0, 0)],  # reed marsh
+        [("moss_patch", 0, 0), ("mushroom_cluster", 1, 0), ("water_stain", -1, 1)],  # mossy sinkhole
+    ],
+    "tundra": [
+        [("dead_tree", 0, 0), ("stump", 1, 0), ("debris", -1, 1)],  # frost graveyard
+        [("fallen_log", 0, 0), ("rock", 1, -1), ("debris", -1, -1)],  # windfall thicket
+    ],
+    "highlands": [
+        [("boulder", 0, 0), ("rock", -1, -1), ("rock", 1, -1), ("gravel_patch", 0, 1)],  # rock formation
+        [("pebbles", 0, 0), ("boulder", 1, 1), ("cracked_ground", -1, 1)],  # scree slope
+    ],
+    "ashlands": [
+        [("ash_pile", 0, -1), ("ash_pile", 0, 1), ("ash_pile", -1, 0), ("skull", 0, 0)],  # ash mound
+        [("dead_tree", 0, 0), ("cracked_ground", 1, 0), ("debris", -1, 1)],  # scorched stand
+    ],
+    "jungle": [
+        [("vine", 0, -1), ("vine", 0, 1), ("root_tangle", -1, 0), ("mushroom_cluster", 1, 0)],  # vine thicket
+        [("tree", 0, 0), ("berry_bush", 1, 1), ("root_tangle", -1, -1)],  # canopy root cluster
+    ],
+    "wasteland": [
+        [("skull", 0, 0), ("debris", 1, 0), ("debris", -1, 0), ("dead_tree", 0, 1)],  # bone pile
+        [("gravel_patch", 0, 0), ("ash_pile", 1, 1), ("skull", -1, -1)],  # blasted waste
+    ],
+    "ice": [
+        [("boulder", 0, 0), ("rock", 1, 0), ("dead_tree", -1, 1)],  # ice ridge
+        [("debris", 0, 0), ("rock", 0, 1), ("boulder", 1, -1)],  # frost-shattered rubble
+    ],
+    "cave": [
+        [("mushroom_cluster", 0, -1), ("mushroom_cluster", 0, 1), ("cobweb", -1, 0), ("rune_marking", 0, 0)],  # fungal grotto
+        [("small_pile", 0, 0), ("cobweb", 1, 1), ("root_tangle", -1, -1)],  # forgotten cache
+    ],
+}
+
+
+def biome_vignette_rect(anchor_tile):
+    """Pure geometry (no mutation) - same overlap-check calling convention as
+    lair_building_rect()/terrace_rect()/landmark_rect() above."""
+    ax, ay = anchor_tile
+    r = BIOME_VIGNETTE_RADIUS
+    return pygame.Rect(ax - r, ay - r, r * 2 + 1, r * 2 + 1)
+
+
+def stamp_biome_vignette(grid, anchor_tile, biome_name, template_idx=0):
+    """Stamps one small curated prop cluster (see BIOME_VIGNETTE_TEMPLATES)
+    centered on anchor_tile, using only already-registered BIOME_PROP_TILE
+    kinds. Returns the vignette's rect (tile space) for overlap-checking,
+    matching stamp_landmark's own return-value convention."""
+    grid_h, grid_w = len(grid), len(grid[0])
+    ax, ay = anchor_tile
+    templates = BIOME_VIGNETTE_TEMPLATES.get(biome_name)
+    if not templates:
+        return biome_vignette_rect(anchor_tile)
+    template = templates[template_idx % len(templates)]
+    for kind, dx, dy in template:
+        xx, yy = ax + dx, ay + dy
+        if 0 <= yy < grid_h and 0 <= xx < grid_w:
+            grid[yy][xx] = BIOME_PROP_TILE[(biome_name, kind)]
+    return biome_vignette_rect(anchor_tile)
 
 
 REALM_START_RADIUS = 9  # tile radius of the stamped starting-area plaza
@@ -1408,11 +1533,26 @@ def make_realm():
     # function sampled at different scales, so per-octave direction variety is what
     # actually produces multi-directional, non-parallel level-set curvature - see the
     # comment above this function for why a single shared direction would fail).
-    def _affinity_tables():
+    def _affinity_tables(is_inner):
         xa_list, xb_list, yc_list, yd_list = [], [], [], []
         # base frequency picked the same way as before (still controls overall biome
-        # region SIZE, unrelated to the octave count/detail level above)
-        freq = random.uniform(0.004, 0.0133)
+        # region SIZE, unrelated to the octave count/detail level above).
+        # DIAGNOSIS (real bug, confirmed by rendering actual biome-classification
+        # screenshots, not guessed): the inner tier's 6 biomes compete for a disk of
+        # radius INNER_CUTOFF*max_r while the outer tier's 4 compete for the much
+        # bigger remaining annulus - inner-tier CELLS end up ~4-5x smaller in area
+        # than outer-tier cells (6 biomes in ~1/4 the land area vs 4 biomes in ~3/4),
+        # so an inner cell only ever samples a small, nearly-linear fraction of the
+        # SAME wavelength range used for outer cells - a plane wave looks like a
+        # straight ramp over a small enough slice of its own cycle, which is exactly
+        # what was still reading as flat/diamond-edged boundaries between inner
+        # biomes even with 5 octaves layered on top (screenshots showed this clearly:
+        # outer-tier lobes curve organically, inner-tier boundaries stayed visibly
+        # more angular/straight-edged). Fix: scale the inner tier's frequency up by
+        # ~2.1x (sqrt of that ~4.5x area ratio, so linear/wavelength scale matches
+        # cell size) so inner biomes get the same relative curvature-per-cell as
+        # outer ones, instead of literally the same absolute wavelength range.
+        freq = random.uniform(0.004, 0.0133) * (2.1 if is_inner else 1.0)
         amplitude = 1.0
         for _octave in range(AFFINITY_OCTAVES):
             theta = random.uniform(0, math.tau)
@@ -1426,7 +1566,11 @@ def make_realm():
             amplitude *= 0.5
         return xa_list, xb_list, yc_list, yd_list
 
-    _affinity_by_biome = {bt: _affinity_tables() for bt in (BIOME_TIER_OUTER + BIOME_TIER_INNER)}
+    _affinity_by_biome = {}
+    for bt in BIOME_TIER_OUTER:
+        _affinity_by_biome[bt] = _affinity_tables(is_inner=False)
+    for bt in BIOME_TIER_INNER:
+        _affinity_by_biome[bt] = _affinity_tables(is_inner=True)
 
     def _affinity(bt, x, y):
         xa, xb, yc, yd = _affinity_by_biome[bt]
@@ -2183,6 +2327,44 @@ def reveal_hidden_room(grid, hidden_room, connect_to_center, floor_tile, theme_n
         grid[py][px] = DUNGEON_PROP_TILE[(prop_theme, kind)]
 
 
+_ARCH_STONE = (58, 54, 50)
+_ARCH_STONE_LIGHT = (82, 77, 71)
+
+
+def _draw_archway_tile(surf, cx, cy, kind_color, t_ms):
+    """The tile-drawn twin of entities.Portal._draw_archway - same stone-
+    pillar-and-lintel silhouette with a glowing colored doorway interior, for
+    the two "portal-like" tile cells (Vault, Bazaar-return) that aren't
+    Portal objects. Kept as its own small function (not shared code across
+    modules) since it draws against a tile's fixed center point/time rather
+    than a moving entity's pulsing radius - the visual result matches, the
+    inputs don't."""
+    r = int(C.TILE * 0.34 + 2 * math.sin(t_ms / 260.0))
+    pillar_w = max(3, int(r * 0.4))
+    pillar_h = int(r * 2.1)
+    top = cy - pillar_h // 2
+    glow = tuple(max(0, c - 30) for c in kind_color)
+    ring = kind_color
+    core = tuple(min(255, c + 60) for c in kind_color)
+
+    glow_d = int(r * 3.2)
+    glow_surf = pygame.Surface((glow_d, glow_d), pygame.SRCALPHA)
+    pygame.draw.circle(glow_surf, (*glow, 100), (glow_d // 2, glow_d // 2), int(r * 1.3))
+    surf.blit(glow_surf, (cx - glow_d // 2, cy - glow_d // 2))
+
+    pygame.draw.rect(surf, _ARCH_STONE, (cx - r - pillar_w, top, pillar_w, pillar_h), border_radius=2)
+    pygame.draw.rect(surf, _ARCH_STONE, (cx + r, top, pillar_w, pillar_h), border_radius=2)
+    pygame.draw.rect(surf, _ARCH_STONE_LIGHT, (cx - r - pillar_w, top, pillar_w, 4))
+    pygame.draw.rect(surf, _ARCH_STONE_LIGHT, (cx + r, top, pillar_w, 4))
+    arch_rect = (cx - r - pillar_w, top - r, (r + pillar_w) * 2, r * 2)
+    pygame.draw.arc(surf, _ARCH_STONE, arch_rect, 0, math.pi, max(3, pillar_w))
+
+    inner_rect = (cx - r, top, r * 2, pillar_h)
+    pygame.draw.ellipse(surf, ring, inner_rect)
+    pad = max(2, pillar_w // 2)
+    pygame.draw.ellipse(surf, core, (cx - r + pad, top + pad, r * 2 - pad * 2, pillar_h - pad * 2))
+
+
 class TileMap:
     def __init__(self, grid):
         self.grid = grid
@@ -2303,6 +2485,14 @@ class TileMap:
                     pygame.draw.circle(surf, _tint(color, 60), (px + C.TILE // 2, py + C.TILE // 2), ring_r, 2)
                     cw, ch = _CHEST_SPRITE.get_size()
                     surf.blit(_CHEST_SPRITE, (px + C.TILE // 2 - cw // 2, py + C.TILE - ch + 4))
+                elif t in (VAULT_TILE, BAZAAR_PORTAL):
+                    # Same "dungeon door" archway look every entities.Portal now
+                    # uses (see entities.Portal._draw_archway) - neither of these
+                    # is a Portal object (they're plain tile-grid cells), so this
+                    # is a standalone equivalent drawn as a tile overlay instead
+                    # of the generic pulsing-rect INTERACTIVE treatment below.
+                    pygame.draw.rect(surf, TILE_COLORS[NEXUS_FLOOR], (px, py, C.TILE, C.TILE))
+                    _draw_archway_tile(surf, px + C.TILE // 2, py + C.TILE // 2, color, t_ms)
                 elif t in INTERACTIVE:
                     pulse = 1.0 + 0.18 * math.sin(t_ms / 300.0)
                     pygame.draw.rect(surf, tuple(min(255, int(c * pulse)) for c in color), (px, py, C.TILE, C.TILE))
@@ -2344,7 +2534,12 @@ class TileMap:
                     # solid tile - reads as "the wall cluster has a visible silhouette"
                     # instead of a distracting grid over solid rock, per the user's
                     # "walls should have an outline so I can see them" request.
-                    edge_col = (235, 225, 195)
+                    is_building_wall = t in BUILDING_WALL_TILE_IDS
+                    # a warmer, brighter gold outline for a constructed wall (vs. the
+                    # cooler pale outline every other solid/cliff tile keeps) so a
+                    # building reads as "built" at a glance even next to natural rock
+                    # of a similar base texture - see the note above BUILDING_WALL_TILE_IDS.
+                    edge_col = (230, 190, 90) if is_building_wall else (235, 225, 195)
                     if not (ty > 0 and self.grid[ty - 1][tx] in SOLID):
                         pygame.draw.line(surf, edge_col, (px, py), (px + C.TILE, py), 2)
                     south_open = not (ty < self.h - 1 and self.grid[ty + 1][tx] in SOLID)
@@ -2352,10 +2547,13 @@ class TileMap:
                         pygame.draw.line(surf, edge_col, (px, py + C.TILE), (px + C.TILE, py + C.TILE), 2)
                         # two-tone wall face: south is the side facing the viewer/open
                         # ground in this top-down view - darken its bottom ~30% into a
-                        # real "front face in shadow" band, not just a thin line
+                        # real "front face in shadow" band, not just a thin line.
+                        # Building walls get a visibly stronger/warmer band than plain
+                        # natural rock so they read with more weight, not just a
+                        # thin-line difference that's easy to miss while moving.
                         band_h = int(C.TILE * 0.3)
                         band = pygame.Surface((C.TILE, band_h), pygame.SRCALPHA)
-                        band.fill((0, 0, 0, 60))
+                        band.fill((40, 25, 0, 100) if is_building_wall else (0, 0, 0, 60))
                         surf.blit(band, (px, py + C.TILE - band_h))
                     if not (tx > 0 and self.grid[ty][tx - 1] in SOLID):
                         pygame.draw.line(surf, edge_col, (px, py), (px, py + C.TILE), 2)

@@ -197,8 +197,16 @@ def draw_hud(surf, zone_name, kill_count, boss_alive):
     surf.blit(hint, (C.SCREEN_W // 2 - hint.get_width() // 2, C.SCREEN_H - 26))
 
 
-PLAYER_PANEL_WIDTH = 226  # matches the width of a 4-wide, 52px equip/backpack slot row (SLOT_SIZE below)
-PLAYER_PANEL_HEIGHT = 150
+# Bumped from 226x150 - the user asked for the right-dock GUI to read as
+# "big" overall, not just individual slot icons (see SLOT_SIZE's own earlier
+# bump for the same reason).
+PLAYER_PANEL_WIDTH = 260
+PLAYER_PANEL_HEIGHT = 170
+
+# Height of the small Tab-switch label strip between the player panel and
+# whichever of inventory/pet is currently shown below it (see
+# draw_panel_tabs / _dock_top_y).
+PANEL_TAB_STRIP_H = 22
 
 
 def _panel_block_x0():
@@ -207,13 +215,19 @@ def _panel_block_x0():
     return _dock_right_x() - PLAYER_PANEL_WIDTH
 
 
+def _player_panel_top_y():
+    from game import minimap
+    return 74 + minimap.corner_block_height() + 14
+
+
 def draw_player_panel(surf, player, auto_fire=False):
     """The right-docked 'who am I' block: name/class/level, HP, MP, XP, and full
-    stat spread, directly below the minimap and directly above the equip grid -
-    RotMG-style, everything about your character in one place on the right."""
+    stat spread, directly below the minimap and directly above the Tab-switched
+    inventory/pet panel - RotMG-style, everything about your character in one
+    place on the right."""
     x0 = _panel_block_x0()
     w = PLAYER_PANEL_WIDTH
-    y = _dock_top_y() - PLAYER_PANEL_HEIGHT
+    y = _player_panel_top_y()
 
     panel, _ = _ornate_panel(w + 12, PLAYER_PANEL_HEIGHT + 8)
     surf.blit(panel, (x0 - 6, y - 4))
@@ -260,19 +274,20 @@ def draw_player_panel(surf, player, auto_fire=False):
         surf.blit(pt, (x0 + w // 2 - pt.get_width() // 2, y))
 
 
-PET_PANEL_W = 200
 PET_PANEL_ROW_H = 22
 
 
 def pet_panel_rect(player):
-    """Top-left dock (the old HP/stat readout spot before it moved into the
-    right-docked player panel - see draw_nearby_loot_panel's own note) for the
-    compact pet-info panel. None when the player has no hatched pet, so
-    callers (draw + the drag-and-drop feed hit-test) can both no-op cleanly."""
+    """Right-docked, in the same switched-panel slot the inventory grid uses
+    (only one of the two is ever drawn per frame - see draw_panel_tabs) -
+    moved here from a standalone top-left spot so pet stats live in the same
+    "everything about my character" block as the rest of the right dock.
+    None when the player has no hatched pet, so callers (draw + the
+    drag-and-drop feed hit-test) can both no-op cleanly."""
     if getattr(player, "pet", None) is None:
         return None
     h = 30 + PET_PANEL_ROW_H * 3 + 20
-    return pygame.Rect(12, 90, PET_PANEL_W, h)
+    return pygame.Rect(_panel_block_x0(), _dock_top_y(), PLAYER_PANEL_WIDTH, h)
 
 
 def pet_feed_target_rect(player):
@@ -320,7 +335,7 @@ def draw_pet_panel(surf, player, dragging=False):
     surf.blit(panel, (rect.x, rect.y))
 
 
-SLOT_SIZE = 52  # bumped from 40 - user said item icons were too hard to see
+SLOT_SIZE = 60  # bumped from 52 - part of the "make the right-dock GUI big" pass
 SLOT_GAP = 6
 
 EQUIP_LABELS = ["WP", "AB", "AR", "RG"]
@@ -340,9 +355,30 @@ def _dock_right_x():
 
 
 def _dock_top_y():
-    """Top of the equip grid - below the minimap block AND the player info panel."""
-    from game import minimap
-    return 74 + minimap.corner_block_height() + 14 + PLAYER_PANEL_HEIGHT + 14
+    """Top of the switched inventory/pet panel area - below the minimap block,
+    the player info panel, and the small Tab-switch label strip above it."""
+    return _player_panel_top_y() + PLAYER_PANEL_HEIGHT + 14 + PANEL_TAB_STRIP_H + 6
+
+
+def draw_panel_tabs(surf, active_mode):
+    """A small RotMG-style tab strip labeling which of Inventory/Pet is
+    currently shown in the switched dock slot below (see draw_inventory/
+    draw_pet_panel - only one of the two is ever drawn per frame; this is
+    what makes the Tab key discoverable instead of a hidden keybind)."""
+    x0 = _panel_block_x0()
+    y0 = _player_panel_top_y() + PLAYER_PANEL_HEIGHT + 14
+    w = PLAYER_PANEL_WIDTH
+    seg_w = w // 2
+    for i, (label, mode) in enumerate((("Inventory", "inventory"), ("Pet", "pet"))):
+        active = mode == active_mode
+        color = (230, 210, 150) if active else (120, 120, 132)
+        t = _FONT_S.render(label, True, color)
+        surf.blit(t, (x0 + i * seg_w + seg_w // 2 - t.get_width() // 2, y0))
+        if active:
+            pygame.draw.line(surf, color, (x0 + i * seg_w + 4, y0 + t.get_height() + 1),
+                              (x0 + (i + 1) * seg_w - 4, y0 + t.get_height() + 1), 2)
+    hint = _FONT_S.render("[Tab]", True, (100, 100, 112))
+    surf.blit(hint, (x0 + w - hint.get_width(), y0))
 
 
 def equip_slot_rects():
@@ -729,13 +765,29 @@ def draw_day_night_overlay(surf, light_level, blood_moon=False, torch_screen_pos
 
 DAY_NIGHT_CLOCK_W, DAY_NIGHT_CLOCK_H = 200, 60
 
+# One real, shared screen-edge margin - previously every top-level HUD
+# element picked its own local `pad` (6/8/12/14/16, serving inconsistent
+# purposes: some were edge margins, some internal panel content padding).
+# This is specifically the "never render closer than this to a screen
+# edge" floor (comfortably above the 2px minimum asked for) - matches the
+# tightest margin any existing HUD element already used (the FPS counter,
+# 4px clear of the bottom edge), so this codifies the existing convention
+# rather than forcing every element to shift for a new, stricter number.
+SCREEN_EDGE_MARGIN = 4
+
 
 def day_night_clock_rect():
-    """Top-left, clear of the pet panel below it (pet_panel_rect starts at
-    y=90 - this ends at y=72, an 18px gap) and clear of the right-docked
-    minimap/quest-panel stack entirely - see Batch 10's overlap-avoidance
-    discipline for why this is a real function, not just a hardcoded blit."""
-    return pygame.Rect(12, 12, DAY_NIGHT_CLOCK_W, DAY_NIGHT_CLOCK_H)
+    """Docked directly above the corner minimap, right-aligned to its edge -
+    visually integrated with the map widget (see minimap.corner_origin())
+    instead of a disconnected top-left element. Previously lived standalone
+    at (12, 12), sized to stay clear of the pet panel that WAS below it
+    there - now moved, this rect no longer needs any relationship to
+    wherever the pet panel currently docks."""
+    from game import minimap as _mm
+    mm_x, _mm_y = _mm.corner_origin()
+    right_edge = mm_x + _mm.CORNER_SIZE
+    x = right_edge - DAY_NIGHT_CLOCK_W
+    return pygame.Rect(x, SCREEN_EDGE_MARGIN, DAY_NIGHT_CLOCK_W, DAY_NIGHT_CLOCK_H)
 
 
 def draw_day_night_clock(surf, light_level, blood_moon=False):

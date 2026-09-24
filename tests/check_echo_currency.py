@@ -38,24 +38,32 @@ def _use_temp_accounts_dir():
 
 
 def check_award_persist_reload_round_trip():
+    """Batch 14: award_echoes_for_death now takes echoes_this_life (2x bonus
+    on top of what was already passively banked this life), not level."""
     tmp = _use_temp_accounts_dir()
     try:
         name = "EchoTester"
         accounts.touch_account(name)
         assert accounts.get_echoes(name) == 0
 
-        earned = accounts.award_echoes_for_death(name, level=10)
-        assert earned == 5, "level 10 should award max(1, 10 // 2) = 5 echoes"
-        assert accounts.get_echoes(name) == 5
+        earned = accounts.award_echoes_for_death(name, echoes_this_life=5)
+        assert earned == 10, "death bonus should be 2x echoes_this_life (2*5=10)"
+        assert accounts.get_echoes(name) == 10
 
         # a second death on the same account accumulates, doesn't overwrite
-        accounts.award_echoes_for_death(name, level=1)
-        assert accounts.get_echoes(name) == 6, "max(1, 1 // 2) = 1 more echo"
+        accounts.award_echoes_for_death(name, echoes_this_life=1)
+        assert accounts.get_echoes(name) == 12, "2*1 = 2 more echoes"
+
+        # dying having earned 0 echoes this life must still be safe (no crash,
+        # no negative balance) - just no bonus, matching "never rewarded ONLY
+        # by dying" without making an early death actively harmful either
+        accounts.award_echoes_for_death(name, echoes_this_life=0)
+        assert accounts.get_echoes(name) == 12, "0 echoes this life -> 0 bonus, balance unchanged"
 
         # reload from disk (a fresh load_account call, not the in-memory value)
         # to prove this actually persisted, not just an in-process cache
         reloaded = accounts.load_account(name)
-        assert reloaded["echoes"] == 6
+        assert reloaded["echoes"] == 12
         print("check_award_persist_reload_round_trip: PASSED")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

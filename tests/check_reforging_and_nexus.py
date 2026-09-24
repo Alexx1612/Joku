@@ -38,8 +38,14 @@ def check_islands_and_hub_placement():
         assert sim.realm_map.tile_at(isl["pos"].x, isl["pos"].y) != world.WATER
         assert not sim.realm_map.is_solid(isl["pos"].x, isl["pos"].y)
 
-    hub_portals = [pt for pt in sim.portals if pt.kind == "island_link"]
+    # Batch 14 added a RETURN island_link portal at each island itself (label
+    # "Return"), alongside the original outbound one in the hub ring - filter
+    # to just the outbound hub-ring portals for the hub-placement/separation
+    # checks below, which are specifically about the hub ring, not the islands.
+    hub_portals = [pt for pt in sim.portals if pt.kind == "island_link" and pt.label != "Return"]
     assert len(hub_portals) == len(sim.islands)
+    return_portals = [pt for pt in sim.portals if pt.kind == "island_link" and pt.label == "Return"]
+    assert len(return_portals) == len(sim.islands), "every island should have its own return portal"
     # the exact bug the user found in play: portals landing on top of each other
     min_portal_sep = min(hub_portals[i].pos.distance_to(hub_portals[j].pos)
                          for i in range(len(hub_portals)) for j in range(i + 1, len(hub_portals)))
@@ -77,10 +83,19 @@ def check_five_minute_wave_and_completion():
     for _ in range(20):
         sim.update(1 / 30, {})
     guardians = [e for e in sim.enemies if getattr(e, "island_idx", None) == 0]
-    assert len(guardians) == realm_sim.ISLAND_WAVE_SIZE
     theme = realm_sim.ISLAND_THEMES[isl0["theme"]]
-    assert any(e.kind == theme["anchor"] for e in guardians), "the anchor mob must always be in the wave"
-    assert isl0["alive_guardians"] == realm_sim.ISLAND_WAVE_SIZE
+    mini_boss = realm_sim.ISLAND_MINI_BOSS.get(0)
+    if mini_boss is not None:
+        # Batch 14 Track B1/B2: islands with an entry in ISLAND_MINI_BOSS get a
+        # boss-led wave (the named boss + a smaller escort) instead of the
+        # theme's generic anchor + ISLAND_WAVE_SIZE-1 guardians.
+        expected_size = 1 + realm_sim.ISLAND_ESCORT_SIZE
+        assert len(guardians) == expected_size
+        assert any(e.kind == mini_boss for e in guardians), "the named mini-boss must always be in the wave"
+    else:
+        assert len(guardians) == realm_sim.ISLAND_WAVE_SIZE
+        assert any(e.kind == theme["anchor"] for e in guardians), "the anchor mob must always be in the wave"
+    assert isl0["alive_guardians"] == len(guardians)
 
     killer = Player("wizard", "Reforger", pid="p1")
     killer.pos = pygame.Vector2(isl0["pos"])

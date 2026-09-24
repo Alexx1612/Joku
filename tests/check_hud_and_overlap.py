@@ -226,8 +226,9 @@ def check_peer_tooltip_crew_tag_sizing():
 
 def check_echo_shop_overlay_no_overlap_with_corner_hud():
     """Batch 13: the new centered Echo Keeper shop modal must not collide with
-    the corner-anchored day/night clock (top-left) - real rect math, not an
-    assumption that 'centered' and 'corner' can never touch."""
+    the corner-anchored day/night clock (docked above the minimap, top-right
+    as of Batch 14) - real rect math, not an assumption that 'centered' and
+    'corner' can never touch."""
     menu_items = [("Extra backpack slot (50 Echoes)", lambda: None),
                   ("Starting XP boost (30 Echoes)", lambda: None)]
     ui.draw_echo_shop_overlay(screen, 80, menu_items=menu_items, selected_idx=0, mouse_pos=(-1, -1))

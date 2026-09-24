@@ -1174,6 +1174,157 @@ _KELP_STALKER = _lowslung_body(
     tail_char="f",
 )
 
+# --- Batch 14 Track B1: island mini-bosses for the first 5 islands ---
+# Bigger, more ornate variants of the existing shard/choir archetype row-
+# skeletons (echo_knight/stone_revenant's humanoid frame, shattered_golem's
+# _construct_body, fracture_hound's _lowslung_body) - not new archetypes,
+# just scaled up with extra crown/regalia detail so each reads as a real
+# boss silhouette rather than another same-size guardian. All registered
+# into BOSS_KINDS below so they also get the boss sprite-scale treatment
+# (BOSS_FINAL_SIZE instead of FINAL_SIZE).
+_CINDER_COLOSSUS = _construct_body(
+    crown_rows=[
+        "     .wwwwwwwwwwww.     ",
+        "    wwwCwEwwwwEwCwww    ",
+        "   wwCCwwwwwwwwwwCCww   ",
+        "  wwCC   wwwwww   CCww  ",
+    ],
+    torso_rows=[
+        " wwwwwwwwssssswwwwwwww ",
+        "wwwsssssCtttttCsssssww ",
+        "wwsssCCttttttttCCsssw  ",
+        " wsCCCtttEEttttCCCsw   ",
+        "  sCCC   tt   CCCs     ",
+        "   sCC         CCs     ",
+    ],
+    leg_char="f",
+)
+_CINDER_COLOSSUS_PAL = {"w": (150, 95, 60), "C": (110, 70, 45), "s": (85, 55, 38), "t": (60, 40, 28),
+                         "E": (255, 200, 60), "f": (75, 50, 35)}
+
+_RUBBLE_WARLORD = _lowslung_body(
+    head_rows=[
+        "  .dd            dd.   ",
+        " ddDDEdd      ddEDDdd  ",
+        "ddDDDDDdd    ddDDDDDdd ",
+    ],
+    spine_rows=[
+        " dDDffDDffDDffDDffDDd  ",
+        "dDDDDDDDDDDDDDDDDDDDDd ",
+        " dDffDfDfDfDfDfDfDffDd ",
+        "  ddDDDDDDDDDDDDDDdd   ",
+    ],
+    tail_char="d",
+)
+_RUBBLE_WARLORD_PAL = {"d": (60, 40, 30), "D": (105, 68, 48), "E": (255, 150, 40), "f": (40, 26, 20)}
+
+_ASHREACH_REVENANT = [
+    "     .ddCCCCCCCCdd.     ",
+    "    ddCCCoooooCCCdd     ",
+    "   ddCCohhEohhoECCdd    ",
+    "  dCChh    tt    hhCCd  ",
+    "   Coo              ooC ",
+    "   CoCCCCCCCCCCCCCCoC   ",
+    "  dCCCCCCCCCCCCCCCCCCd  ",
+    "  dCC  CCCCCCCCCC  CCd  ",
+    "   Cv  CC        CC  vC ",
+    "   Cv              vC   ",
+    "    v                v  ",
+]
+_ASHREACH_REVENANT_PAL = {"o": (100, 65, 55), "h": (150, 105, 85), "E": (255, 120, 45), "t": (230, 170, 100),
+                           "v": (48, 28, 22), "C": (78, 50, 42), "d": (58, 38, 30)}
+
+_CHOIR_SOVEREIGN = [
+    "     .CCCCCCCCCC.       ",
+    "    CChhhhhhhhhhCC      ",
+    "   CChEhhh  hhhEhCC     ",
+    "   Chh   GG   GGhhC     ",
+    "    CCCCCCCCCCCCCC      ",
+    "  oCCCCvvvvvvvvCCCCo    ",
+    "  oCCCCCCCCCCCCCCCCo d  ",
+    " oCCC            CCCo d ",
+    " oCC              CCo   ",
+    "  C  d          d  C    ",
+    "  C  d          d  C    ",
+]
+_CHOIR_SOVEREIGN_PAL = {"o": (60, 90, 96), "h": (150, 195, 200), "E": (240, 250, 255), "G": (150, 230, 235),
+                         "v": (28, 48, 52), "C": (78, 112, 118), "d": (45, 68, 72)}
+
+_CORAL_LEVIATHAN = _construct_body(
+    crown_rows=[
+        "    .ohhhhhhhhho.    ",
+        "   ohhEohohohoEhho   ",
+        "  ohhCCCCCCCCCCChho  ",
+        " ohCC             CCho",
+    ],
+    torso_rows=[
+        "ohhhtCtCtCtCtCthhho ",
+        " ohhCtttttttttChho  ",
+        " ohCC   ss    CCho  ",
+        "  ohCC       CCho   ",
+    ],
+    leg_char="v",
+)
+_CORAL_LEVIATHAN_PAL = {"o": (210, 120, 120), "h": (235, 160, 155), "E": (255, 245, 210), "t": (240, 230, 215),
+                         "v": (105, 60, 60), "C": (180, 100, 100), "s": (150, 80, 80)}
+
+# "The Reforging" island mini-bosses (Batch 14, islands 6-10 by name order:
+# Tideglass Sanctum, Thornrock Shard, Driftbell Cloister, Ashenreach Shard,
+# Abyssal Hymnal) - one genuinely tougher, uniquely-silhouetted boss per
+# island, built from the same parametrized archetype generators Batch 13
+# proved out (bigger dimensions + unique params than any existing guardian,
+# so each reads as a real boss, not a recolored trash mob).
+_THORNROCK_COLOSSUS = _construct_body(
+    crown_rows=[
+        "   .GttGttGttG.   ",
+        "  GttEGttttGEttG  ",
+        " GGttttttttttttGG ",
+        "GGtttCCCCCCCCtttGG",
+    ],
+    torso_rows=[
+        "wwwGGtttttttttGGwww",
+        " wwGGtCCCCCCCtGGww ",
+        "  wGGCCC   CCCGGw  ",
+        "   GGC       CGG   ",
+    ],
+    leg_char="w",
+)
+
+_ASHENREACH_DEVOURER = _lowslung_body(
+    head_rows=[
+        ".DD            DD.",
+        " DDdEdd    ddEdDD ",
+        "  ddd DDDDDD ddd  ",
+    ],
+    spine_rows=[
+        "   dDDdddddddDDd   ",
+        "  dDEdEdEdEdEdEDd  ",
+        "   ddDDDDDDDDDDd   ",
+    ],
+    tail_char="d",
+)
+
+_TIDEGLASS_WARDEN_CHARS = {"outer": "u", "mid": "G", "body": "W", "hi": "H", "eye": "e"}
+_TIDEGLASS_WARDEN = _shard_grid(_TIDEGLASS_WARDEN_CHARS, width=21, height=21, elongation=1.4)
+
+_DRIFTBELL_MATRIARCH_CHARS = {"rim": "h", "core": "H", "eye": "e"}
+_DRIFTBELL_MATRIARCH = _wisp_grid(_DRIFTBELL_MATRIARCH_CHARS, width=23, height=19,
+                                   core_rx=7.6, core_ry=6.2, tail_rows=8, eyes=True)
+
+_ABYSSAL_CHOIRMASTER_CHARS = {"rim": "p", "core": "P", "eye": "e"}
+_ABYSSAL_CHOIRMASTER = _wisp_grid(_ABYSSAL_CHOIRMASTER_CHARS, width=23, height=20,
+                                   core_rx=8.2, core_ry=5.4, tail_rows=6, eyes=True)
+
+_THORNROCK_COLOSSUS_PAL = {"G": (90, 130, 60), "t": (110, 90, 70), "w": (150, 120, 90),
+                            "C": (60, 55, 50), "E": (255, 150, 40), "e": (255, 210, 90)}
+_ASHENREACH_DEVOURER_PAL = {"D": (60, 55, 60), "d": (95, 85, 90), "E": (255, 120, 40),
+                             "e": (255, 200, 90)}
+_TIDEGLASS_WARDEN_PAL = {"u": (40, 90, 110), "G": (70, 150, 170), "W": (150, 225, 230),
+                          "H": (225, 250, 250), "e": (20, 45, 55)}
+_DRIFTBELL_MATRIARCH_PAL = {"h": (150, 190, 210), "H": (225, 240, 245), "e": (35, 60, 70)}
+_ABYSSAL_CHOIRMASTER_PAL = {"p": (70, 40, 100), "P": (120, 80, 160), "e": (230, 200, 255)}
+
+
 ENEMY_GRIDS = {"bat": (_BAT, _BAT_PAL), "ghost": (_GHOST, _GHOST_PAL),
                "skeleton": (_SKELETON, _SKELETON_PAL), "imp": (_IMP, _IMP_PAL),
                "goblin": (_GOBLIN, _GOBLIN_PAL), "scorpion": (_SCORPION, _SCORPION_PAL),
@@ -1208,12 +1359,25 @@ ENEMY_GRIDS = {"bat": (_BAT, _BAT_PAL), "ghost": (_GHOST, _GHOST_PAL),
                "shard_sentinel": (_SHARD_SENTINEL, _SHARD_SENTINEL_PAL), "echo_knight": (_ECHO_KNIGHT, _ECHO_KNIGHT_PAL),
                "shattered_golem": (_SHATTERED_GOLEM, _SHATTERED_GOLEM_PAL), "fracture_hound": (_FRACTURE_HOUND, _FRACTURE_HOUND_PAL),
                "stone_revenant": (_STONE_REVENANT, _STONE_REVENANT_PAL), "cinder_warden": (_CINDER_WARDEN, _CINDER_WARDEN_PAL),
+               # Batch 14 Track B1 - island mini-bosses (first 5 islands, shard pool)
+               "cinder_colossus": (_CINDER_COLOSSUS, _CINDER_COLOSSUS_PAL),
+               "rubble_warlord": (_RUBBLE_WARLORD, _RUBBLE_WARLORD_PAL),
+               "ashreach_revenant": (_ASHREACH_REVENANT, _ASHREACH_REVENANT_PAL),
                # choir pool (cool teal/coral/pearl)
                "tide_wisp": (_TIDE_WISP, _TIDE_WISP_PAL), "pearl_acolyte": (_PEARL_ACOLYTE, _PEARL_ACOLYTE_PAL),
                "brine_crawler": (_BRINE_CRAWLER, _BRINE_CRAWLER_PAL), "abyssal_chorister": (_ABYSSAL_CHORISTER, _ABYSSAL_CHORISTER_PAL),
                "coral_sentinel": (_CORAL_SENTINEL, _CORAL_SENTINEL_PAL), "drowned_custodian": (_DROWNED_CUSTODIAN, _DROWNED_CUSTODIAN_PAL),
                "kelp_stalker": (_KELP_STALKER, _KELP_STALKER_PAL), "shellback_guardian": (_SHELLBACK_GUARDIAN, _SHELLBACK_GUARDIAN_PAL),
-               "siren_wraith": (_SIREN_WRAITH, _SIREN_WRAITH_PAL), "choir_warden": (_CHOIR_WARDEN, _CHOIR_WARDEN_PAL)}
+               "siren_wraith": (_SIREN_WRAITH, _SIREN_WRAITH_PAL), "choir_warden": (_CHOIR_WARDEN, _CHOIR_WARDEN_PAL),
+               # Batch 14 Track B1 - island mini-bosses (first 5 islands, choir pool)
+               "choir_sovereign": (_CHOIR_SOVEREIGN, _CHOIR_SOVEREIGN_PAL),
+               "coral_leviathan": (_CORAL_LEVIATHAN, _CORAL_LEVIATHAN_PAL),
+               # Batch 14 Track B2 - island mini-bosses (last 5 islands)
+               "thornrock_colossus": (_THORNROCK_COLOSSUS, _THORNROCK_COLOSSUS_PAL),
+               "ashenreach_devourer": (_ASHENREACH_DEVOURER, _ASHENREACH_DEVOURER_PAL),
+               "tideglass_warden": (_TIDEGLASS_WARDEN, _TIDEGLASS_WARDEN_PAL),
+               "driftbell_matriarch": (_DRIFTBELL_MATRIARCH, _DRIFTBELL_MATRIARCH_PAL),
+               "abyssal_choirmaster": (_ABYSSAL_CHOIRMASTER, _ABYSSAL_CHOIRMASTER_PAL)}
 
 
 def _validate_grids(named_grids):
@@ -1251,7 +1415,12 @@ def player_sprite(cls_name: str) -> pygame.Surface:
 
 BOSS_KINDS = {"boss", "frost_monarch", "ash_behemoth", "void_reaper", "thorn_warden", "sand_wyrm",
               "boss_phase2", "frost_monarch_phase2", "ash_behemoth_phase2", "void_reaper_phase2",
-              "thorn_warden_phase2", "sand_wyrm_phase2"}
+              "thorn_warden_phase2", "sand_wyrm_phase2",
+              # Batch 14 Track B1 - island mini-bosses get the same boss sprite-scale treatment
+              "cinder_colossus", "rubble_warlord", "ashreach_revenant", "choir_sovereign", "coral_leviathan",
+              # Batch 14 Track B2 - same treatment for the last 5 islands' mini-bosses
+              "thornrock_colossus", "ashenreach_devourer", "tideglass_warden",
+              "driftbell_matriarch", "abyssal_choirmaster"}
 
 
 def enemy_sprite(kind: str) -> pygame.Surface:
@@ -1422,6 +1591,37 @@ def bag_sprite(full: bool, tint_color) -> pygame.Surface:
             pygame.draw.circle(surf, tint_color, (24, 24), 20 if full else 16)
             pygame.draw.circle(surf, OUTLINE, (24, 24), 20 if full else 16, width=2)
             _cache[key] = surf
+    return _cache[key]
+
+
+CHEST_SKIN_COLORS = [
+    (120, 90, 50),   # bronze
+    (150, 150, 160),  # silver
+    (200, 170, 90),  # gold
+    (180, 60, 60),   # ruby
+]
+
+
+def chest_sprite(skin_idx: int, filled: bool) -> pygame.Surface:
+    """A small procedural treasure-chest glyph for the Bazaar's permanent
+    chest containers - same body/lid/lock construction as the Vault tab
+    icon (game.ui._draw_chest_icon) but rendered at world-sprite size and
+    cached like every other entity sprite here, since this one needs to be
+    drawn at an arbitrary world position via Entity.draw(), not into a
+    fixed UI rect."""
+    key = ("chest", skin_idx, filled)
+    if key not in _cache:
+        base = CHEST_SKIN_COLORS[skin_idx % len(CHEST_SKIN_COLORS)]
+        body_col = base if filled else tuple(max(0, c - 45) for c in base)
+        lid_col = tuple(min(255, c + 70) for c in base)
+        lock_col = tuple(min(255, c + 100) for c in base)
+        surf = pygame.Surface((32, 32), pygame.SRCALPHA)
+        pygame.draw.rect(surf, body_col, (5, 14, 22, 13), border_radius=3)
+        pygame.draw.rect(surf, OUTLINE, (5, 14, 22, 13), width=2, border_radius=3)
+        pygame.draw.rect(surf, lid_col, (5, 8, 22, 8), border_radius=3)
+        pygame.draw.rect(surf, OUTLINE, (5, 8, 22, 8), width=2, border_radius=3)
+        pygame.draw.rect(surf, lock_col, (13, 12, 6, 6))
+        _cache[key] = surf
     return _cache[key]
 
 
