@@ -1478,6 +1478,7 @@ class Game:
                 banner = ui._FONT_S.render(f"Live event: {event_label}", True, (255, 220, 120))
                 s.blit(banner, (C.SCREEN_W // 2 - banner.get_width() // 2, 104))
         ui.draw_hud(s, name, 0, False)
+        ui.draw_fps_counter(s, self.clock.get_fps())
         mp = pygame.mouse.get_pos()
         ui.draw_player_panel(s, self.player, auto_fire=False)
         ui.draw_pet_panel(s, self.player, dragging=self.drag_from is not None)
@@ -1542,6 +1543,7 @@ class Game:
             ui.draw_day_night_clock(s, sim.light_level, sim.blood_moon_active)
         self.weather_fx.draw(s)
         ui.draw_hud(s, name, sim.kill_count, sim.boss is not None)
+        ui.draw_fps_counter(s, self.clock.get_fps())
         if self._portal_prompt is not None:
             ui.draw_portal_prompt(s)
         if sim.is_bonus_room:

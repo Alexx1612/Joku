@@ -218,6 +218,90 @@ def check_vfx_update_draw_under_load():
     print("check_vfx_update_draw_under_load: PASSED")
 
 
+# A real, playable-feeling floor - not the 60fps target, a "this would feel
+# bad below here" line. Matches the FPS readout now shown in-game (see
+# game/ui.py's draw_fps_counter) so the same number means the same thing
+# in a test failure message and on the player's own screen.
+MIN_FPS = 30.0
+MAX_FRAME_MS = 1000.0 / MIN_FPS
+
+
+def check_full_frame_fps():
+    """Drives one real end-to-end single-player-style frame (sim tick + every
+    enemy/player's real .draw() call, including the animation overlay added
+    on top of the cached sprite + vfx update/draw) under the same stress
+    population, and asserts the resulting FPS never drops below MIN_FPS -
+    the literal "shouldn't go under a number" check. Always prints a real
+    cProfile breakdown (top time-consuming calls) alongside the pass/fail
+    result, not only on failure, so "what's slowing things down" is answered
+    on every run, not just when something regresses."""
+    import cProfile
+    import pstats
+    import io as _io
+
+    sim, players, anchors = _build_stress_sim()
+    surf = pygame.Surface((1366, 820))
+    cam = _FakeCam()
+    vfx._particles.clear()
+    vfx._rings.clear()
+    _seed_particles(PARTICLE_TARGET_COUNT)
+
+    FRAME_ITER = 120
+
+    def _run_frames():
+        frame_times = []
+        for _ in range(FRAME_ITER):
+            if len(sim.bullets) < BULLET_TARGET_COUNT:
+                sim.bullets.extend(_make_bullets(anchors, BULLET_TARGET_COUNT - len(sim.bullets)))
+            if len(vfx._particles) < PARTICLE_TARGET_COUNT // 2:
+                _seed_particles(PARTICLE_TARGET_COUNT)
+            t0 = time.perf_counter()
+            sim.begin_tick()
+            sim.update(DT, players)
+            for e in sim.enemies:
+                if e.alive:
+                    e.draw(surf, cam)
+            for p in players.values():
+                p.draw(surf, cam)
+            vfx.update(1.0 / 60.0)
+            vfx.draw(surf, cam)
+            frame_times.append((time.perf_counter() - t0) * 1000.0)
+        return frame_times
+
+    # Always-on profiling breakdown - a real cProfile run (deterministic call
+    # counts/cumulative time, not wall-clock, so it's not machine-contention-
+    # sensitive the way the raw timing loop below can be) over the exact same
+    # workload, so every test run answers "what's slowing things down" even
+    # when the assertion below passes comfortably.
+    profiler = cProfile.Profile()
+    profiler.enable()
+    _run_frames()
+    profiler.disable()
+    buf = _io.StringIO()
+    pstats.Stats(profiler, stream=buf).sort_stats("cumulative").print_stats(10)
+    print("check_full_frame_fps: profiling breakdown (top 10 by cumulative time this run):")
+    for line in buf.getvalue().splitlines():
+        if line.strip():
+            print("  " + line)
+
+    frame_times = _run_frames()
+    avg_ms = sum(frame_times) / len(frame_times)
+    p95_ms = _p95(frame_times)
+    avg_fps = 1000.0 / avg_ms
+    worst_fps = 1000.0 / p95_ms
+    print(f"check_full_frame_fps: enemies={ENEMY_COUNT} bullets~={BULLET_TARGET_COUNT} "
+          f"players={PLAYER_COUNT} particles~={PARTICLE_TARGET_COUNT} frames={FRAME_ITER}")
+    print(f"  full frame (sim + draw + vfx): avg={avg_ms:.3f}ms ({avg_fps:.1f} FPS) "
+          f"p95={p95_ms:.3f}ms ({worst_fps:.1f} FPS) | floor={MIN_FPS:.0f} FPS ({MAX_FRAME_MS:.2f}ms)")
+    assert avg_fps >= MIN_FPS, (
+        f"Average FPS {avg_fps:.1f} dropped below the {MIN_FPS:.0f} FPS floor under stress load "
+        f"(avg frame time {avg_ms:.3f}ms exceeds {MAX_FRAME_MS:.2f}ms) - see the profiling "
+        f"breakdown above for what's consuming the time"
+    )
+    print("check_full_frame_fps: PASSED")
+
+
 if __name__ == "__main__":
     check_sim_update_under_load()
     check_vfx_update_draw_under_load()
+    check_full_frame_fps()

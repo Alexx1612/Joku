@@ -57,6 +57,11 @@ def _samples(freq, duration, volume=0.35, wave="square", freq_end=None, fade=0.0
             v = math.sin(2 * math.pi * f * t)
         elif wave == "square":
             v = 1.0 if math.sin(2 * math.pi * f * t) >= 0 else -1.0
+        elif wave == "triangle":
+            # A proper triangle wave (not an approximation) - the classic NES/
+            # chiptune choice for bass: softer harmonic content than a square,
+            # so it sits underneath a buzzy square-wave lead without fighting it.
+            v = (2.0 / math.pi) * math.asin(math.sin(2 * math.pi * f * t))
         elif wave == "noise":
             v = random.uniform(-1, 1)
         else:
@@ -339,119 +344,171 @@ def _render_track(total_n, events):
     return [max(-32767, min(32767, v)) for v in buf]
 
 
+def _power_chord(root_freq, duration, volume=0.13, fade=0.008, detune=1.003):
+    """Root + perfect fifth (freq*1.5), the real chiptune trick for a duophonic
+    '2-oscillator' hardware faking a guitar power chord (see NES pulse-channel
+    arpeggio/duophony technique). A tiny detune on the fifth is a cheap analog
+    for the beating/chorus a real distorted guitar's harmonics produce."""
+    root = _samples(root_freq, duration, volume=volume, wave="square", fade=fade)
+    fifth = _samples(root_freq * 1.5 * detune, duration, volume=volume * 0.85, wave="square", fade=fade)
+    return _mix(root, fifth)
+
+
+def _kick(volume=0.22, decay=10.0):
+    return _samples(70, 0.16, volume=volume, wave="noise", envelope="exp_decay", decay_rate=decay)
+
+
+def _snare(volume=0.16, decay=22.0):
+    return _samples(180, 0.09, volume=volume, wave="noise", envelope="exp_decay", decay_rate=decay)
+
+
+def _hihat(volume=0.06, decay=70.0):
+    return _samples(90, 0.03, volume=volume, wave="noise", envelope="exp_decay", decay_rate=decay)
+
+
 def _build_theme_realm():
-    # Three interlocking voices instead of one flat arpeggio - a NES-style
-    # square-wave lead carrying a syncopated 16-step melody (still built from
-    # the same original A-minor/G-major arpeggio hook as before, so it stays
-    # recognizable), a soft sine bass holding the harmony underneath, and a
-    # light noise-based kick/hat pulse for rhythmic drive. All still 100%
-    # procedural, original, and not derived from any existing soundtrack.
-    # Used for the open Realm - the most "adventurous/driving" of the four.
+    # An original 8-bit rock anthem for the open Realm - not a cover of any
+    # existing song, this project's own chiptune arrangement of "rock band"
+    # roles: a square-wave lead riff (fresh original hook, E natural-minor),
+    # a _power_chord rhythm-guitar layer (one chord per beat, i-VI-VII-i),
+    # a triangle bass doubling the chord roots an octave down, and a real
+    # rock beat (kick on 1 & 3, snare on 2 & 4, eighth-note hi-hats
+    # throughout) - the biggest/most driving of the four zone themes.
     STEP = 0.125
     STEPS = 16
     total_n = int(SAMPLE_RATE * STEP * STEPS)
 
-    LEAD = [220, 330, 262, None, 330, 392, 262, 220,
-            196, 294, 262, None, 330, 392, 392, 349]
-    lead_events = [(i * STEP, _samples(f, STEP * 0.85, volume=0.13, wave="square", fade=0.008))
+    LEAD = [330, 392, 494, None, 392, 330, 294, 330,
+            247, 294, 330, None, 392, 494, 440, 392]
+    lead_events = [(i * STEP, _samples(f, STEP * 0.85, volume=0.12, wave="square", fade=0.008))
                    for i, f in enumerate(LEAD) if f is not None]
 
-    BASS = [110, 131, 98, 131]
-    bass_events = [(beat * STEP * 4, _samples(f, STEP * 3.6, volume=0.11, wave="sine", fade=0.04))
-                   for beat, f in enumerate(BASS)]
+    CHORD_ROOTS = [165, 220, 247, 165]  # i - VI - VII - i (Em - C - D - Em)
+    chord_events = [(beat * STEP * 4, _power_chord(f, STEP * 3.7, volume=0.1))
+                     for beat, f in enumerate(CHORD_ROOTS)]
+
+    bass_events = [(beat * STEP * 4, _samples(f / 2, STEP * 3.8, volume=0.1, wave="triangle", fade=0.01))
+                   for beat, f in enumerate(CHORD_ROOTS)]
 
     perc_events = []
     for step in range(STEPS):
-        if step % 4 == 0:
-            perc_events.append((step * STEP, _samples(90, 0.05, volume=0.11, wave="noise",
-                                                        envelope="exp_decay", decay_rate=30)))
-        elif step % 2 == 0:
-            perc_events.append((step * STEP, _samples(90, 0.02, volume=0.05, wave="noise",
-                                                        envelope="exp_decay", decay_rate=60)))
+        if step % 8 in (0, 4):
+            perc_events.append((step * STEP, _kick()))
+        if step % 8 in (2, 6):
+            perc_events.append((step * STEP, _snare()))
+        perc_events.append((step * STEP, _hihat()))
 
-    return _sound_from(_mix(_render_track(total_n, lead_events), _render_track(total_n, bass_events),
-                             _render_track(total_n, perc_events)))
+    return _sound_from(_mix(_render_track(total_n, lead_events), _render_track(total_n, chord_events),
+                             _render_track(total_n, bass_events), _render_track(total_n, perc_events)))
 
 
 def _build_theme_nexus():
-    # Warm and unhurried - the social hub, not a fight. Slower tempo, a plain
-    # C-major scale (no accidentals - the calmest key relationship available
-    # with these helpers), a sine "bell" lead instead of a buzzy square wave,
-    # a gentle held sine pad underneath, and no percussion at all.
+    # An original 8-bit SOFT-ROCK BALLAD for the social hub - not a fight, so
+    # it stays relaxed rather than driving: long, softly-faded power chords
+    # (see _power_chord) standing in for a strummed acoustic-guitar feel, a
+    # gentle square-wave lead carrying a warm, spacious original melody, a
+    # triangle bass walking underneath the chord roots, and only a very
+    # sparse hi-hat pulse (no kick/snare at all) to keep it unhurried.
     STEP = 0.22
     STEPS = 16
     total_n = int(SAMPLE_RATE * STEP * STEPS)
 
-    LEAD = [262, None, 330, None, 392, 349, 330, None,
-            294, None, 392, None, 523, 440, 392, 330]
-    lead_events = [(i * STEP, _samples(f, STEP * 1.4, volume=0.11, wave="sine", fade=0.05))
+    LEAD = [523, None, 587, None, 659, None, 587, None,
+            494, None, 587, None, 698, None, 659, 587]
+    lead_events = [(i * STEP, _samples(f, STEP * 1.5, volume=0.09, wave="square", fade=0.03))
                    for i, f in enumerate(LEAD) if f is not None]
 
-    PAD = [131, 165, 196, 165]  # C3, E3, G3, E3 - a slow, held major triad wander
-    pad_events = [(beat * STEP * 4, _samples(f, STEP * 4.5, volume=0.07, wave="sine", fade=0.15))
-                  for beat, f in enumerate(PAD)]
+    CHORD_ROOTS = [131, 98, 110, 87]  # C3-G2-A2-F2, a slow original I-V-vi-IV-style wander
+    chord_events = [(beat * STEP * 4, _power_chord(f, STEP * 4.3, volume=0.06, fade=0.06))
+                     for beat, f in enumerate(CHORD_ROOTS)]
 
-    return _sound_from(_mix(_render_track(total_n, lead_events), _render_track(total_n, pad_events)))
+    bass_events = [(beat * STEP * 4, _samples(f, STEP * 4.4, volume=0.08, wave="triangle", fade=0.08))
+                   for beat, f in enumerate(CHORD_ROOTS)]
+
+    perc_events = [(step * STEP, _hihat(volume=0.03, decay=40))
+                   for step in range(STEPS) if step % 4 == 2]
+
+    return _sound_from(_mix(_render_track(total_n, lead_events), _render_track(total_n, chord_events),
+                             _render_track(total_n, bass_events), _render_track(total_n, perc_events)))
 
 
 def _build_theme_bazaar():
-    # Bouncy and busy - a marketplace, not a battlefield. Fast tempo, a playful
-    # major/mixolydian square-wave melody with a bouncy "oom-pah" bass
-    # (alternating root/fifth like a market band), and a brighter, denser
-    # percussion pattern than the Realm's (a hi-hat on nearly every step).
-    STEP = 0.1
+    # An original 8-bit ROCK'N'ROLL arrangement for the marketplace - not a
+    # cover of any existing song, this project's own chiptune take on a
+    # "rock band" playing an upbeat set: a chugging eighth-note power-chord
+    # rhythm guitar (see _power_chord - two short punchy hits per beat for a
+    # palm-muted feel), a bouncy walking triangle bass, a playful original
+    # square-wave lead melody on top, and the busiest/fastest drum pattern of
+    # the four themes (kick+snare backbeat plus a hi-hat on every step).
+    STEP = 0.095
     STEPS = 16
     total_n = int(SAMPLE_RATE * STEP * STEPS)
 
-    LEAD = [392, 494, 440, 392, 330, 392, 440, 494,
-            523, 494, 440, 392, 349, 392, 440, 330]
-    lead_events = [(i * STEP, _samples(f, STEP * 0.8, volume=0.12, wave="square", fade=0.006))
+    # An original bouncy G-major melody (not derived from any real song) -
+    # a rising-then-falling run with a syncopated skip on beat 3.
+    LEAD = [523, 587, 659, 523, 440, 523, 587, 659,
+            698, 659, 587, 523, 494, 523, 587, 440]
+    lead_events = [(i * STEP, _samples(f, STEP * 0.78, volume=0.11, wave="square", fade=0.006))
                    for i, f in enumerate(LEAD)]
 
-    BASS_ROOT, BASS_FIFTH = 131, 196
-    bass_events = []
-    for beat in range(4):
-        bass_events.append((beat * STEP * 4, _samples(BASS_ROOT, STEP * 0.9, volume=0.1, wave="square", fade=0.01)))
-        bass_events.append((beat * STEP * 4 + STEP * 2, _samples(BASS_FIFTH, STEP * 0.9, volume=0.08,
-                                                                   wave="square", fade=0.01)))
+    # A classic I-IV-V-I chord skeleton (G-C-D-G) - four generic chord roots
+    # every rock band uses, carrying wholly original melodic/rhythmic content
+    # on top, chugged twice per beat for the "rhythm guitar" palm-mute feel.
+    CHORD_ROOTS = [196, 262, 294, 196]
+    chord_events = []
+    for beat, f in enumerate(CHORD_ROOTS):
+        chord_events.append((beat * STEP * 4, _power_chord(f, STEP * 0.7, volume=0.1, fade=0.005)))
+        chord_events.append((beat * STEP * 4 + STEP * 2, _power_chord(f, STEP * 0.7, volume=0.08, fade=0.005)))
+
+    # A walking bass line climbing under the chord roots (G2-A2-B2-C3).
+    BASS = [98, 110, 123, 131]
+    bass_events = [(beat * STEP * 4, _samples(f, STEP * 3.6, volume=0.1, wave="triangle", fade=0.01))
+                   for beat, f in enumerate(BASS)]
 
     perc_events = []
     for step in range(STEPS):
-        if step % 2 == 0:
-            perc_events.append((step * STEP, _samples(110, 0.03, volume=0.08, wave="noise",
-                                                        envelope="exp_decay", decay_rate=45)))
-        else:
-            perc_events.append((step * STEP, _samples(90, 0.015, volume=0.04, wave="noise",
-                                                        envelope="exp_decay", decay_rate=70)))
+        if step % 8 in (0, 4):
+            perc_events.append((step * STEP, _kick(volume=0.19, decay=15)))
+        if step % 4 == 2:
+            perc_events.append((step * STEP, _snare(volume=0.14, decay=28)))
+        perc_events.append((step * STEP, _hihat(volume=0.055)))
 
-    return _sound_from(_mix(_render_track(total_n, lead_events), _render_track(total_n, bass_events),
-                             _render_track(total_n, perc_events)))
+    return _sound_from(_mix(_render_track(total_n, lead_events), _render_track(total_n, chord_events),
+                             _render_track(total_n, bass_events), _render_track(total_n, perc_events)))
 
 
 def _build_theme_dungeon():
-    # Tense and sparse - a bonus-room crawl, not a fanfare. Slow tempo, a low
-    # sustained minor drone, occasional dissonant half-step accents in the
-    # lead, and a slow, heavy, irregular low-drum pulse instead of a steady
-    # beat - deliberately more empty space than the other three themes.
-    STEP = 0.16
+    # An original 8-bit HEAVY/DOOM-ROCK arrangement for a bonus-room crawl -
+    # not a fanfare, and not a cover of any existing song. Slow tempo, low
+    # de-tuned _power_chord()s (root+fifth, extra detune for grit) held long
+    # for a sludgy "wall of sound" instead of a clean sine drone, a low
+    # triangle bass locked to the same dissonant chord roots, sparse
+    # unsettling square-wave lead stabs breaking long silences, and a slow,
+    # heavy, irregular kick/snare pulse with NO hi-hats at all - the heaviest
+    # and most spacious of the four themes.
+    STEP = 0.18
     STEPS = 16
     total_n = int(SAMPLE_RATE * STEP * STEPS)
 
-    LEAD = [None, None, 233, None, None, 220, None, None,
-            None, None, 247, 233, None, None, None, None]
-    lead_events = [(i * STEP, _samples(f, STEP * 1.6, volume=0.1, wave="square", fade=0.02))
+    LEAD = [None, None, 207, None, None, 196, None, None,
+            None, None, 220, 246, None, None, 185, None]
+    lead_events = [(i * STEP, _samples(f, STEP * 1.7, volume=0.1, wave="square", fade=0.02))
                    for i, f in enumerate(LEAD) if f is not None]
 
-    drone = _samples(55, STEP * STEPS - 0.05, volume=0.09, wave="sine", fade=0.3)
-    drone_events = [(0.0, drone)]
+    CHORD_ROOTS = [55, 55, 62, 58]  # a low, deliberately dissonant non-diatonic crawl
+    chord_events = [(beat * STEP * 4, _power_chord(f, STEP * 4.0, volume=0.1, fade=0.15, detune=1.008))
+                     for beat, f in enumerate(CHORD_ROOTS)]
 
-    DRUM_STEPS = [0, 6, 10]
-    perc_events = [(step * STEP, _samples(65, 0.22, volume=0.16, wave="noise",
-                                           envelope="exp_decay", decay_rate=9))
-                   for step in DRUM_STEPS]
+    bass_events = [(beat * STEP * 4, _samples(f, STEP * 4.0, volume=0.11, wave="triangle", fade=0.15))
+                   for beat, f in enumerate(CHORD_ROOTS)]
 
-    return _sound_from(_mix(_render_track(total_n, lead_events), _render_track(total_n, drone_events),
-                             _render_track(total_n, perc_events)))
+    KICK_STEPS = [0, 7, 11]
+    SNARE_STEPS = [4, 13]
+    perc_events = [(step * STEP, _kick(volume=0.2, decay=8)) for step in KICK_STEPS]
+    perc_events += [(step * STEP, _snare(volume=0.14, decay=14)) for step in SNARE_STEPS]
+
+    return _sound_from(_mix(_render_track(total_n, lead_events), _render_track(total_n, chord_events),
+                             _render_track(total_n, bass_events), _render_track(total_n, perc_events)))
 
 
 _THEME_BUILDERS = {

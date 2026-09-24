@@ -164,6 +164,26 @@ def draw_portal_prompt(surf):
     surf.blit(panel, (x, y))
 
 
+def fps_counter_rect():
+    """Bottom-left, clear of the centered bottom hint text (draw_hud below) and
+    of the Vault's own backpack row (that's a separate full-page view, not the
+    live HUD dock, so it never coexists with this)."""
+    return pygame.Rect(12, C.SCREEN_H - 22, 70, 18)
+
+
+_FPS_WARN_THRESHOLD = 30  # below this, tint the readout to flag a real slowdown
+
+
+def draw_fps_counter(surf, fps):
+    """A live FPS readout for the corner of the screen - green when healthy,
+    amber once it drops below a real "this is starting to feel choppy"
+    threshold, so a slowdown is visible at a glance instead of only showing
+    up in a headless benchmark."""
+    color = (140, 220, 140) if fps >= _FPS_WARN_THRESHOLD else (230, 180, 90)
+    txt = _FONT_S.render(f"FPS: {fps:.0f}", True, color)
+    surf.blit(txt, fps_counter_rect().topleft)
+
+
 def draw_hud(surf, zone_name, kill_count, boss_alive):
     """Top-of-screen zone banner - HP/MP/stats live in the right-docked player
     panel now (see draw_player_panel), matching the "everything on the right"

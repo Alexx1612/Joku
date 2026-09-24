@@ -1502,6 +1502,7 @@ class CoopClient:
                 banner = ui._FONT_S.render(f"Live event: {event_label}", True, (255, 220, 120))
                 s.blit(banner, (C.SCREEN_W // 2 - banner.get_width() // 2, 104))
         ui.draw_hud(s, name, 0, False)
+        ui.draw_fps_counter(s, self.clock.get_fps())
         mp = pygame.mouse.get_pos()
         ui.draw_player_panel(s, self.you, auto_fire=False)
         ui.draw_pet_panel(s, self.you, dragging=self.drag_from is not None)
@@ -1570,6 +1571,7 @@ class CoopClient:
         self._draw_speech_bubbles(s)
         self._draw_hover_tooltip()
         ui.draw_hud(s, name, self.kill_count, self.boss_active)
+        ui.draw_fps_counter(s, self.clock.get_fps())
         if self.portal_prompt:
             ui.draw_portal_prompt(s)
         if self.zone == "bonus":
