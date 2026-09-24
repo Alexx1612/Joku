@@ -1,4 +1,4 @@
-# Realm Reforged (v0.2)
+# Realm Reforged (v0.3)
 
 A from-scratch, original-code prototype inspired by **Realm of the Mad God**
 (RotMG) - a top-down bullet-hell MMO-lite, now with real co-op. No RotMG
@@ -19,7 +19,7 @@ RotMG wiki, re-derived independently in `game/constants.py`.
 - A first working co-op pass: `server.py` + `coop_client.py` over a plain
   TCP/JSON protocol.
 
-### v0.2 - everything since (this is the current version)
+### v0.2 - everything since
 Bigger world, living AI, and a long list of systems added on top of v0.1 -
 all still under the v0.2 umbrella (v0.3 hasn't started yet, see below).
 
@@ -254,12 +254,138 @@ all still under the v0.2 umbrella (v0.3 hasn't started yet, see below).
   item tooltips + a nearby-loot preview panel (RotMG's "proximity menu"),
   and an interactive options menu (O key).
 
-### v0.3 - not started yet
-Nothing yet - the next batch of ideas (more mob-sprite polish, a wandering
-Nexus NPC, a standing automated test suite, and whatever else comes up)
-will land here once it's actually built and tested, not before.
+### v0.3 - game feel, art, and progression overhaul (this is the current version)
+A research-backed batch (real web research on game-feel/juice techniques,
+pixel-art design, and this project's own asset audit) built via 21 parallel
+git-worktree forks across two waves, each independently tested before
+integration.
 
-## Play solo
+**Game feel & combat juice**
+- **Hit-stop + directional screen shake + impact particles** on every hit
+  (player-fires-enemy, enemy-hits-player, melee contact), scaled up for
+  bosses - the "cheapest weight" trio game-feel research consistently
+  points to. Hit-stop is a brief, wall-clock-timed freeze of the local
+  frame's `dt` - safe in co-op since the client never runs the
+  authoritative sim, so it only pauses local rendering/animation, never
+  the server tick.
+- **All ~63 enemy kinds now animate** (idle sway, walk bob/lean tied to
+  real movement direction, a squash-and-stretch attack-anticipation pose
+  right before firing) - a draw-time-only overlay on the existing cached
+  sprites, degrading gracefully for co-op's remote enemy rendering.
+- **A brief pre-fire telegraph glow** on ranged trash mobs (reads their
+  existing fire-cooldown, changes zero damage timing) and a **~100ms
+  buffered fire input** (an early click just before your weapon's
+  cooldown clears now still registers) - both real forgiveness/
+  readability techniques from the input-responsiveness research.
+- **A universal dash/roll** (Left Shift, ~0.18s burst covering ~2.5 tiles,
+  2s cooldown, brief invincibility frames), respecting wall collision -
+  the one bullet-hell genre staple this game was missing.
+- **A real per-source night lightmap** replacing the old flat darken
+  overlay - a soft glow follows the player (measured faster than the old
+  flat overlay, not slower).
+
+**Character & monster art**
+- **26 monster kinds redesigned** (the 6 neutral wildlife + the 20
+  "Reforging" island guardians) that were silently reusing an unrelated
+  existing shape with just a new palette (a "deer" was a recolored yeti,
+  a "songbird" was a recolored bat) - real hand-authored silhouettes now,
+  built from a small set of parametrized body-plan archetypes (wisp/
+  ethereal-flyer, bird, ethereal-singer, quadruped, humanoid-guardian,
+  blocky-construct, low-slung-creature) per the pixel-art research's
+  "small archetype library, varied by params" recommendation, rather than
+  26 fully bespoke grids. Every player class, the 14 original base enemy
+  shapes, the 10 signature per-biome mobs, and all 6 bosses + their
+  phase-2 art already had real bespoke PNGs from an earlier art pass and
+  were left untouched.
+
+**Progression & economy**
+- **Echo currency**: permadeath now awards an account-wide "Echo" currency
+  scaled by the level reached, spendable at a new Nexus "Echo Keeper" tile
+  on fixed, permanent, power-neutral unlocks (an extra backpack slot, a
+  small starting-XP boost for future characters) - softens permadeath
+  without trivializing runs, since nothing purchasable is raw combat
+  power.
+- **A UT "socket" system**: consume a spare UT item to transplant its one
+  distinct mechanic (bleed/burn/vulnerable/boomerang) onto a different
+  weapon of your choice - real build expression, not just a fixed
+  item-to-mechanic mapping.
+- **A visible difficulty/readiness signpost**: dungeon shard portal labels
+  now show a suggested level per difficulty tier (Easy/Medium/Hard ->
+  Lv 1+/8+/15+).
+- Confirmed (not new work): every class already rolled all 6 core stats
+  per level with real per-class emphasis - this was already fully
+  implemented correctly before this batch, verified rather than rebuilt.
+
+**World & events**
+- **A roaming World Boss incursion**: a rare, server-announced, tougher-
+  than-normal boss spawns far from any spawn point on a long random
+  cooldown and slowly wanders, giving scattered co-op players a reason to
+  converge.
+- **Tactical weather**: a Tundra/Ice blizzard now shrinks fog-of-war
+  reveal radius, a Desert/Wasteland sandstorm now narrows the soft
+  aim-assist cone - small, per-biome, real gameplay hooks instead of pure
+  cosmetics.
+- **Clustered biome decorations**: the sparse whole-map decoration pass
+  now seeds cluster centers and scatters props around them with falloff
+  density, instead of pure independent-per-tile placement - measured via
+  a real Clark-Evans nearest-neighbor statistic (~0.28, strongly
+  clustered, vs. ~1.0 for the old uniform approach), same total prop count
+  and realm-gen time as before.
+- **Discoverable landmarks**: one hand-placed, non-combat point of
+  interest per biome (10 total) with a first-visit-only lore message and
+  a guaranteed small loot bag.
+- **Host-settable rotating live events**: setting an `RR_EVENT` environment
+  variable (e.g. `double_loot`, `blood_moon_week`) before launching
+  `server.py`/`main.py` temporarily multiplies loot rolls or the Blood
+  Moon chance, shown as a small Nexus banner.
+
+**Co-op**
+- **A lightweight Crew system**: a persistent group tag + one shared
+  boss-kill counter (`/crew create|join|leave`), shown in the peer hover
+  tooltip - well short of a full guild system by design.
+
+**Fishing**
+- **Goofy junk-tier items**: an old boot, a rubber duck ring, a cursed
+  ring with a real stat tradeoff, a "weapon" that's just the net you
+  caught, a waterlogged sandwich, and a hatchable sentient-fish pet egg -
+  alongside the existing plain stat potion, not replacing it.
+- **A real fishing animation**: a visible cast line, a bobber that idles
+  on the water tile, a sharp dip + exclamation mark when the bite window
+  opens, and a splash on every catch (not just the rare 5% tier).
+
+**Performance**
+- Measured (not assumed): bullet/particle object pooling was investigated
+  and found unnecessary - a real stress benchmark showed ~10-13ms/tick
+  under heavy load, comfortably under the ~23ms budget derived from the
+  documented 30Hz co-op tick rate. The benchmark itself now lives in
+  `tests/` as a permanent regression guard.
+
+## Download & play (no Python needed)
+
+Don't want to clone the repo or install Python? Every release ships
+standalone Windows `.exe` builds - the game and all its assets are bundled
+inside, nothing else to install. Download only the file(s) your role
+needs from the [latest release](https://github.com/Alexx1612/Joku/releases/tag/v0.2):
+
+- **Single player**: [RealmReforged.exe](https://github.com/Alexx1612/Joku/releases/download/v0.2/RealmReforged.exe)
+  - Double-click it. That's it - nothing else to run.
+- **Multiplayer (co-op)**: one person hosts, everyone (including the host)
+  also runs the client to actually play.
+  - Host downloads: [RealmReforged-Server.exe](https://github.com/Alexx1612/Joku/releases/download/v0.2/RealmReforged-Server.exe)
+    *and* [RealmReforged-CoopClient.exe](https://github.com/Alexx1612/Joku/releases/download/v0.2/RealmReforged-CoopClient.exe)
+  - Everyone else downloads: [RealmReforged-CoopClient.exe](https://github.com/Alexx1612/Joku/releases/download/v0.2/RealmReforged-CoopClient.exe) only
+
+See "Play co-op with a friend" below for the exact hosting/joining steps -
+they apply the same way whether you're running the `.py` scripts from
+source or these `.exe` builds, just swap `.venv\Scripts\python.exe
+server.py` for double-clicking `RealmReforged-Server.exe`, and
+`.venv\Scripts\python.exe coop_client.py --host <ip> --name <you>` for
+opening a terminal and running `RealmReforged-CoopClient.exe --host <ip>
+--name <you>` (the client needs an argument to reach anyone other than
+yourself, so it has to be launched from a terminal, not double-clicked,
+unless you're just connecting to your own PC).
+
+## Play solo (from source)
 
 ```
 .venv\Scripts\python.exe main.py
@@ -312,11 +438,15 @@ listening on (default `50777`).
 |---|---|
 | WASD / arrows | Move |
 | Mouse | Aim (soft-assisted - see below) |
-| Left click (hold) | Fire, rate scales with your DEX |
+| Left click (hold) | Fire, rate scales with your DEX (a ~100ms early click just before your cooldown clears still registers) |
+| Right click | Drop the hovered backpack item on the ground, or open a nearby ground bag |
 | 1-8 / click a backpack slot | Use/equip that item |
 | Click + drag | Drag items between backpack/equip slots, or drag off the bar to drop on the ground |
+| Space | Use your class's active ability on the tile under your mouse |
+| Left Shift | Dash/roll - a short burst in your current direction with brief invincibility frames (on a cooldown) |
+| F | Context action - interact with a nearby Vault/Bazaar/Echo Keeper tile, fish at the water's edge, etc. |
 | I | Toggle auto-fire (fires continuously without holding the mouse button) |
-| Enter | Confirm menus / step through a portal you're standing near ("Press ENTER" prompt) / interact with a Vault or Bazaar tile |
+| Enter | Confirm menus / step through a portal you're standing near ("Press ENTER" prompt) |
 | R | Nexus (teleport to hub) while in the Realm or Bonus Room |
 | Q / E | Rotate the camera (a real RotMG feature, confirmed on its wiki's Controls page) |
 | X | Reset camera rotation |
@@ -463,11 +593,13 @@ game/realm_sim.py   shared realm/combat simulation used by BOTH main.py and serv
 game/world.py       tile map generation (Nexus/Bazaar/Realm/Bonus room) + camera
 game/minimap.py     fog-of-war exploration tracking + corner/full-map rendering
 game/ui.py          HUD, inventory bar, Vault screen, class-select, peer tooltips
-game/vfx.py         burst/ring/rise particle effects + screen-shake (heals, deaths, abilities, etc.)
-game/weather.py     rain/snow/sand/ash particle effects tied to the current biome
-game/accounts.py    username-only account identity (accounts/<name>.json)
+game/vfx.py         burst/ring/rise particle effects + screen-shake/hit-stop + fishing animation (heals, deaths, abilities, etc.)
+game/weather.py     rain/snow/sand/ash particle effects tied to the current biome + tactical hooks (blizzard/sandstorm)
+game/accounts.py    username-only account identity + Echo currency (accounts/<name>.json)
 game/characters.py  per-character save/load (level/xp/gear/backpack, characters/<name>.json)
 game/friends.py     per-account friends list (friends/<name>.json)
+game/crews.py       lightweight co-op crew tag + shared boss-kill counter (crews/<name>.json)
+game/live_events.py host-settable rotating live-event multipliers (RR_EVENT env var)
 game/clipboard.py   tkinter-based copy/paste for the in-game chat box
 game/netmsg.py      newline-delimited JSON framing over TCP, shared by server/client
 tools/export_audio.py   renders every procedural sound effect to a real .wav file

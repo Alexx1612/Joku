@@ -23,6 +23,7 @@ _rings = []       # each: dict(pos, life, max_life, color, max_radius)
 _shake_mag = 0.0
 _shake_time = 0.0
 _shake_total = 1.0
+_hitstop_until = 0  # absolute pygame.time.get_ticks() timestamp; 0 = not active
 
 
 def spawn_burst(pos, color, count=18, speed=(50, 190), life=(0.35, 0.75), radius=(2, 4), angle_range=(0, math.tau)):
@@ -88,6 +89,38 @@ def spawn_stream(src, dst, color, count=10, life=0.4):
                             "color": color, "radius": 3})
 
 
+def draw_fishing_bobber(surf, cam, player_pos, fishing_state):
+    """Draws the cast line + bobber for an active fishing session - called once
+    per frame per fishing player while `fishing_state` (the same dict RealmSim
+    stores on Player.fishing_state: {"phase": "casting"|"biting", "timer",
+    "bobber": (wx, wy)}) is not None. Purely a draw-time overlay (matches the
+    global-clock-driven idle/walk animation pattern already used for Player/
+    Enemy) - no new per-frame simulation state needed."""
+    bobber = fishing_state.get("bobber")
+    if bobber is None:
+        return
+    t = pygame.time.get_ticks() / 1000.0
+    p_screen = cam(player_pos)
+    b_screen = cam(bobber)
+    mid = ((p_screen[0] + b_screen[0]) / 2, (p_screen[1] + b_screen[1]) / 2 - 10)
+    pygame.draw.lines(surf, (215, 210, 190), False,
+                       [(int(p_screen[0]), int(p_screen[1])), (int(mid[0]), int(mid[1])),
+                        (int(b_screen[0]), int(b_screen[1]))], 1)
+    phase = fishing_state.get("phase", "casting")
+    if phase == "biting":
+        bob_y = -abs(math.sin(t * 14.0)) * 6  # a sharp repeated dip, distinct from the idle bob
+        color = (255, 210, 90)
+    else:
+        bob_y = math.sin(t * 6.0) * 3  # a slow, small idle bob while waiting
+        color = (140, 210, 255)
+    bx, by = b_screen[0], b_screen[1] + bob_y
+    pygame.draw.circle(surf, color, (int(bx), int(by)), 4)
+    pygame.draw.circle(surf, (25, 25, 30), (int(bx), int(by)), 4, 1)
+    if phase == "biting":
+        pygame.draw.line(surf, (255, 70, 70), (int(bx), int(by - 15)), (int(bx), int(by - 6)), 2)
+        pygame.draw.circle(surf, (255, 70, 70), (int(bx), int(by - 3)), 1)
+
+
 def trigger_shake(duration, magnitude):
     global _shake_mag, _shake_time, _shake_total
     if magnitude < _shake_mag:
@@ -104,6 +137,31 @@ def shake_offset(dt):
     _shake_time = max(0.0, _shake_time - dt)
     mag = _shake_mag * (_shake_time / _shake_total if _shake_total else 0)
     return (random.uniform(-mag, mag), random.uniform(-mag, mag))
+
+
+def trigger_hitstop(duration_ms):
+    """A brief freeze-frame: `apply_hitstop(dt)` returns 0 while active. Timed
+    off the real wall clock (pygame.time.get_ticks()), NOT decremented by the
+    dt it scales, so a hitstop that zeroes dt to 0 can never re-arm itself and
+    hang - it always expires on real time regardless of what dt does meanwhile.
+    Bigger wins, same "don't stack, don't shorten" rule as trigger_shake."""
+    global _hitstop_until
+    end = pygame.time.get_ticks() + duration_ms
+    if end > _hitstop_until:
+        _hitstop_until = end
+
+
+def apply_hitstop(dt):
+    """Call once per frame, immediately after computing raw dt, before it
+    reaches sim.update()/vfx.update()/any animation timer. Returns 0.0 while
+    a hitstop is active, otherwise returns `dt` unchanged. Safe in co-op - the
+    client never runs the authoritative sim, so zeroing its local dt only
+    pauses local rendering/animation smoothing for a couple of frames, never
+    the server tick; in single-player it also briefly pauses the local sim,
+    which is the actual intended hit-stop feel."""
+    if pygame.time.get_ticks() < _hitstop_until:
+        return 0.0
+    return dt
 
 
 def update(dt):
@@ -166,6 +224,17 @@ def dispatch(vfx_events):
             spawn_ring(pos, color, max_radius=115, life=0.95)  # outer glow ring for more depth
         elif kind == "jackpot":
             spawn_burst(pos, color, count=45, speed=(70, 230), life=(0.45, 0.95), radius=(3, 6))
+        elif kind == "fish_cast":
+            # a small ripple where the bobber lands - a single quiet ring, not a burst
+            spawn_ring(pos, color, max_radius=18, life=0.5)
+        elif kind == "fish_bite":
+            # a quick surprised pop at the bobber the instant the bite window opens
+            spawn_burst(pos, color, count=10, speed=(30, 70), life=(0.25, 0.4), radius=(1, 3))
+        elif kind == "fish_splash":
+            # every successful catch gets a real splash, not just the rare jackpot -
+            # a burst plus a ring reads as "something broke the water's surface"
+            spawn_burst(pos, color, count=20, speed=(40, 130), life=(0.3, 0.55), radius=(2, 4))
+            spawn_ring(pos, (170, 200, 230), max_radius=34, life=0.4)
         elif kind == "heal":
             spawn_burst(pos, color, count=14, speed=(20, 60), life=(0.5, 0.9), radius=(2, 3))
             spawn_ring(pos, color, max_radius=_ABILITY_RING_RADIUS["heal"], life=0.5)
@@ -202,6 +271,29 @@ def dispatch(vfx_events):
             spawn_ring(pos, color, max_radius=_ABILITY_RING_RADIUS["drain"] * 0.5, life=0.35)
         elif kind == "chain":
             spawn_burst(pos, color, count=8, speed=(40, 120), life=(0.25, 0.45), radius=(1, 3))
+        elif kind == "hit_enemy":
+            # a small, tight spark burst at the impact point + a light shake/hitstop -
+            # "the cheapest weight you'll ever add" per the juice research; deliberately
+            # smaller than every other kind below so regular trash hits don't overpower them
+            spawn_burst(pos, color, count=6, speed=(60, 140), life=(0.15, 0.3), radius=(1, 3))
+            trigger_shake(0.08, 2)
+            trigger_hitstop(30)
+        elif kind == "hit_boss":
+            # same impact feedback as hit_enemy, scaled up - landing a hit on a boss
+            # should read as heavier than landing one on a trash mob
+            spawn_burst(pos, color, count=14, speed=(80, 200), life=(0.2, 0.4), radius=(2, 4))
+            trigger_shake(0.15, 5)
+            trigger_hitstop(55)
+        elif kind == "hit_player":
+            # taking damage should feel weightier than dealing it - bigger than hit_enemy
+            spawn_burst(pos, color, count=10, speed=(70, 160), life=(0.2, 0.35), radius=(2, 4))
+            trigger_shake(0.18, 7)
+            trigger_hitstop(60)
+        elif kind == "hit_player_by_boss":
+            # taking a hit FROM a boss - the biggest of the four juice-trio kinds
+            spawn_burst(pos, color, count=20, speed=(90, 220), life=(0.25, 0.5), radius=(3, 5))
+            trigger_shake(0.3, 10)
+            trigger_hitstop(90)
         elif kind == "shield":
             spawn_ring(pos, color, max_radius=45, life=0.35)
         elif kind == "bird_flyby":

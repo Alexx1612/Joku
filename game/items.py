@@ -15,6 +15,7 @@ import random
 from dataclasses import dataclass, field
 from game.constants import TIER_COLORS, BAG_COLORS
 from game import achievements
+from game import live_events
 
 SLOT_WEAPON, SLOT_ABILITY, SLOT_ARMOR, SLOT_RING, SLOT_EGG = "weapon", "ability", "armor", "ring", "egg"
 SLOT_SHARD = "shard"  # dungeon shards (see make_dungeon_shard) - used from the backpack like a potion/egg
@@ -48,6 +49,11 @@ class Item:
     description: str = ""  # flavor text shown in tooltips
     pet_kind: str = ""  # egg items only: which PET_KINDS entry it hatches into
     shard_theme: str = ""  # shard items only: which DUNGEON_THEMES key it opens (see realm_sim.py)
+    # weapons only: one of "boomerang"/"bleed"/"burn"/"vulnerable" once a UT's proc has
+    # been socketed onto this weapon via apply_socket() below - realm_sim.player_fire
+    # checks this FIRST, before the name-based BOOMERANG_UT_NAMES/etc. lookup, so a
+    # socketed weapon behaves identically downstream to a natively-procced UT.
+    socketed_proc: str = None
 
     @property
     def band(self) -> str:
@@ -67,7 +73,8 @@ class Item:
                     is_ut=self.is_ut, stat_bonus=self.stat_bonus,
                     min_dmg=self.min_dmg, max_dmg=self.max_dmg, proc=self.proc,
                     effect=self.effect, mp_cost=self.mp_cost, magnitude=self.magnitude,
-                    description=self.description, pet_kind=self.pet_kind, shard_theme=self.shard_theme)
+                    description=self.description, pet_kind=self.pet_kind, shard_theme=self.shard_theme,
+                    socketed_proc=self.socketed_proc)
 
     @staticmethod
     def from_json(d):
@@ -229,6 +236,48 @@ UT_WEAPONS = {
                   "Quenched in the coldest hour of the longest night. Whatever it "
                   "touches carries that cold with it long after the strike lands.")],
 }
+
+# ------------------------------------------------------------ UT socketing --
+# Each per-class UT_WEAPONS list has exactly 4 entries; realm_sim.py's
+# BOOMERANG_UT_NAMES/BLEED_UT_NAMES/BURN_UT_NAMES/VULNERABLE_UT_NAMES dicts
+# resolve a UT's mechanic purely from ITS OWN INDEX in that list (0=bleed,
+# 1=boomerang, 2=burn, 3=vulnerable) matched by exact name - identify_proc_kind
+# below mirrors that same index convention so a "socket" action can figure out
+# which mechanic a given UT carries without importing realm_sim (which already
+# imports FROM this module - importing it back here would be circular).
+_UT_PROC_KIND_BY_INDEX = {0: "bleed", 1: "boomerang", 2: "burn", 3: "vulnerable"}
+
+
+def identify_proc_kind(item: "Item"):
+    """Returns "boomerang"/"bleed"/"burn"/"vulnerable" if `item`'s exact name
+    matches one of the 4 per-class UT_WEAPONS entries that carries a real
+    mechanic, else None (a plain tiered weapon, armor, or a UT whose flavor
+    proc has no matching mechanic)."""
+    for uts in UT_WEAPONS.values():
+        for idx, ut_tuple in enumerate(uts):
+            if ut_tuple[0] == item.name:
+                return _UT_PROC_KIND_BY_INDEX.get(idx)
+    return None
+
+
+def apply_socket(source: "Item", target: "Item"):
+    """Consumes `source` (expected to be a UT weapon carrying one of the 4
+    known proc kinds) to imprint that same proc onto `target` (a different
+    weapon), overwriting anything previously socketed onto `target`. Does NOT
+    remove `source` from wherever it's stored - the caller (main.py's
+    _transfer_item / server.py's "socket_proc" action) does that, since only
+    the caller knows which backpack/equip slot `source` came from. Returns
+    (ok: bool, message: str) for feed-message display either way."""
+    if source is target:
+        return False, "Can't socket a weapon into itself"
+    if target.slot != SLOT_WEAPON:
+        return False, "Can only socket a proc onto a weapon"
+    kind = identify_proc_kind(source)
+    if kind is None:
+        return False, f"{source.name} doesn't carry a socketable proc"
+    target.socketed_proc = kind
+    return True, f"Socketed {kind} onto {target.name}"
+
 
 # Active abilities (the 2nd equip slot) - cast with Space, cost MP, one signature
 # effect per class (mirrors RotMG: every class's ability slot does something
@@ -472,6 +521,10 @@ PET_KINDS = {
     "phoenix_chick": _pet_kind("salamander", (255, 170, 60), "heal", "legendary", "Phoenix Chick",
                                 "Hatched from an ember that never went out. Legends say a full-grown "
                                 "phoenix can raise the dead - this one just mends wounds, but fast."),
+    "sentient_fish": _pet_kind("frost_wraith", (120, 255, 170), "magic", "uncommon", "Sentient Fish",
+                                "Hooked, reeled in, and unmistakably judging you for it. Floats "
+                                "alongside in a small orb of water, muttering in bubbles, and "
+                                "restores mana whenever it feels you've earned it."),
 }
 
 
@@ -530,7 +583,21 @@ def roll_loot(cls_name: str, enemy_rank: str, difficulty: float = 0.5) -> list:
     entities.difficulty_fraction. Nudges which end of each tier band below a
     roll draws from; the drop CHANCES (the random.random() < X checks) and the
     brown/purple/white bag colors are untouched by it.
+
+    A "double_loot"-style live event (see game/live_events.py) doubles the
+    expected count by running the whole independent roll a second (or Nth)
+    time and merging the results, rather than inflating each individual
+    random.random() < X chance past 1.0 - so a "double" event really means
+    twice the drops, not diminishing-returns odds tweaks.
     """
+    drops = _roll_loot_once(cls_name, enemy_rank, difficulty)
+    extra_rolls = int(round(live_events.get_multiplier("loot_rolls"))) - 1
+    for _ in range(max(0, extra_rolls)):
+        drops.extend(_roll_loot_once(cls_name, enemy_rank, difficulty))
+    return drops
+
+
+def _roll_loot_once(cls_name: str, enemy_rank: str, difficulty: float = 0.5) -> list:
     # Rates rehauled alongside the tier-ladder/cross-class expansion above: elite's
     # brown/purple split shifted toward purple (more to find now that purple's own
     # band is denser), trash pulled back slightly since its pool is denser too, and
@@ -663,6 +730,87 @@ def make_temp_potion(stat_key: str) -> Item:
 
 def _random_potion() -> Item:
     return make_potion(random.choice(STAT_KEYS))
+
+
+# ------------------------------------------------------- goofy fishing junk --
+# The fishing "junk" tier (45% of every catch - the single most common
+# outcome, see RealmSim.fish_action) used to be a plain make_potion() call,
+# mechanically identical to any other potion source and with zero personality
+# despite being what most casts actually reel in. These give it a real,
+# varied, funny catch table instead - most are still genuinely equippable
+# (a real slot/stat_bonus, not just flavor text), one carries an actual
+# player-chosen downside, and one is a real hatchable pet via the normal
+# PET_KINDS/make_egg system above (see "sentient_fish").
+
+def make_old_boot() -> Item:
+    """A joke armor piece - real slot/stat_bonus (tiny but positive, never
+    literally useless), just comically undersized next to a T1 armor drop."""
+    return Item("Old Boot", SLOT_ARMOR, 0, "armor", stat_bonus={"deF": 1},
+                 description="One boot. Just the one. Still has some fight "
+                             "left in it - mostly holes, technically defense.")
+
+
+def make_rubber_duck() -> Item:
+    """A joke ring - real slot/stat_bonus, proc is flavor-text-only (see the
+    Item.proc docstring) so this stays a pure content addition with no new
+    mechanical hook, matching this fork's file scope."""
+    return Item("Rubber Duck Ring", SLOT_RING, 0, "ring", stat_bonus={"wis": 1},
+                 proc="Squeaks faintly, in perfect rhythm with every shot.",
+                 description="A small yellow ring shaped like a bath toy. "
+                             "Wearing it makes you feel inexplicably buoyant.")
+
+
+def make_cursed_ring() -> Item:
+    """The one entry with a REAL mechanical downside - a genuine trade-off
+    the player chooses to accept by equipping it (or not), not just a
+    negative-flavor item with no teeth. stat_bonus supports negative ints
+    fine - Player.total_stat/equip just sum the dict, no validation rejects
+    a negative value."""
+    return Item("Cursed Ring of Buyer's Remorse", SLOT_RING, 0, "ring",
+                 stat_bonus={"att": 2, "deF": -2},
+                 description="CURSED. Hits noticeably harder. Also makes you "
+                             "noticeably easier to hit. The previous owner "
+                             "left it in the lake on purpose.")
+
+
+def make_fishing_net_weapon() -> Item:
+    """A joke weapon - real SLOT_WEAPON with genuinely poor damage, shape
+    reuses the existing 'sword' icon primitive (sprites.item_icon() falls
+    back cleanly for any shape without dedicated art, so this needed no
+    sprites.py change)."""
+    return Item("Tangled Fishing Net", SLOT_WEAPON, 0, "sword", min_dmg=1, max_dmg=2,
+                 description="Technically a weapon now. You caught it on your "
+                             "hook and, out of respect for the effort, are "
+                             "legally required to try wielding it.")
+
+
+def make_waterlogged_sandwich() -> Item:
+    """A joke consumable - same 'consumable' slot as a stat potion, same
+    permanent tiny stat_bonus shape, purely a flavor/personality entry."""
+    return Item("Waterlogged Sandwich", "consumable", 0, "sandwich", stat_bonus={"vit": 1},
+                 description="Has been in the lake for an unknowable length "
+                             "of time and is, somehow, still technically "
+                             "edible. Eating it toughens you up out of spite.")
+
+
+_GOOFY_JUNK_TABLE = [
+    (20, _random_potion),          # a real stat potion stays in the pool - junk isn't ALWAYS a joke
+    (15, make_old_boot),
+    (15, make_rubber_duck),
+    (10, make_cursed_ring),
+    (15, make_fishing_net_weapon),
+    (15, make_waterlogged_sandwich),
+    (10, lambda: make_egg("sentient_fish")),
+]
+
+
+def _random_junk_catch() -> Item:
+    """The full junk-tier catch table - see RealmSim.fish_action, the
+    caller. Weighted so a plain useful potion is still possible, but most
+    casts now reel in one of the goofy items above instead."""
+    weights = [w for w, _ in _GOOFY_JUNK_TABLE]
+    maker = random.choices([m for _, m in _GOOFY_JUNK_TABLE], weights=weights)[0]
+    return maker()
 
 
 def _random_temp_potion() -> Item:

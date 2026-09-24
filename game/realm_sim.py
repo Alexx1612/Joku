@@ -18,11 +18,13 @@ import pygame
 from game import world
 from game import achievements
 from game import vfx
+from game import crews
+from game import live_events
 from game.entities import (Enemy, Bag, Portal, Obstacle, _mk_bullet, RANK_XP, BOSS_KINDS, BAG_MERGE_RADIUS,
                             BAG_MERGE_WINDOW, find_nearby_bag as _find_nearby_bag, bag_by_id as _bag_by_id,
                             withdraw_from_bag as _withdraw_from_bag)
-from game.items import (roll_loot, BAG_COLOR_FOR, _random_tiered, _random_egg, _random_ut, make_potion,
-                         make_dungeon_shard, UT_WEAPONS, STAT_KEYS)
+from game.items import (roll_loot, BAG_COLOR_FOR, _random_tiered, _random_egg, _random_ut,
+                         make_dungeon_shard, UT_WEAPONS, _random_junk_catch)
 from game.constants import TIER_COLORS, TILE
 from game.audio import sound_family  # pure classification lookup, no pygame.mixer side effects -
 # safe to use here even though this module is shared with the (headless) co-op server
@@ -240,6 +242,25 @@ ISLAND_NAMES = ["Emberfall Shard", "Coral Choir", "Frostbite Shard", "Pearlsong 
 ISLAND_QUEST_INTERVAL = 300.0  # 5 minutes, per island independently
 ISLAND_WAVE_SIZE = 4           # guardians per flare/song wave, always including that theme's anchor mob
 
+# A rare, server-wide-announced roaming World Boss incursion (open Realm only) -
+# deliberately separate from _maybe_spawn_boss's every-40-kill boss (tracked via
+# self.boss): this one is purely time-gated on a long random cooldown, not
+# kill-count-gated, spawns far from every player so scattered co-op players have
+# a real reason to converge on the announcement, and just wanders instead of
+# guarding a fixed spot. Tracked via its own self.world_boss so it never
+# collides with the every-40-kill boss's singleton bookkeeping.
+WORLD_BOSS_INTERVAL_MIN = 900.0   # 15 minutes
+WORLD_BOSS_INTERVAL_MAX = 1500.0  # 25 minutes
+# meaningfully tougher than _maybe_spawn_boss's `1.0 + avg_level*0.15` HP scale -
+# only HP scales with level_scale (per-hit damage is fixed per kind), so a bigger
+# HP pool is what actually makes this a real group encounter instead of a solo
+# curbstomp or a solo wall
+WORLD_BOSS_LEVEL_SCALE_BASE = 2.4
+WORLD_BOSS_LEVEL_SCALE_PER_LEVEL = 0.18
+WORLD_BOSS_SPAWN_MIN_DIST = 900.0
+WORLD_BOSS_SPAWN_MAX_DIST = 1500.0
+WORLD_BOSS_ANNOUNCE_COLOR = (180, 40, 200)
+
 # Bonus rooms (mob-death portals) come in three difficulty tiers - RotMG-style
 # "vault"/dungeon difficulty, at v0 scale: tougher enemies and a richer loot
 # roll, weighted so Easy is the common case and Hard is a rare, worthwhile risk.
@@ -362,7 +383,14 @@ class RealmSim:
         self.portals = []
         self.islands = []  # [{"idx","pos","theme","label","cooldown","alive_guardians"}, ...] -
         # "The Reforging" storyline, open-Realm only (see _stamp_islands) - stays empty for bonus rooms
+        self.landmarks = []  # [{"pos","biome","name","lore"}, ...] - one discoverable, non-combat POI
+        # per biome (see _stamp_biome_buildings), open-Realm only, stays empty for bonus rooms
+        self._landmark_visited = {}  # {pid: {landmark_idx, ...}} - SESSION-ONLY (never saved to any
+        # file, matching "exploration reward doesn't need to survive permadeath") - reset whenever this
+        # RealmSim instance is (re)created, exactly like every other per-tick/per-session sim state here
         self.boss = None
+        self.world_boss = None
+        self.world_boss_cd = random.uniform(WORLD_BOSS_INTERVAL_MIN, WORLD_BOSS_INTERVAL_MAX)
         self.kill_count = 0
         self.next_boss_at = 40
         self.spawn_cd = 1.0
@@ -731,6 +759,35 @@ class RealmSim:
             rect = world.stamp_terrace(self.realm_map.grid, center_tile, biome_name)
             placed_rects.append(rect)
 
+        # discoverable landmarks (idea 10 / track J) - one per biome, at that
+        # biome's THIRD-toughest lair so it's never the same spot as either
+        # the landmark building or the terrace above. A biome with fewer than
+        # 3 lairs simply gets no landmark, same "rare skip, not a bug"
+        # convention as the terrace loop just above.
+        third_by_biome = {}
+        for biome_name in second_by_biome:
+            candidates = [lair for lair in self.lairs
+                          if world.GROUND_TO_BIOME_NAME.get(
+                              self.realm_map.tile_at(lair["pos"].x, lair["pos"].y)) == biome_name
+                          and lair is not toughest_by_biome.get(biome_name)
+                          and lair is not second_by_biome.get(biome_name)]
+            if candidates:
+                third_by_biome[biome_name] = max(candidates, key=lambda l: l["difficulty_scale"])
+        for biome_name, lair in third_by_biome.items():
+            center_tile = (int(lair["pos"].x // TILE), int(lair["pos"].y // TILE))
+            candidate_rect = world.landmark_rect(center_tile)
+            if any(candidate_rect.inflate(4, 4).colliderect(r) for r in placed_rects):
+                continue
+            rect = world.stamp_landmark(self.realm_map.grid, center_tile, biome_name)
+            placed_rects.append(rect)
+            defn = world.LANDMARK_DEFS.get(biome_name)
+            if defn is None:
+                continue
+            self.landmarks.append({
+                "pos": pygame.Vector2(center_tile[0] * TILE + TILE / 2, center_tile[1] * TILE + TILE / 2),
+                "biome": biome_name, "name": defn["name"], "lore": defn["lore"],
+            })
+
     def _stamp_islands(self):
         """"The Reforging" storyline: stamps 10 small standalone island zones
         as coastal peninsulas evenly spaced by angle around the map
@@ -892,7 +949,8 @@ class RealmSim:
             # single night - the longer it's been since the last Blood Moon, the
             # more likely the next one is (capped), so it's a real, structured
             # cadence instead of pure chance every time
-            effective_chance = min(0.5, BLOOD_MOON_CHANCE + self._nights_since_blood_moon * 0.03)
+            base_chance = BLOOD_MOON_CHANCE * live_events.get_multiplier("blood_moon_chance")
+            effective_chance = min(0.5, base_chance + self._nights_since_blood_moon * 0.03)
             self.blood_moon_active = random.random() < effective_chance
             if self.blood_moon_active:
                 self._nights_since_blood_moon = 0
@@ -934,6 +992,8 @@ class RealmSim:
                 if lair["respawn_cd"] > 0:
                     lair["respawn_cd"] -= dt
             self._tick_island_events(dt)
+            self._tick_world_boss(dt, alive)
+            self._tick_landmarks(alive)
 
         if self.is_bonus_room:
             self._ambient.update(dt, self._ambient_bounds)
@@ -1016,6 +1076,8 @@ class RealmSim:
                         real = p.take_damage(random.randint(*e.dmg))
                         self.events.append((p.pid, f"-{real} hp", (230, 90, 90)))
                         self.damage_popups.append((p.pos.x, p.pos.y, real, (255, 90, 90)))
+                        hit_kind = "hit_player_by_boss" if e.rank == "boss" else "hit_player"
+                        self.vfx_events.append((hit_kind, p.pos.x, p.pos.y, (255, 90, 90)))
                         if e.speed > 0:
                             # a small nudge alongside the damage - "a little bit of
                             # movement for aggressive mobs too" - never applied to
@@ -1153,6 +1215,61 @@ class RealmSim:
         theme = ISLAND_THEMES[isl["theme"]]
         self.events.append((None, f"{isl['label']} has been calmed. The Reforging continues.", theme["color"]))
 
+    def _tick_world_boss(self, dt, alive):
+        """A rare, server-wide-announced roaming boss incursion - see the
+        WORLD_BOSS_* constants' comment for how this differs from
+        _maybe_spawn_boss's every-40-kill boss. Purely time-gated: the
+        cooldown only starts counting down again once the current world boss
+        (if any) is dead, mirroring how island cooldowns freeze while a wave
+        is still up."""
+        if self.world_boss is not None:
+            return
+        self.world_boss_cd -= dt
+        if self.world_boss_cd > 0 or not alive:
+            return
+        anchor = random.choice(alive).pos
+        pos = self._find_spawn_pos_near(anchor, min_tiles=WORLD_BOSS_SPAWN_MIN_DIST,
+                                         max_tiles=WORLD_BOSS_SPAWN_MAX_DIST, avoid_players=alive)
+        if pos is None:
+            # near a map edge and the far ring came up empty 20 tries running - settle
+            # for a closer-but-still-not-on-top-of-anyone spot rather than skip a whole tick
+            pos = self._find_spawn_pos_near(anchor, min_tiles=300, max_tiles=600, avoid_players=alive)
+        if pos is None:
+            return  # try again next tick
+        avg_level = sum(p.level for p in alive) / len(alive)
+        kind = random.choice(BOSS_KINDS)
+        scale = WORLD_BOSS_LEVEL_SCALE_BASE + avg_level * WORLD_BOSS_LEVEL_SCALE_PER_LEVEL
+        self.world_boss = Enemy(kind, pos, scale)
+        self.world_boss.is_world_boss = True
+        self.enemies.append(self.world_boss)
+        self.events.append((None, "A shadow gathers over the Wastelands... a great terror stirs.",
+                             WORLD_BOSS_ANNOUNCE_COLOR))
+        self.vfx_events.append(("boss_appear", pos.x, pos.y, WORLD_BOSS_ANNOUNCE_COLOR))
+
+    LANDMARK_TRIGGER_RADIUS = 48  # world units (~1.5 tiles) - close enough to read as "found it",
+    # not triggered by merely passing within sight of the prop cluster
+
+    def _tick_landmarks(self, alive):
+        """Per-player, SESSION-ONLY discovery check (see self._landmark_visited's
+        docstring in __init__) - fires the lore feed message + a guaranteed
+        bonus loot bag (same roll_loot/_spawn_loot_bag path as an island
+        event's completion bonus, see _progress_island_event above) exactly
+        once per player per landmark, the first tick a player is close enough."""
+        if not self.landmarks:
+            return
+        for p in alive:
+            visited = self._landmark_visited.setdefault(p.pid, set())
+            for idx, lm in enumerate(self.landmarks):
+                if idx in visited:
+                    continue
+                if p.pos.distance_to(lm["pos"]) > self.LANDMARK_TRIGGER_RADIUS:
+                    continue
+                visited.add(idx)
+                self.events.append((p.pid, f"You discover {lm['name']}. {lm['lore']}", (200, 190, 255)))
+                bonus_items = roll_loot(p.cls_name, "elite", 1.0)
+                if bonus_items:
+                    self._spawn_loot_bag(bonus_items, lm["pos"])
+
     def _trigger_wildlife_flee(self):
         """Ambient unshootable wildlife "runs away if you shoot near them" - any
         PLAYER bullet within FLEE_TRIGGER_RADIUS of one arms its flee state. Cheap
@@ -1179,6 +1296,10 @@ class RealmSim:
                         real = p.take_damage(b.dmg)
                         self.events.append((p.pid, f"-{real} hp", (230, 90, 90)))
                         self.damage_popups.append((p.pos.x, p.pos.y, real, (255, 90, 90)))
+                        # no per-bullet shooter reference is tracked (b.owner is just the
+                        # literal string "enemy" for every enemy shot), so this can't tell
+                        # a boss's bullet apart from trash - use the plain hit_player kind
+                        self.vfx_events.append(("hit_player", p.pos.x, p.pos.y, (255, 90, 90)))
                         consumed = True
                         break
             else:
@@ -1189,6 +1310,8 @@ class RealmSim:
                     if e.alive and b.hit_test(e.pos, e.radius):
                         killed = e.take_damage(b.dmg)
                         self.damage_popups.append((e.pos.x, e.pos.y, e._last_hit_damage, (255, 220, 90)))
+                        hit_kind = "hit_boss" if e.rank == "boss" else "hit_enemy"
+                        self.vfx_events.append((hit_kind, e.pos.x, e.pos.y, (255, 220, 90)))
                         if b.status_effect == "bleed":
                             e.bleed_time = BLEED_DURATION
                             e.bleed_dps = b.dmg * BLEED_DPS_FRACTION
@@ -1268,6 +1391,10 @@ class RealmSim:
             killer.gain_xp(RANK_XP[enemy.rank])
             if killer.kills == 1:
                 self._grant_achievement(killer, "first_blood")
+            if enemy.rank == "boss":
+                crew_name = crews.get_crew_for_player(killer.name)
+                if crew_name:
+                    crews.increment_boss_kills(crew_name)
         loot_rolls = self.difficulty["loot_rolls"] if self.is_bonus_room else 1
         if enemy.moonlit:
             loot_rolls += 1  # a Moonlit kill always rolls at least one extra bag
@@ -1326,6 +1453,15 @@ class RealmSim:
                 if is_phase1:
                     self._phase1_dead = True
                     self._maybe_open_phase2_door()
+            elif getattr(enemy, "is_world_boss", False):
+                self.world_boss = None
+                bonus_items = []
+                for _ in range(2):
+                    bonus_items.extend(roll_loot(cls_for_loot, "boss", enemy.difficulty_fraction))
+                if bonus_items:
+                    self._spawn_loot_bag(bonus_items, enemy.pos)
+                self.events.append((None, "The roaming terror has fallen! Its hoard scatters across the land.",
+                                     WORLD_BOSS_ANNOUNCE_COLOR))
             else:
                 # a boss-ranked kill that ISN'T the tracked main boss - the hidden
                 # dungeon's "???" secret boss (see _complete_secret_quest). Loot/XP
@@ -1472,6 +1608,26 @@ class RealmSim:
     def _near_water(self, pos):
         return not self.is_bonus_room and self.realm_map.near_water(pos.x, pos.y, radius=FISH_RANGE)
 
+    def _find_fishing_bobber_pos(self, pos):
+        """Finds the center of the nearest WATER tile within FISH_RANGE of `pos`,
+        for the bobber's rendered world position - fish_action() only ever calls
+        this after _near_water() already confirmed one exists, so the None
+        fallback (bobber lands on the player) is defensive, not expected."""
+        tx0, ty0 = int(pos.x // TILE), int(pos.y // TILE)
+        r = int(FISH_RANGE) + 1
+        best, best_d2 = None, None
+        for dy in range(-r, r + 1):
+            for dx in range(-r, r + 1):
+                xx, yy = tx0 + dx, ty0 + dy
+                if 0 <= yy < self.realm_map.h and 0 <= xx < self.realm_map.w \
+                        and self.realm_map.grid[yy][xx] == world.WATER:
+                    d2 = dx * dx + dy * dy
+                    if best_d2 is None or d2 < best_d2:
+                        best_d2, best = d2, (xx, yy)
+        if best is None:
+            return (pos.x, pos.y)
+        return ((best[0] + 0.5) * TILE, (best[1] + 0.5) * TILE)
+
     def _update_fishing(self, dt, players):
         for p in players.values():
             fs = p.fishing_state
@@ -1482,6 +1638,8 @@ class RealmSim:
                 fs["phase"] = "biting"
                 fs["timer"] = FISH_BITE_WINDOW
                 self.events.append((p.pid, "A fish is biting! Press F!", (140, 210, 255)))
+                bx, by = fs.get("bobber", (p.pos.x, p.pos.y))
+                self.vfx_events.append(("fish_bite", bx, by, (140, 210, 255)))
             elif fs["phase"] == "biting" and fs["timer"] <= 0:
                 p.fishing_state = None
                 p.fish_cd = FISH_COOLDOWN
@@ -1504,9 +1662,12 @@ class RealmSim:
                 return None, msg
             if player.fish_cd > 0:
                 return None, None
-            player.fishing_state = {"phase": "casting", "timer": random.uniform(*FISH_CAST_TIME)}
+            bobber = self._find_fishing_bobber_pos(player.pos)
+            player.fishing_state = {"phase": "casting", "timer": random.uniform(*FISH_CAST_TIME),
+                                     "bobber": bobber}
             msg = "You cast your line..."
             self.events.append((player.pid, msg, (150, 190, 220)))
+            self.vfx_events.append(("fish_cast", bobber[0], bobber[1], (150, 190, 220)))
             return None, msg
         if player.fishing_state["phase"] == "casting":
             msg = "Not yet... wait for the bite"
@@ -1517,7 +1678,7 @@ class RealmSim:
         player.fish_cd = FISH_COOLDOWN
         roll = random.choices(["junk", "tiered", "egg", "rare"], weights=self.FISH_TABLE_WEIGHTS)[0]
         if roll == "junk":
-            item = make_potion(random.choice(STAT_KEYS))
+            item = _random_junk_catch()
         elif roll == "tiered":
             item = _random_tiered(player.cls_name, lo=1, hi=7)
         elif roll == "egg":
@@ -1525,6 +1686,8 @@ class RealmSim:
         else:
             item = _random_ut(player.cls_name)
             self.vfx_events.append(("jackpot", player.pos.x, player.pos.y, item.color))
+        # every catch gets a real splash, not just the rare tier's extra jackpot burst
+        self.vfx_events.append(("fish_splash", player.pos.x, player.pos.y, item.color))
         if not player.try_pickup(item):
             msg = "Caught something, but your bag is full!"
             self.events.append((player.pid, msg, (220, 150, 90)))
@@ -1544,16 +1707,24 @@ class RealmSim:
         from game.constants import damage_roll
         p._fire_flash_t = p.FIRE_FLASH_DURATION  # brief recoil-nudge + tint - see Player.draw()
         dmg = damage_roll(p.weapon.min_dmg, p.weapon.max_dmg, p.total_stat("att"))
-        motion = ("boomerang" if p.weapon.is_ut and p.weapon.name == BOOMERANG_UT_NAMES.get(p.cls_name)
-                  else "straight")
-        status_effect = None
-        if p.weapon.is_ut:
-            if p.weapon.name == BLEED_UT_NAMES.get(p.cls_name):
-                status_effect = "bleed"
-            elif p.weapon.name == BURN_UT_NAMES.get(p.cls_name):
-                status_effect = "burn"
-            elif p.weapon.name == VULNERABLE_UT_NAMES.get(p.cls_name):
-                status_effect = "vulnerable"
+        # a socketed proc (see items.apply_socket) always wins over the weapon's own
+        # native UT mechanic - it can only ever exist on a weapon that either has no
+        # native mechanic of its own, or had one deliberately overwritten by socketing.
+        socketed = getattr(p.weapon, "socketed_proc", None)
+        if socketed:
+            motion = "boomerang" if socketed == "boomerang" else "straight"
+            status_effect = socketed if socketed in ("bleed", "burn", "vulnerable") else None
+        else:
+            motion = ("boomerang" if p.weapon.is_ut and p.weapon.name == BOOMERANG_UT_NAMES.get(p.cls_name)
+                      else "straight")
+            status_effect = None
+            if p.weapon.is_ut:
+                if p.weapon.name == BLEED_UT_NAMES.get(p.cls_name):
+                    status_effect = "bleed"
+                elif p.weapon.name == BURN_UT_NAMES.get(p.cls_name):
+                    status_effect = "burn"
+                elif p.weapon.name == VULNERABLE_UT_NAMES.get(p.cls_name):
+                    status_effect = "vulnerable"
         # per-class projectile shape hint (see sprites.bullet_surface) - a real shape
         # difference per category, not just the color each branch below already sets
         shape = {"archer": "arrow", "warrior": "blade", "paladin": "blade",

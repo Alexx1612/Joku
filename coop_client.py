@@ -33,10 +33,12 @@ from game import weather
 from game import vfx
 from game import clipboard
 from game import friends
+from game import crews
+from game import live_events
 from game.entities import Player, Enemy, Bullet, Bag, Portal, Obstacle, NexusBot
 from game.netmsg import send_msg, MessageReader
-from game.items import VAULT_SLOTS, VAULT_CHEST_SIZE
-from game.realm_sim import auto_aim_direction
+from game.items import VAULT_SLOTS, VAULT_CHEST_SIZE, identify_proc_kind, SLOT_WEAPON
+from game.realm_sim import auto_aim_direction, AUTO_AIM_CONE_DEG
 
 STATE_INTRO, STATE_CLASS_SELECT, STATE_CONNECTING, STATE_ERROR, STATE_PLAY = range(5)
 SPEECH_BUBBLE_LIFETIME = 4.0
@@ -57,6 +59,7 @@ class GhostEnemy:
         self.pos = pygame.Vector2(d["x"], d["y"])
         self.hp, self.hp_max, self.rank = d["hp"], d["hp_max"], d["rank"]
         self._hit_flash = 0.0  # not synced over the network - cosmetic only, defaults off
+        self._pretelegraph = d.get("pretelegraph", False)
         self.frozen_time = 1.0 if d.get("frozen") else 0.0
         self.moonlit = d.get("moonlit", False)
         self.invulnerable = d.get("invulnerable", False)
@@ -133,6 +136,7 @@ class NetLink:
         self.bag_state = None  # {"id": bag_id, "items": [json, ...]} - the last opened/withdrawn-from bag
         self.whispers = []  # queued incoming/echoed whisper messages, drained each frame
         self.wish_result = None
+        self.socket_result = None
         self.welcome_pid = None
         self.error = None
         self._stop = False
@@ -172,6 +176,9 @@ class NetLink:
                     elif t == "wish_result":
                         with self.lock:
                             self.wish_result = msg
+                    elif t == "socket_result":
+                        with self.lock:
+                            self.socket_result = msg
                     elif t == "welcome":
                         self.welcome_pid = msg["pid"]
         except (ConnectionError, OSError) as e:
@@ -211,6 +218,11 @@ class NetLink:
     def pop_wish_result(self):
         with self.lock:
             v, self.wish_result = self.wish_result, None
+            return v
+
+    def pop_socket_result(self):
+        with self.lock:
+            v, self.socket_result = self.socket_result, None
             return v
 
     def stop(self):
@@ -288,6 +300,7 @@ class CoopClient:
         self.context_menu = None  # {"pid","name","pos"} - the right-click-a-player popup
         self.friends_panel_open = False
         self.friends = friends.load_friends(name)
+        self.crew_name = crews.get_crew_for_player(name)
         self._last_nearby_rows = []  # [(row_rect, tp_rect, pid), ...] from the last draw, for click hit-testing
         self.bazaar_ground_items = []
         self.nexus_bot = None
@@ -295,11 +308,14 @@ class CoopClient:
         self.realm_minimap = None
         self.bonus_minimap = None
         self.auto_fire_enabled = False
+        self._dash_pending = False  # set on a Shift keydown, sent once then cleared - see _send_input().
         self.popups = []
         self._ui_click_active = False  # suppresses firing while a UI click (e.g. inventory) is held
         self._last_level = 1
         self.drag_from = None       # ("backpack", idx) or ("equip", slot_type) while a drag is in progress
         self.drag_start_pos = None
+        self.pending_socket = None  # (source_idx, target_idx) awaiting an ENTER confirm - see
+        # _inventory_mouse_up's backpack->backpack branch and identify_proc_kind's use there
         self._dblclick_slot = None  # ("backpack", idx) of the last plain click, for double-click-to-use
         self._dblclick_time = 0     # detection - equip/use now fires on a DOUBLE click, not a single one
         self.DBLCLICK_MS = 350
@@ -325,6 +341,7 @@ class CoopClient:
     def run(self):
         while True:
             dt = min(self.clock.tick(C.FPS) / 1000.0, 0.05)
+            dt = vfx.apply_hitstop(dt)
             if not self.handle_events():
                 break
             self.update(dt)
@@ -433,6 +450,8 @@ class CoopClient:
             if event.type == pygame.KEYDOWN:
                 if self.chat_open:
                     self._handle_chat_key(event)
+                elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER) and self.pending_socket is not None:
+                    self._apply_pending_socket()
                 elif (event.key == pygame.K_RETURN and self.state == STATE_PLAY and not self.vault_open
                       and self.zone in self.CHAT_ZONES and not self.help_open and not self.portal_prompt):
                     # standing near a portal takes priority over opening chat - see _play_key
@@ -454,12 +473,16 @@ class CoopClient:
                     action()
                 elif event.key == pygame.K_SPACE and self.zone in ("realm", "bonus"):
                     self._use_ability()
+                elif event.key in (pygame.K_LSHIFT, pygame.K_RSHIFT) and self.zone in ("realm", "bonus"):
+                    self._dash_pending = True
                 elif event.key == pygame.K_m and self._current_minimap() is not None:
                     self._current_minimap().full_map_open = not self._current_minimap().full_map_open
                 elif event.key in (pygame.K_PLUS, pygame.K_EQUALS, pygame.K_KP_PLUS):
                     self._zoom_minimap(minimap.ZOOM_STEP)
                 elif event.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
                     self._zoom_minimap(-minimap.ZOOM_STEP)
+                elif event.key == pygame.K_ESCAPE and self.pending_socket is not None:
+                    self.pending_socket = None
                 elif event.key == pygame.K_ESCAPE:
                     if self._map_open():
                         self._current_minimap().full_map_open = False
@@ -648,13 +671,42 @@ class CoopClient:
                 self.feed = self.feed[:4]
             else:
                 self.link.send({"type": "action", "action": "whisper", "pid": target.pid, "text": message.strip()})
+        elif cmd == "crew":
+            self._handle_crew_command(parts[1] if len(parts) > 1 else "")
         elif cmd == "help":
-            self.feed.insert(0, ["Commands: /nexus /realm /vault /bazaar /trade /w <name> <msg>",
+            self.feed.insert(0, ["Commands: /nexus /realm /vault /bazaar /trade /crew /w <name> <msg>",
                                   (200, 200, 215), 4.0])
             self.feed = self.feed[:4]
         else:
             self.feed.insert(0, [f"Unknown command: /{cmd}", (220, 120, 120), 4.0])
             self.feed = self.feed[:4]
+
+    def _handle_crew_command(self, rest):
+        sub_parts = rest.split(maxsplit=1)
+        sub = sub_parts[0].lower() if sub_parts else ""
+        arg = sub_parts[1].strip() if len(sub_parts) > 1 else ""
+        if sub == "create" and arg:
+            crews.create_crew(arg, self.name)
+            self.crew_name = arg
+            self.feed.insert(0, [f"Crew '{arg}' created.", (200, 220, 255), 4.0])
+        elif sub == "join" and arg:
+            crew = crews.join_crew(arg, self.name)
+            if crew:
+                self.crew_name = arg
+                self.feed.insert(0, [f"Joined crew '{arg}'.", (200, 220, 255), 4.0])
+            else:
+                self.feed.insert(0, [f"No crew named '{arg}'.", (220, 150, 90), 4.0])
+        elif sub == "leave":
+            if self.crew_name:
+                crews.leave_crew(self.crew_name, self.name)
+                self.feed.insert(0, [f"Left crew '{self.crew_name}'.", (200, 220, 255), 4.0])
+                self.crew_name = ""
+            else:
+                self.feed.insert(0, ["You're not in a crew.", (220, 150, 90), 4.0])
+        else:
+            self.feed.insert(0, ["Usage: /crew create <name> | /crew join <name> | /crew leave",
+                                  (220, 150, 90), 4.0])
+        self.feed = self.feed[:4]
 
     def _current_minimap(self):
         if self.zone == "realm":
@@ -856,6 +908,14 @@ class CoopClient:
             self.drag_from = slot
             self.drag_start_pos = pos
             self._ui_click_active = True
+            self.pending_socket = None  # a fresh drag cancels an unconfirmed socket request
+
+    def _apply_pending_socket(self):
+        if self.pending_socket is None:
+            return
+        i, j = self.pending_socket
+        self.pending_socket = None
+        self.link.send({"type": "action", "action": "socket_proc", "idx": i, "target_idx": j})
 
     def _vault_click_extras(self, pos):
         """Close button and chest tabs stay click-only. Returns True if handled."""
@@ -937,7 +997,19 @@ class CoopClient:
                 audio.play_drop()  # optimistic like the shoot-sound estimate - server is authoritative
             return
         if origin[0] == "backpack" and dest[0] == "backpack":
-            self.link.send({"type": "action", "action": "swap_backpack", "i": origin[1], "j": dest[1]})
+            i, j = origin[1], dest[1]
+            bp = self.you.backpack if self.you else []
+            if i < len(bp) and j < len(bp) and i != j:
+                src, tgt = bp[i], bp[j]
+                if tgt.slot == SLOT_WEAPON and identify_proc_kind(src) is not None:
+                    # destructive (consumes src) - requires an explicit ENTER confirm,
+                    # matching main.py's single-player flow, see _apply_pending_socket
+                    self.pending_socket = (i, j)
+                    self.feed.insert(0, [f"Press ENTER to socket {src.name}'s proc onto {tgt.display_name} "
+                                          f"(consumes {src.name})", (200, 180, 255), 6.0])
+                    self.feed = self.feed[:4]
+                    return
+            self.link.send({"type": "action", "action": "swap_backpack", "i": i, "j": j})
         elif origin[0] == "backpack" and dest[0] == "equip":
             self.link.send({"type": "action", "action": "equip", "idx": origin[1], "slot": dest[1]})
         elif origin[0] == "equip" and dest[0] == "backpack":
@@ -1114,6 +1186,12 @@ class CoopClient:
                 audio.play_wish(wr["is_ut"])
             self.feed = self.feed[:4]
 
+        sr = self.link.pop_socket_result()
+        if sr is not None:
+            color = (150, 220, 150) if sr.get("ok") else (220, 150, 90)
+            self.feed.insert(0, [sr.get("message", ""), color, 4.0])
+            self.feed = self.feed[:4]
+
         for m in self.feed:
             m[2] -= dt
         self.feed = [m for m in self.feed if m[2] > 0]
@@ -1185,7 +1263,8 @@ class CoopClient:
                     self.bonus_minimap = minimap.MinimapState()
             mm = self._current_minimap()
             if mm is not None:
-                mm.reveal(you.pos)
+                weather_kind = world.weather_for_tile(self.tilemap.tile_at(you.pos.x, you.pos.y))
+                mm.reveal(you.pos, radius=weather.reveal_radius_for(weather_kind, minimap.REVEAL_RADIUS_TILES))
             self.enemies = [GhostEnemy(d) for d in snap["enemies"]]
             self.bullets = [GhostBullet(d) for d in snap["bullets"]]
             self.ground_items = [GhostBag(d) for d in snap["ground_items"]]
@@ -1278,7 +1357,8 @@ class CoopClient:
             # checking the full map, typing in chat, or browsing the options menu is
             # a modal action - stop sending input while it's up (other players keep
             # moving normally; only yours freezes) so you don't drift/move by accident
-            self.link.send({"type": "input", "move": [0.0, 0.0], "aim": [0.0, 0.0], "fire": False})
+            self.link.send({"type": "input", "move": [0.0, 0.0], "aim": [0.0, 0.0], "fire": False, "dash": False})
+            self._dash_pending = False
             return
         self._auto_tile_trigger()
         keys = pygame.key.get_pressed()
@@ -1307,10 +1387,17 @@ class CoopClient:
             if direction.length_squared() >= 1:
                 aim = direction.normalize()
             if self.zone in ("realm", "bonus"):
-                aim = auto_aim_direction(self.you.pos, aim, self.enemies)
+                weather_kind = None
+                if self.tilemap is not None:
+                    weather_kind = world.weather_for_tile(self.tilemap.tile_at(self.you.pos.x, self.you.pos.y))
+                cone_deg = weather.aim_cone_for(weather_kind, AUTO_AIM_CONE_DEG)
+                aim = auto_aim_direction(self.you.pos, aim, self.enemies, cone_deg=cone_deg)
         fire = ((self.auto_fire_enabled or bool(pygame.mouse.get_pressed()[0])) and self.zone in ("realm", "bonus")
                 and not self.vault_open and not self._ui_click_active)
-        self.link.send({"type": "input", "move": [move.x, move.y], "aim": [aim.x, aim.y], "fire": fire})
+        dash = self._dash_pending
+        self._dash_pending = False  # one-shot per keypress, not held-key-repeat like move/fire
+        self.link.send({"type": "input", "move": [move.x, move.y], "aim": [aim.x, aim.y], "fire": fire,
+                         "dash": dash})
 
         # the server is authoritative for actual fire timing; this is just a client-side
         # estimate of the same cooldown so the shoot sound paces itself sensibly
@@ -1409,6 +1496,11 @@ class CoopClient:
         self._draw_hover_tooltip()
         hint = ui._FONT_M.render(hint_text, True, (220, 210, 230))
         s.blit(hint, (C.SCREEN_W // 2 - hint.get_width() // 2, 82))
+        if tmap is self.nexus_map:
+            event_label = live_events.active_label()
+            if event_label:
+                banner = ui._FONT_S.render(f"Live event: {event_label}", True, (255, 220, 120))
+                s.blit(banner, (C.SCREEN_W // 2 - banner.get_width() // 2, 104))
         ui.draw_hud(s, name, 0, False)
         mp = pygame.mouse.get_pos()
         ui.draw_player_panel(s, self.you, auto_fire=False)
@@ -1459,13 +1551,19 @@ class CoopClient:
                 ui.draw_speech_bubble(s, self.cam, e.pos, e.speech, e.speech_age, text_color=ui.MOB_SPEECH_COLOR)
         for peer in self.peers:
             peer.draw(s, self.cam)
+            if peer.fishing_state is not None:
+                vfx.draw_fishing_bobber(s, self.cam, peer.pos, peer.fishing_state)
         self._draw_peer_labels(s, self.cam, self.peers)
         for b in self.bullets:
             b.draw(s, self.cam)
         self.you.draw(s, self.cam)
+        if self.you.fishing_state is not None:
+            vfx.draw_fishing_bobber(s, self.cam, self.you.pos, self.you.fishing_state)
         vfx.draw(s, self.cam)
         ui.draw_damage_popups(s, self.cam, self.popups)
-        ui.draw_day_night_overlay(s, self.light_level, self.blood_moon)
+        torch_positions = [self.cam(pos) for pos in
+                           world.nearby_torch_world_positions(self.tilemap, self.you.pos.x, self.you.pos.y)]
+        ui.draw_day_night_overlay(s, self.light_level, self.blood_moon, torch_positions)
         if self.zone != "bonus":
             ui.draw_day_night_clock(s, self.light_level, self.blood_moon)
         self.weather_fx.draw(s)
@@ -1549,7 +1647,7 @@ class CoopClient:
         mouse_world = self.cam.inverse(mouse_pos)
         for peer in self.peers:
             if mouse_world.distance_to(peer.pos) < 40:
-                ui.draw_peer_tooltip(self.screen, mouse_pos, peer)
+                ui.draw_peer_tooltip(self.screen, mouse_pos, peer, crews.get_crew_for_player(peer.name))
                 break
 
 

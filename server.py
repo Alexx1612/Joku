@@ -28,9 +28,13 @@ from game import accounts
 from game import characters
 from game.entities import Player, Bag, Portal, NexusBot, find_nearby_bag, bag_by_id, withdraw_from_bag
 from game.realm_sim import RealmSim, DUNGEON_THEMES, BONUS_DIFFICULTIES
-from game.items import load_vault, save_vault, VAULT_SLOTS, VAULT_CHEST_SIZE, VAULT_CHEST_COUNT, wish_fountain
+from game.items import (load_vault, save_vault, VAULT_SLOTS, VAULT_CHEST_SIZE, VAULT_CHEST_COUNT,
+                         wish_fountain, apply_socket)
 from game.netmsg import send_msg, MessageReader
 
+FIRE_BUFFER_WINDOW = 0.1  # seconds - an early "fire" input within this window of the weapon's
+# cooldown clearing still fires, instead of being silently dropped (see _maybe_fire) - matches
+# main.py's identical single-player constant
 AUTOSAVE_INTERVAL = 60.0  # seconds between background character-progress saves for
 # every live (non-dead) session - same rationale/cadence as main.py's single-player
 # autosave: covers long stretches between natural checkpoints so a server crash or
@@ -47,6 +51,8 @@ class Session:
         self.player = player
         self.zone = ZONE_NEXUS
         self.last_input = {"move": [0.0, 0.0], "aim": [0.0, 0.0], "fire": False}
+        self.fire_buffer = 0.0  # seconds left to auto-fire an early "fire" input that arrived
+        # just before the weapon's cooldown cleared - see _maybe_fire / FIRE_BUFFER_WINDOW
         self.pre_bonus_pos = None
         self.portal_prompt = None  # (theme, kind, difficulty, portal_id) while standing on/near a portal
         # this tick, or None - refreshed every tick in step(), consumed only by an explicit "enter_portal"
@@ -273,13 +279,17 @@ def step(state, dt):
         elif s.zone == ZONE_REALM:
             s.player.net_update(dt, move, state.realm_sim.realm_map.bounds(), state.realm_sim.is_solid_at,
                                  state.realm_sim.realm_map.speed_multiplier)
-            _maybe_fire(state, state.realm_sim, s)
+            if s.last_input.get("dash"):
+                s.player.try_dash()
+            _maybe_fire(state, state.realm_sim, s, dt)
         elif s.zone == ZONE_BONUS:
             bsim = state.bonus_sims.get(s.bonus_sim_id)
             if bsim is not None:
                 s.player.net_update(dt, move, bsim.realm_map.bounds(), bsim.is_solid_at,
                                      bsim.realm_map.speed_multiplier)
-                _maybe_fire(state, bsim, s)
+                if s.last_input.get("dash"):
+                    s.player.try_dash()
+                _maybe_fire(state, bsim, s, dt)
 
     # 3) tick the realm sim plus EVERY currently-active dungeon instance (there can be
     # several at once now - each themed/separately-dropped dungeon-shard portal gets
@@ -324,7 +334,9 @@ def step(state, dt):
     # 5) deaths - permadeath, same as single-player
     for s in state.sessions.values():
         if s.zone in (ZONE_REALM, ZONE_BONUS) and not s.player.alive:
-            s.death_info = dict(level=s.player.level, kills=s.player.kills, cls=s.player.cls_name)
+            earned = accounts.award_echoes_for_death(s.player.name, s.player.level)
+            s.death_info = dict(level=s.player.level, kills=s.player.kills, cls=s.player.cls_name,
+                                 earned_echoes=earned)
             s.zone = ZONE_DEAD
             # the saved character (if any) is gone for good, same as single-player's
             # die() - the next join/respawn starts completely fresh, not a corpse
@@ -348,8 +360,14 @@ def step(state, dt):
     state.nexus_bot.update(dt, state.nexus_map, nearest)
 
 
-def _maybe_fire(state, sim, s):
-    if s.last_input.get("fire") and s.player.can_fire():
+def _maybe_fire(state, sim, s, dt):
+    wants_fire = bool(s.last_input.get("fire"))
+    if wants_fire:
+        s.fire_buffer = FIRE_BUFFER_WINDOW
+    elif s.fire_buffer > 0:
+        s.fire_buffer = max(0.0, s.fire_buffer - dt)
+    if s.fire_buffer > 0 and s.player.can_fire():
+        s.fire_buffer = 0.0
         aim = pygame.Vector2(s.last_input.get("aim", [0, 1]))
         if aim.length_squared() < 1e-6:
             aim = pygame.Vector2(s.player.facing)
@@ -388,6 +406,13 @@ def _apply_action(state, s, action):
         p.unequip(action.get("slot", ""))
     elif kind == "swap_backpack":
         p.swap_backpack(action.get("i", -1), action.get("j", -1))
+    elif kind == "socket_proc":
+        idx, target_idx = action.get("idx", -1), action.get("target_idx", -1)
+        if 0 <= idx < len(p.backpack) and 0 <= target_idx < len(p.backpack) and idx != target_idx:
+            ok, msg = apply_socket(p.backpack[idx], p.backpack[target_idx])
+            if ok:
+                p.backpack.pop(idx)
+            send_msg(s.sock, {"type": "socket_result", "ok": ok, "message": msg})
     elif kind == "open_bag":
         # right-click: find the nearest bag in range and send its full contents back -
         # opening a drag-and-drop window client-side, not an instant grab (see the
@@ -797,6 +822,7 @@ def handle_client(sock, addr, state):
             player.alive = True  # a dead character is never saved - see characters.delete_character
         else:
             player = Player(cls_name, name=name, pid=pid)
+            accounts.apply_unlocks(player, name)
         with state.lock:
             player.pos = _nexus_spawn_pos(state)
             session = Session(pid, sock, player)

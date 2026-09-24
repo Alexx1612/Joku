@@ -46,6 +46,8 @@ def _circle_clear(is_solid_fn, cx, cy, radius):
 
 
 LEVEL_CAP = 20
+PRETELEGRAPH_WINDOW = 0.2  # seconds before a ranged enemy's shot that Enemy._pretelegraph
+# turns on (a readability glow, see Enemy.update()/draw()) - pure visual, no gameplay effect
 
 # base stats @ level 1, and which stats grow on level-up (cycled)
 CLASS_BASE = {
@@ -123,6 +125,10 @@ class Player:
         self.ring = None
         self.ability = make_starter_ability(cls_name)
         self.ability_cd = 0.0
+        self._dash_cd = 0.0       # cooldown remaining before another dash can start
+        self._dash_time = 0.0     # remaining duration of an in-progress dash burst
+        self._dash_vec = pygame.Vector2(0, 0)  # current dash velocity (px/sec), set once per try_dash()
+        self._dash_iframes = 0.0  # remaining invincibility - see take_damage()
         self.haste_time = 0.0  # remaining seconds of a "haste"-effect ability buff
         self.root_time = 0.0   # remaining seconds slowed by a boss root pulse (see the Thorn Warden)
         self.shield_hp = 0.0   # remaining absorb from a "shield"-effect ability
@@ -163,6 +169,20 @@ class Player:
 
     HASTE_MULT = 1.4  # "haste"-effect abilities (Warrior/Rogue/Assassin) speed+attack-speed boost
     ROOT_MULT = 0.35  # a boss root pulse overrides haste - crowd control beats a buff
+
+    # Universal dash/roll (all classes, one shared kit - not a per-class ability).
+    # DASH_DURATION/DISTANCE are tuned against speed_tiles_per_sec(): a 0-SPD
+    # character walks ~128px/s, a heavily-geared ~75+ SPD character ~300px/s
+    # (C.speed_tiles_per_sec(spd) * C.TILE). DASH_SPEED (~444px/s) sits clearly
+    # above even a fast walker's speed so it always reads as a real burst, while
+    # DASH_DISTANCE_TILES=2.5 keeps it well short of "teleport" (roughly one
+    # screen-width fraction, not a cross-room jump).
+    DASH_DURATION = 0.18
+    DASH_COOLDOWN = 2.0  # a few dashes per fight, not a spammable panic button
+    DASH_DISTANCE_TILES = 2.5
+    DASH_SPEED = DASH_DISTANCE_TILES * C.TILE / DASH_DURATION
+    DASH_IFRAMES = DASH_DURATION  # invulnerable exactly as long as you're out of manual control -
+    # same convention as roguelite dodge-rolls (Isaac/Nuclear Throne): no bonus invincibility tail
 
     def speed(self):
         mult = self.ROOT_MULT if self.root_time > 0 else self.HASTE_MULT if self.haste_time > 0 else 1.0
@@ -329,6 +349,21 @@ class Player:
             move = move.rotate(cam_angle)
         self.net_update(dt, move, world_bounds, is_solid, speed_mult_fn)
 
+    def try_dash(self):
+        """Starts a short i-framed movement burst in the player's current
+        facing direction. Returns True if the dash actually started (False
+        if still on cooldown) - callers (main.py/coop_client.py's Shift
+        keydown handler) don't need the return value today but it's the
+        natural hook for a future "dash failed" feedback cue."""
+        if self._dash_cd > 0.0:
+            return False
+        direction = self.facing if self.facing.length_squared() > 0 else pygame.Vector2(0, 1)
+        self._dash_vec = direction.normalize() * self.DASH_SPEED
+        self._dash_time = self.DASH_DURATION
+        self._dash_iframes = self.DASH_IFRAMES
+        self._dash_cd = self.DASH_COOLDOWN
+        return True
+
     def net_update(self, dt, move, world_bounds, is_solid=None, speed_mult_fn=None):
         """
         Same movement/regen tick as update(), but driven by a raw move
@@ -339,24 +374,41 @@ class Player:
         at 0.8x) - looked up from the player's CURRENT tile, same as real RotMG
         terrain-speed tiles.
         """
-        self._is_moving = move.length_squared() > 0  # draw()-only: drives walk-cycle vs idle bob
-        if self._is_moving:
-            move = pygame.Vector2(move).normalize()
-            self.facing = move
-            mult = speed_mult_fn(self.pos.x, self.pos.y) if speed_mult_fn else 1.0
-            delta = move * self.speed() * mult * dt
+        if self._dash_time > 0.0:
+            # Dash overrides normal WASD movement entirely for its short duration -
+            # still resolved through the same per-axis _circle_clear wall check so
+            # a dash can never clip through a solid tile, it just can't be steered
+            # once started (a committed burst, not free-form fast movement).
+            self._is_moving = True
+            delta = self._dash_vec * dt
             if is_solid is None:
                 self.pos += delta
             else:
-                # resolve per-axis so sliding along a wall still works - each
-                # axis now checks the player's real collision circle (see
-                # _circle_clear), not just its bare center point
                 new_x = self.pos.x + delta.x
                 if _circle_clear(is_solid, new_x, self.pos.y, self.radius):
                     self.pos.x = new_x
                 new_y = self.pos.y + delta.y
                 if _circle_clear(is_solid, self.pos.x, new_y, self.radius):
                     self.pos.y = new_y
+        else:
+            self._is_moving = move.length_squared() > 0  # draw()-only: drives walk-cycle vs idle bob
+            if self._is_moving:
+                move = pygame.Vector2(move).normalize()
+                self.facing = move
+                mult = speed_mult_fn(self.pos.x, self.pos.y) if speed_mult_fn else 1.0
+                delta = move * self.speed() * mult * dt
+                if is_solid is None:
+                    self.pos += delta
+                else:
+                    # resolve per-axis so sliding along a wall still works - each
+                    # axis now checks the player's real collision circle (see
+                    # _circle_clear), not just its bare center point
+                    new_x = self.pos.x + delta.x
+                    if _circle_clear(is_solid, new_x, self.pos.y, self.radius):
+                        self.pos.x = new_x
+                    new_y = self.pos.y + delta.y
+                    if _circle_clear(is_solid, self.pos.x, new_y, self.radius):
+                        self.pos.y = new_y
 
         self.pos.x = max(world_bounds[0], min(world_bounds[2], self.pos.x))
         self.pos.y = max(world_bounds[1], min(world_bounds[3], self.pos.y))
@@ -366,6 +418,9 @@ class Player:
         self._fire_cd = max(0.0, self._fire_cd - dt)
         self._hit_flash = max(0.0, self._hit_flash - dt)
         self.ability_cd = max(0.0, self.ability_cd - dt)
+        self._dash_time = max(0.0, self._dash_time - dt)
+        self._dash_cd = max(0.0, self._dash_cd - dt)
+        self._dash_iframes = max(0.0, self._dash_iframes - dt)
         self.haste_time = max(0.0, self.haste_time - dt)
         self.root_time = max(0.0, self.root_time - dt)
         if self.shield_time > 0:
@@ -395,6 +450,8 @@ class Player:
         self._fire_cd = self.atk_interval()
 
     def take_damage(self, dmg):
+        if self._dash_iframes > 0.0:
+            return 0
         real = C.apply_defense(dmg, self.total_stat("deF"))
         if self.shield_hp > 0:
             absorbed = min(self.shield_hp, real)
@@ -481,6 +538,7 @@ class Player:
             shield_hp=round(self.shield_hp, 1),
             pet=self.pet.net_state() if self.pet else None,
             title=self.title,
+            fishing_state=self.fishing_state,
         )
 
     def full_state(self):
@@ -496,11 +554,13 @@ class Player:
             ring=self.ring.to_json() if self.ring else None,
             ability=self.ability.to_json() if self.ability else None,
             backpack=[it.to_json() for it in self.backpack],
+            backpack_size=self.backpack_size,
             shield_hp=round(self.shield_hp, 1),
             pet=self.pet.net_state() if self.pet else None,
             title=self.title,
             potions_used=dict(self.potions_used),
             temp_buffs={k: list(v) for k, v in self.temp_buffs.items()},
+            fishing_state=self.fishing_state,
         )
 
     @staticmethod
@@ -519,11 +579,15 @@ class Player:
         p.ring = Item.from_json(d["ring"]) if d["ring"] else None
         p.ability = Item.from_json(d["ability"]) if d["ability"] else None
         p.backpack = [Item.from_json(j) for j in d["backpack"]]
+        # default 8 for save files written before the Batch-12 Echo Keeper
+        # backpack-slot unlock existed - never silently shrinks an old save
+        p.backpack_size = d.get("backpack_size", 8)
         p.shield_hp = d.get("shield_hp", 0.0)
         p.pet = Pet.from_net_state(d["pet"]) if d.get("pet") else None
         p.title = d.get("title", "")
         p.potions_used = {**p.potions_used, **d.get("potions_used", {})}
         p.temp_buffs = {k: tuple(v) for k, v in d.get("temp_buffs", {}).items()}
+        p.fishing_state = d.get("fishing_state")
         return p
 
     @staticmethod
@@ -546,6 +610,7 @@ class Player:
         # (base-stat growth is missing). net_totals holds the sender's real, already-
         # correct total_stat() result - always read display values from here instead.
         p.net_totals = {k: d[k] for k in ("att", "deF", "spd", "dex", "vit", "wis") if k in d}
+        p.fishing_state = d.get("fishing_state")
         return p
 
 
@@ -834,6 +899,23 @@ def difficulty_fraction(kind):
     return (_DIFFICULTY_SCORE_BY_KIND[kind] - lo) / (hi - lo)
 
 
+# Draw-only enemy animation tuning (Batch 13, Track P) - kind-agnostic, applies
+# to all ~63 enemy kinds uniformly via Enemy.draw(). Uses the wall-clock
+# (pygame.time.get_ticks()) as the time source, same as Player's animation
+# (Batch 11) and the existing moonlit-pulse effect below - NOT self._t, so a
+# co-op GhostEnemy (which shares this exact draw() as a class attribute but
+# never runs update()) still gets idle-sway for free with zero extra state.
+ANIM_IDLE_SWAY_SPEED = 2.2
+ANIM_IDLE_SWAY_AMPLITUDE = 1.4
+ANIM_WALK_BOB_SPEED = 9.0
+ANIM_WALK_BOB_AMPLITUDE = 2.5
+ANIM_WALK_LEAN_PX = 2.0
+ANIM_ATTACK_POSE_DURATION = 0.15
+ANIM_ATTACK_SQUASH = 0.85   # vertical scale during the attack-anticipation pose
+ANIM_ATTACK_STRETCH = 1.15  # horizontal scale during the attack-anticipation pose - keeps
+                             # apparent volume roughly constant (squash one axis, stretch the other)
+
+
 class Enemy:
     MIN_REBARK_INTERVAL = 20.0  # seconds - a hard per-mob floor between flavor lines/idle
                                  # barks, on top of the %/sec roll (see update())
@@ -865,6 +947,8 @@ class Enemy:
         self.alive = True
         self.contact_cd = 0.0
         self._hit_flash = 0.0
+        self._pretelegraph = False  # true for the ~0.2s just before a ranged shot fires -
+        # a pure visual read of _fire_cd (see update()), never gates/affects fire timing itself
         self.frozen_time = 0.0  # set by a "freeze"-effect ability; roots + silences while > 0
         # bleed/burn/vulnerable status effects (see BLEED_UT_NAMES/BURN_UT_NAMES/
         # VULNERABLE_UT_NAMES in realm_sim.py) - same plain-float-countdown shape as
@@ -911,6 +995,20 @@ class Enemy:
         # unconditional, which is exactly what produced "10 messages/sec" bursts on entering new territory.
         # 10s (not a smaller window) because walking into a lair can wake up dozens of enemies at once -
         # spreading their first lines across a full 10s keeps the peak simultaneous rate low even then.
+        # --- draw-only animation state (Batch 13, Track P) ---
+        # `_is_moving`/`_move_dir` are set explicitly at each movement branch in
+        # update() (not inferred from position delta) - deliberately: idle wander
+        # already drifts the position a little every tick (the existing "liveness"
+        # behaviour), so a delta-magnitude threshold would be fragile/tune-sensitive.
+        # Encoding the semantic distinction directly at each branch (idle wander =
+        # not "moving" for animation purposes, everything else = moving) is simpler
+        # and matches the branches' own intent. draw() reads these via getattr()
+        # with safe defaults so coop_client.py's GhostEnemy (which reuses this exact
+        # Enemy.draw as a class attribute but never runs update()) degrades
+        # gracefully to idle-sway-only instead of crashing.
+        self._is_moving = False
+        self._move_dir = pygame.Vector2(0, 1)
+        self._fire_pose_t = 0.0  # >0 briefly after a real shot - brief squash/stretch anticipation pose
 
     def _move(self, delta, tile_map):
         """Applies a movement delta, resolved per-axis against SOLID tiles (rock
@@ -940,8 +1038,10 @@ class Enemy:
         self.bleed_time = max(0.0, self.bleed_time - dt)
         self.burn_time = max(0.0, self.burn_time - dt)
         self.vulnerable_time = max(0.0, self.vulnerable_time - dt)
+        self._fire_pose_t = max(0.0, self._fire_pose_t - dt)
         if self.frozen_time > 0:
             self.frozen_time = max(0.0, self.frozen_time - dt)
+            self._is_moving = False
             return
         self._fire_cd -= dt
         to_player = player_pos - self.pos
@@ -1009,6 +1109,11 @@ class Enemy:
             self.push_time = max(0.0, self.push_time - dt)
             frac = (self.push_time / self._push_total) if self._push_total > 0 else 0.0
             self._move(self._push_vec * frac * dt, tile_map)
+            # Track 13.P: a shove is real physical motion - reads as "moving" for
+            # animation even though it's not a chosen movement pattern.
+            self._is_moving = frac > 0.02
+            if self._push_vec.length_squared() > 0:
+                self._move_dir = self._push_vec.normalize()
         elif self.flee_time > 0:
             self.flee_time = max(0.0, self.flee_time - dt)
             away = self.pos - self._flee_from if self._flee_from is not None else pygame.Vector2(0, 0)
@@ -1016,18 +1121,26 @@ class Enemy:
                 + self._wander * 0.4
             if heading.length_squared() > 0:
                 self._move(heading.normalize() * self.speed * dt, tile_map)
+            self._is_moving = heading.length_squared() > 0
+            if heading.length_squared() > 0:
+                self._move_dir = heading.normalize()
         elif self.aggro:
             if self.pattern == "erratic":
                 # swoop at the player, blended with jitter so it's not a beeline
                 heading = to_player_n * 0.7 + self._wander * 0.6
                 if heading.length_squared() > 0:
                     self._move(heading.normalize() * self.speed * dt, tile_map)
+                self._is_moving = heading.length_squared() > 0
+                if heading.length_squared() > 0:
+                    self._move_dir = heading.normalize()
             elif self.pattern == "charge":
                 self._update_charge(dt, to_player_n, dist, bullets_out, tile_map)
             elif self.pattern == "boss_burrow":
                 self._update_burrow(dt, to_player_n, dist, bullets_out, tile_map)
             elif dist > 90:
                 self._move(to_player_n * self.speed * dt * 0.6, tile_map)
+                self._is_moving = True
+                self._move_dir = to_player_n
             else:
                 # in range - circle-strafe instead of standing dead still while it
                 # shoots: a perpendicular orbit blended with wander jitter, backing
@@ -1039,22 +1152,35 @@ class Enemy:
                     heading -= to_player_n * 0.6
                 if heading.length_squared() > 0:
                     self._move(heading.normalize() * self.speed * dt * 0.55, tile_map)
+                self._is_moving = heading.length_squared() > 0
+                if heading.length_squared() > 0:
+                    self._move_dir = heading.normalize()
         else:
             # idle: wander gently near home instead of standing frozen or beelining -
             # this is the "liveness" behaviour, and it naturally walks a leashed
-            # enemy back toward home since the pull strengthens with distance
+            # enemy back toward home since the pull strengthens with distance.
+            # Deliberately marked as NOT "moving" for animation purposes (Track
+            # 13.P) despite the small positional drift - this is ambient idle life,
+            # not a directed walk, and should read as idle-sway, not a walk-cycle.
             home_vec = self.home_pos - self.pos
             home_dist = home_vec.length()
             pull = (home_vec / home_dist) * min(1.0, home_dist / 120) if home_dist > 1 else pygame.Vector2(0, 0)
             heading = self._wander * 0.5 + pull
             if heading.length_squared() > 0:
                 self._move(heading.normalize() * self.speed * 0.3 * dt, tile_map)
+            self._is_moving = False
 
-        if (self.aggro and self.pattern not in ("charge", "boss_burrow") and self._fire_cd <= 0
-                and (tile_map is None or tile_map.has_line_of_sight(self.pos.x, self.pos.y,
-                                                                      player_pos.x, player_pos.y))):
+        can_ranged_fire = (self.aggro and self.pattern not in ("charge", "boss_burrow")
+                           and (tile_map is None or tile_map.has_line_of_sight(
+                               self.pos.x, self.pos.y, player_pos.x, player_pos.y)))
+        # purely visual read of the same cooldown the fire check below uses - never
+        # gates or changes fire timing itself, just tells draw() to show a brief
+        # pre-fire glow in the window right before a shot actually goes out
+        self._pretelegraph = can_ranged_fire and 0 < self._fire_cd <= PRETELEGRAPH_WINDOW
+        if can_ranged_fire and self._fire_cd <= 0:
             self._fire_cd = self._pattern_interval() * self.fire_rate_mult
             self._shoot(to_player_n, bullets_out)
+            self._fire_pose_t = ANIM_ATTACK_POSE_DURATION  # Track 13.P: brief squash/stretch anticipation pose
 
     def _update_charge(self, dt, to_player_n, dist, bullets_out, tile_map=None):
         """A dash-in melee-burst mob: sits back strafing like the others, then
@@ -1062,19 +1188,27 @@ class Enemy:
         close-range spread on arrival, before recovering and doing it again -
         real movement-pattern variety, not just a different bullet shape."""
         self._charge_cd -= dt
+        self._is_moving = False  # re-asserted below in whichever sub-branch actually moves
         if self._charge_state == "idle":
             if self._charge_cd <= 0 and dist > 45:
                 self._charge_state = "charging"
                 self._charge_cd = 0.6
             elif dist > 90:
                 self._move(to_player_n * self.speed * dt * 0.6, tile_map)
+                self._is_moving = True
+                self._move_dir = to_player_n
             else:
                 strafe = to_player_n.rotate(90 * self._strafe_dir)
                 heading = strafe * 0.8 + self._wander * 0.5
                 if heading.length_squared() > 0:
                     self._move(heading.normalize() * self.speed * dt * 0.55, tile_map)
+                self._is_moving = heading.length_squared() > 0
+                if heading.length_squared() > 0:
+                    self._move_dir = heading.normalize()
         elif self._charge_state == "charging":
             self._move(to_player_n * self.speed * 2.4 * dt, tile_map)
+            self._is_moving = True
+            self._move_dir = to_player_n
             if self._charge_cd <= 0 or dist < 40:
                 self._charge_state = "recover"
                 self._charge_cd = random.uniform(2.5, 4.0)
@@ -1094,6 +1228,7 @@ class Enemy:
         self._burrow_cd -= dt
         if self._burrow_state == "surfaced":
             self.invulnerable = False
+            self._is_moving = False
             if self._burrow_cd <= 0:
                 self._burrow_state = "burrowing"
                 self._burrow_cd = 0.4
@@ -1108,6 +1243,8 @@ class Enemy:
             to_target = self._burrow_target - self.pos
             if to_target.length() > 10:
                 self._move(to_target.normalize() * self.speed * 2.6 * dt, tile_map)
+                self._is_moving = True
+                self._move_dir = to_target.normalize()
             if self._burrow_cd <= 0:
                 self._burrow_state = "surfacing"
                 self._burrow_cd = 0.5
@@ -1226,7 +1363,32 @@ class Enemy:
 
     def draw(self, surf, cam):
         img = sprites.enemy_sprite(self.kind)
-        r = img.get_rect(center=cam(self.pos))
+
+        # --- draw-only idle/walk animation (Batch 13, Track P) ---
+        # getattr(..., default) throughout: a co-op GhostEnemy reuses this exact
+        # method (`GhostEnemy.draw = Enemy.draw`) but never runs update(), so it
+        # has none of these fields - it degrades to idle-sway only rather than
+        # raising AttributeError. Real Enemy instances always have them (set in
+        # __init__/update()).
+        t = pygame.time.get_ticks() / 1000.0
+        is_moving = getattr(self, "_is_moving", False)
+        move_dir = getattr(self, "_move_dir", None)
+        fire_pose_t = getattr(self, "_fire_pose_t", 0.0)
+
+        anim_dx = anim_dy = 0.0
+        if is_moving:
+            bob = math.sin(t * ANIM_WALK_BOB_SPEED) * ANIM_WALK_BOB_AMPLITUDE
+            anim_dy = bob
+            if move_dir is not None and move_dir.length_squared() > 0:
+                lean = move_dir.normalize() * (ANIM_WALK_LEAN_PX * abs(math.sin(t * ANIM_WALK_BOB_SPEED)))
+                anim_dx += lean.x
+                anim_dy += lean.y
+        else:
+            anim_dy = math.sin(t * ANIM_IDLE_SWAY_SPEED) * ANIM_IDLE_SWAY_AMPLITUDE
+
+        cx, cy = cam(self.pos)
+        r = img.get_rect(center=(cx + anim_dx, cy + anim_dy))
+
         if self.moonlit:
             pulse = 1.0 + 0.12 * math.sin(pygame.time.get_ticks() / 200.0)
             pygame.draw.circle(surf, (220, 225, 255), r.center, int(r.width * 0.7 * pulse), 2)
@@ -1238,13 +1400,34 @@ class Enemy:
             faint.set_alpha(70)
             surf.blit(faint, r)
             return
-        surf.blit(img, r)
+
+        draw_img = img
+        if fire_pose_t > 0:
+            # brief squash/stretch anticipation pose right before a shot - scale
+            # one axis down, the other up, to roughly preserve apparent volume
+            # (the technique this session's research flagged as the cheap way to
+            # make procedural motion read as "weighted" rather than a flat swap)
+            frac = fire_pose_t / ANIM_ATTACK_POSE_DURATION
+            sx = 1.0 + (ANIM_ATTACK_STRETCH - 1.0) * frac
+            sy = 1.0 - (1.0 - ANIM_ATTACK_SQUASH) * frac
+            new_w = max(1, round(img.get_width() * sx))
+            new_h = max(1, round(img.get_height() * sy))
+            draw_img = pygame.transform.smoothscale(img, (new_w, new_h))
+            r = draw_img.get_rect(center=r.center)
+
+        surf.blit(draw_img, r)
+        if getattr(self, "_pretelegraph", False):
+            # additive rim-light: brightens the sprite silhouette for readability,
+            # never changes when the shot actually fires (see update())
+            glow = draw_img.copy()
+            glow.fill((90, 90, 60, 0), special_flags=pygame.BLEND_RGBA_ADD)
+            surf.blit(glow, r)
         if self._hit_flash > 0:
-            flash = img.copy()
+            flash = draw_img.copy()
             flash.fill((255, 255, 255, 140), special_flags=pygame.BLEND_RGBA_MULT)
             surf.blit(flash, r)
         if self.frozen_time > 0:
-            frost = img.copy()
+            frost = draw_img.copy()
             frost.fill((150, 210, 255, 130), special_flags=pygame.BLEND_RGBA_MULT)
             surf.blit(frost, r)
         if self.hp < self.hp_max:
@@ -1257,7 +1440,8 @@ class Enemy:
         return dict(kind=self.kind, x=round(self.pos.x, 1), y=round(self.pos.y, 1),
                     hp=self.hp, hp_max=self.hp_max, rank=self.rank, aggro=self.aggro,
                     frozen=self.frozen_time > 0, moonlit=self.moonlit, invulnerable=self.invulnerable,
-                    speech=self.speech, speech_age=round(self.speech_age, 2), neutral=self.neutral)
+                    speech=self.speech, speech_age=round(self.speech_age, 2), neutral=self.neutral,
+                    pretelegraph=self._pretelegraph)
 
 
 def _mk_bullet(pos, direction, speed, dmg, color, owner="enemy", pierce=0, radius=5, lifetime=2.4,

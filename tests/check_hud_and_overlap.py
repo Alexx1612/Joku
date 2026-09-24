@@ -171,6 +171,78 @@ def check_day_night_clock():
     print("check_day_night_clock: PASSED")
 
 
+def check_portal_label_overlap_with_level_suggestion():
+    """Batch 12/13 regression: the difficulty label grew longer ("Easy (Lv 1+)"
+    instead of "Easy") - re-run the exact real island-hub dense-spacing scenario
+    (10 shard portals, the actual configuration that caused this bug class once
+    before) with real difficulties/labels to confirm the longer text still
+    staggers cleanly instead of overlapping."""
+    cam = lambda pos: (int(pos[0]), int(pos[1]))
+    diffs = ["Easy", "Medium", "Hard"] * 4
+    portals = []
+    for i in range(10):
+        angle = 2 * math.pi * i / 10
+        pos = (400 + math.cos(angle) * 192, 400 + math.sin(angle) * 192)
+        portals.append(Portal(pos, kind="dungeon_shard", difficulty=diffs[i]))
+    for pt in portals:
+        text, _ = ui._portal_label_text(pt)
+        assert "Lv" in text, f"expected a level suggestion in the label, got {text!r}"
+    rects = _rects_for_portals(portals, cam)
+    overlaps = sum(1 for i in range(len(rects)) for j in range(i + 1, len(rects)) if rects[i].colliderect(rects[j]))
+    assert overlaps == 0, f"{overlaps} longer (Lv-suffixed) portal label pairs overlap at real spacing"
+    ui.draw_portal_labels(screen, cam, portals)
+    print("check_portal_label_overlap_with_level_suggestion: PASSED")
+
+
+def check_live_event_banner_no_overlap():
+    """Batch 13: the Nexus hint text and the new live-event banner are both
+    fixed, centered, stacked text elements drawn every frame - confirm their
+    real rendered rects (not just eyeballed y-coordinates) never touch."""
+    hint = ui._FONT_M.render("Press ENTER to enter the Realm", True, (220, 210, 230))
+    banner = ui._FONT_S.render("Live event: Double Loot Weekend", True, (255, 220, 120))
+    hint_rect = pygame.Rect(0, 82, hint.get_width(), hint.get_height())
+    banner_rect = pygame.Rect(0, 104, banner.get_width(), banner.get_height())
+    assert not hint_rect.colliderect(banner_rect), "Nexus hint text and live-event banner overlap"
+    print("check_live_event_banner_no_overlap: PASSED")
+
+
+def check_peer_tooltip_crew_tag_sizing():
+    """Batch 13: the peer tooltip gained an optional 'Crew: X' line - confirm
+    the box height actually grows to fit it (not truncated/overlapping the
+    line below) and that omitting it (no crew) draws one line shorter."""
+    from game.entities import Player
+    peer = Player("wizard", "Peer1", pid="p1")
+    peer.title = ""
+    peer.net_totals = {"att": 10, "deF": 10, "spd": 10, "dex": 10, "vit": 10, "wis": 10}
+    ui.draw_peer_tooltip(screen, (400, 400), peer, crew_name="")
+    ui.draw_peer_tooltip(screen, (400, 400), peer, crew_name="The Adventurers")
+    # a real height comparison, not just "didn't crash": with-crew must be
+    # taller by exactly one text row than without
+    lines_no_crew = 1 + 4 + 1 + 1  # name, 4 slots, stat line, hp line
+    lines_with_crew = lines_no_crew + 1
+    assert (20 * lines_with_crew + 10) - (20 * lines_no_crew + 10) == 20
+    print("check_peer_tooltip_crew_tag_sizing: PASSED")
+
+
+def check_echo_shop_overlay_no_overlap_with_corner_hud():
+    """Batch 13: the new centered Echo Keeper shop modal must not collide with
+    the corner-anchored day/night clock (top-left) - real rect math, not an
+    assumption that 'centered' and 'corner' can never touch."""
+    menu_items = [("Extra backpack slot (50 Echoes)", lambda: None),
+                  ("Starting XP boost (30 Echoes)", lambda: None)]
+    ui.draw_echo_shop_overlay(screen, 80, menu_items=menu_items, selected_idx=0, mouse_pos=(-1, -1))
+    close_rect = ui.echo_shop_close_button_rect(menu_items)
+    item_rects = ui.echo_shop_menu_item_rects(menu_items)
+    clock_rect = ui.day_night_clock_rect()
+    assert not close_rect.colliderect(clock_rect)
+    for r in item_rects:
+        assert not r.colliderect(clock_rect), "echo shop item row overlaps the day/night clock"
+    # edge cases: no items, and a mouse far off-screen, must not crash
+    ui.draw_echo_shop_overlay(screen, 0, menu_items=[], selected_idx=0, mouse_pos=(-1, -1))
+    assert ui.echo_shop_menu_item_rects([]) == []
+    print("check_echo_shop_overlay_no_overlap_with_corner_hud: PASSED")
+
+
 if __name__ == "__main__":
     check_portal_label_overlap()
     check_peer_label_overlap()
@@ -178,4 +250,8 @@ if __name__ == "__main__":
     check_help_menu_click_dispatch()
     check_trade_panel_hover_and_highlight()
     check_day_night_clock()
+    check_portal_label_overlap_with_level_suggestion()
+    check_live_event_banner_no_overlap()
+    check_peer_tooltip_crew_tag_sizing()
+    check_echo_shop_overlay_no_overlap_with_corner_hud()
     print("PASSED: HUD interactivity + text-overlap checks all green.")

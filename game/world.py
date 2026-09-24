@@ -234,6 +234,23 @@ DUNGEON_PROP_SOLID_KINDS = {"idol", "crate", "crystal", "coffin", "pillar", "urn
 SOLID.update(tid for (_dp_theme, _dp_kind), tid in DUNGEON_PROP_TILE.items()
              if _dp_kind in DUNGEON_PROP_SOLID_KINDS)
 
+# every torch prop tile id, across all dungeon themes - used by the night
+# lightmap (ui.draw_day_night_overlay) to find nearby light sources
+TORCH_TILE_IDS = {tid for (_dp_theme, _dp_kind), tid in DUNGEON_PROP_TILE.items() if _dp_kind == "torch"}
+
+
+def nearby_torch_world_positions(tile_map, center_x, center_y, radius_tiles=6):
+    """World-space (x, y) centers of every torch tile within radius_tiles of
+    (center_x, center_y) - a small bounded scan (not the whole map), safe to
+    call once per frame from the night-lightmap draw call."""
+    cx, cy = int(center_x // C.TILE), int(center_y // C.TILE)
+    positions = []
+    for gy in range(max(0, cy - radius_tiles), min(tile_map.h, cy + radius_tiles + 1)):
+        for gx in range(max(0, cx - radius_tiles), min(tile_map.w, cx + radius_tiles + 1)):
+            if tile_map.grid[gy][gx] in TORCH_TILE_IDS:
+                positions.append(((gx + 0.5) * C.TILE, (gy + 0.5) * C.TILE))
+    return positions
+
 # ------------------------------------------------------------ tall props --
 # Semi-3D decoration: tiles rendered TALLER than one tile (see
 # sprites.tall_prop_sprite, ~1.6x tile height) and anchored at their OWN
@@ -308,6 +325,16 @@ for _nx_kind in NEXUS_TALL_PROP_KINDS:
     TALL_PROP_TILE_IDS.add(_next_nexus_prop_id)
     TALL_PROP_KIND_BY_ID[_next_nexus_prop_id] = _nx_kind
     _next_nexus_prop_id += 1
+
+# The Echo Keeper (Batch 12) - a single interactive Nexus tile where a
+# permadeath run's earned "Echoes" currency is spent on permanent, power-
+# neutral unlocks (see game/accounts.py). Its own id, right after the Nexus
+# prop block above (1200-1209) - _next_nexus_prop_id is already sitting at
+# 1210 at this point, so this can't collide with anything.
+ECHO_KEEPER_TILE = _next_nexus_prop_id
+_next_nexus_prop_id += 1
+TILE_COLORS[ECHO_KEEPER_TILE] = (80, 200, 190)
+INTERACTIVE.add(ECHO_KEEPER_TILE)
 
 # Landmark-building exterior walls (see stamp_lair_building below) - one
 # hand-painted per-biome wall texture (a stone/wood/ice/etc. base with a
@@ -642,6 +669,93 @@ def stamp_terrace(grid, anchor_tile, biome_name):
                             for i in range(stair_count)} if stair_count else set()
         for (xx, yy) in edge_ring:
             grid[yy][xx] = stair_tile if (xx, yy) in stair_positions else cliff_tile
+
+    xs = [p[0] for p in claimed] or [ax]
+    ys = [p[1] for p in claimed] or [ay]
+    return pygame.Rect(min(xs), min(ys), max(xs) - min(xs) + 1, max(ys) - min(ys) + 1)
+
+
+# ---------------------------------------------------- discoverable landmarks --
+# One hand-placed, non-combat point of interest per biome (10 total) - pure
+# exploration reward, not a lair. Deliberately reuses the ALREADY-REGISTERED
+# TALL_PROP_TILE kinds (totem/pole/pillar/banner_pole/brazier/signpost, see
+# TALL_PROP_KINDS above) instead of allocating any new tile ids - a landmark
+# is just a small themed arrangement of existing decoration props around a
+# clearing of the biome's own ground tile, so there is zero tile-id
+# collision risk with any other concurrent change to this file.
+LANDMARK_RADIUS = 3  # smaller than TERRACE_RADIUS - a single POI, not a zone
+LANDMARK_DEFS = {
+    "forest": {"name": "the Sunken Idol",
+               "lore": "Moss-choked totems ring a stone long since swallowed by roots.",
+               "kinds": ["pillar", "pole", "pole"]},
+    "desert": {"name": "the Buried Obelisk",
+               "lore": "Sand hisses off an obelisk half-buried, its carvings worn to whispers.",
+               "kinds": ["totem", "pillar", "signpost"]},
+    "tundra": {"name": "the Frozen Watchpost",
+               "lore": "A frost-rimed signpost still points toward a camp no one returned to.",
+               "kinds": ["signpost", "pole", "brazier"]},
+    "swamp": {"name": "the Drowned Shrine",
+              "lore": "Reeds curl around a shrine sinking slowly into the mire.",
+              "kinds": ["totem", "pillar", "pole"]},
+    "highlands": {"name": "the Wind-Worn Cairn",
+                  "lore": "Stones stacked by hands long gone, rattling faintly in the wind.",
+                  "kinds": ["pillar", "pillar", "totem"]},
+    "ashlands": {"name": "the Charred Altar",
+                 "lore": "An altar scorched black, ash still drifting from embers no one lit.",
+                 "kinds": ["brazier", "totem", "pillar"]},
+    "jungle": {"name": "the Vine-Wrapped Ruin",
+               "lore": "Vines strangle a pillar carved with a face the jungle has almost erased.",
+               "kinds": ["totem", "pillar", "pole"]},
+    "wasteland": {"name": "the Rusted Beacon",
+                  "lore": "A beacon long dark, its brazier crusted with rust and old rain.",
+                  "kinds": ["brazier", "signpost", "pole"]},
+    "ice": {"name": "the Glacial Monument",
+            "lore": "A monument entombed in blue ice, its inscription frozen mid-sentence.",
+            "kinds": ["pillar", "totem", "signpost"]},
+    "cave": {"name": "the Forgotten Totem Circle",
+             "lore": "Totems in a ring face inward, toward something no longer there.",
+             "kinds": ["totem", "totem", "pillar"]},
+}
+
+
+def landmark_rect(anchor_tile):
+    """Pure geometry (no mutation) - same overlap-check calling convention as
+    lair_building_rect()/terrace_rect() above."""
+    ax, ay = anchor_tile
+    return pygame.Rect(ax - LANDMARK_RADIUS, ay - LANDMARK_RADIUS, LANDMARK_RADIUS * 2, LANDMARK_RADIUS * 2)
+
+
+def stamp_landmark(grid, anchor_tile, biome_name):
+    """Clears a small circular patch of the biome's own ground tile (same
+    jittered-circle technique as stamp_terrace/stamp_realm_start) and rings
+    it with that biome's themed prop cluster (LANDMARK_DEFS), evenly spaced
+    at deterministic angles (same idiom as stamp_realm_start's marker ring).
+    Returns the landmark's rect (tile space) so a caller can overlap-check
+    it against other landmarks before committing to it."""
+    grid_h, grid_w = len(grid), len(grid[0])
+    ax, ay = anchor_tile
+    ground_tile = next(g for g, name in GROUND_TO_BIOME_NAME.items() if name == biome_name)
+    claimed = set()
+    for yy in range(ay - LANDMARK_RADIUS - 1, ay + LANDMARK_RADIUS + 2):
+        for xx in range(ax - LANDMARK_RADIUS - 1, ax + LANDMARK_RADIUS + 2):
+            if not (0 <= yy < grid_h and 0 <= xx < grid_w):
+                continue
+            dist = math.hypot(xx - ax, yy - ay)
+            jitter = (_tile_hash(xx, yy) % 200) / 100.0 - 1.0
+            if dist <= LANDMARK_RADIUS + jitter:
+                grid[yy][xx] = ground_tile
+                claimed.add((xx, yy))
+
+    defn = LANDMARK_DEFS.get(biome_name)
+    if defn:
+        kinds = defn["kinds"]
+        n = len(kinds)
+        for i, kind in enumerate(kinds):
+            angle = (2 * math.pi * i) / n
+            px = ax + round(math.cos(angle) * (LANDMARK_RADIUS - 1))
+            py = ay + round(math.sin(angle) * (LANDMARK_RADIUS - 1))
+            if (px, py) in claimed:
+                grid[py][px] = TALL_PROP_TILE[(biome_name, kind)]
 
     xs = [p[0] for p in claimed] or [ax]
     ys = [p[1] for p in claimed] or [ay]
@@ -1389,16 +1503,54 @@ def make_realm():
     # than the patches (single tiles, not radius-2-4 areas), reads as
     # "occasional interesting detail" across the continent rather than
     # clutter - see BIOME_PROP_TILE/BIOME_PROP_KINDS near the top of the file.
+    #
+    # Placed via a seed-and-spread pass rather than independent per-tile
+    # sampling: real vegetation/rock fields cluster (trees compete for
+    # light/water, undergrowth fills canopy gaps) instead of sprinkling
+    # uniformly, so a handful of cluster centers are picked on land first,
+    # then each cluster's share of props is scattered around its center with
+    # a density that falls off with distance (closer = more likely). Total
+    # placed count is still budgeted against the same decor_prop_count as
+    # before, so density/perf stays roughly the same as the old uniform pass.
     decor_prop_count = round(10 * (w * h) / (70 * 70))
-    for _ in range(decor_prop_count):
-        px, py = random.randint(2, w - 3), random.randint(2, h - 3)
-        if not land[py][px]:
+    num_clusters = max(1, decor_prop_count // 6)
+    placed = 0
+    for _ in range(num_clusters):
+        cx = cy = None
+        for _try in range(30):
+            tx, ty = random.randint(2, w - 3), random.randint(2, h - 3)
+            if land[ty][tx]:
+                cx, cy = tx, ty
+                break
+        if cx is None:
             continue
-        biome_name = GROUND_TO_BIOME_NAME.get(grid[py][px])
-        if biome_name is None:
-            continue
-        kind = random.choices(BIOME_PROP_KINDS, weights=_biome_prop_weights(biome_name))[0]
-        grid[py][px] = BIOME_PROP_TILE[(biome_name, kind)]
+        cluster_share = max(1, round(decor_prop_count / num_clusters))
+        cluster_radius = random.uniform(4.0, 9.0)
+        attempts = 0
+        cluster_placed = 0
+        # generous retry budget per cluster (water/off-biome misses are
+        # common near coastlines) so the total placed count still lands
+        # close to decor_prop_count, matching the old pass's density.
+        while cluster_placed < cluster_share and attempts < cluster_share * 4:
+            attempts += 1
+            # random.random() ** 1.5 biases samples toward the center -
+            # the "falloff" that makes clusters read as a dense core
+            # thinning out at the edges, not a flat disc.
+            r = cluster_radius * (random.random() ** 1.5)
+            ang = random.uniform(0, math.tau)
+            px = int(cx + r * math.cos(ang))
+            py = int(cy + r * math.sin(ang))
+            if not (2 <= px <= w - 3 and 2 <= py <= h - 3):
+                continue
+            if not land[py][px]:
+                continue
+            biome_name = GROUND_TO_BIOME_NAME.get(grid[py][px])
+            if biome_name is None:
+                continue
+            kind = random.choices(BIOME_PROP_KINDS, weights=_biome_prop_weights(biome_name))[0]
+            grid[py][px] = BIOME_PROP_TILE[(biome_name, kind)]
+            cluster_placed += 1
+            placed += 1
 
     # decorative patches (rock outcrops, dirt clearings, small ponds) - land only,
     # never overwrite the ocean, so the coastline stays clean. What kind of patch can
@@ -1513,6 +1665,10 @@ def make_nexus():
     grid[mid_y + 12][mid_x - 1] = NEXUS_BOARD
     grid[mid_y + 12][mid_x] = NEXUS_BOARD
     grid[mid_y + 12][mid_x + 1] = NEXUS_BOARD
+
+    # the Echo Keeper - a single tile a few steps from the board, in the
+    # walkable plaza between the board and the garden clusters
+    grid[mid_y + 12][mid_x + 5] = ECHO_KEEPER_TILE
 
     # scattered decoration props (see NEXUS_PROP_TILE/NEXUS_TALL_PROP_KINDS) -
     # random positions across whatever's STILL plain NEXUS_FLOOR at this point,

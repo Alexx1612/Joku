@@ -91,3 +91,29 @@ class WeatherFX:
 
 
 LABELS = {"rain": "Light rain", "snow": "Snowfall", "sand": "Sandstorm", "ash": "Ashfall"}
+
+# Tactical hooks - one small, real gameplay effect per relevant weather kind,
+# deliberately narrow (not a universal "weather slows everyone" change):
+# a Tundra/Ice blizzard (snow) shrinks fog-of-war reveal range, a Desert/
+# Wasteland sandstorm (sand) throws off soft aim assist. minimap.reveal()'s
+# radius param and realm_sim.auto_aim_direction()'s cone_deg param both
+# already accept an override at their call sites in main.py/coop_client.py -
+# these two helpers compute that override from the current weather kind.
+BLIZZARD_REVEAL_RADIUS_SCALE = 0.6
+SANDSTORM_AIM_CONE_SCALE = 0.6
+
+
+def reveal_radius_for(kind, base_radius):
+    """Scales the minimap fog-of-war reveal radius for the current weather.
+    Always returns an int - minimap.reveal() uses it directly as a range()
+    bound, which raises TypeError on a float (e.g. 10 * 0.6 == 6.0)."""
+    if kind == "snow":
+        return round(base_radius * BLIZZARD_REVEAL_RADIUS_SCALE)
+    return base_radius
+
+
+def aim_cone_for(kind, base_cone_deg):
+    """Scales the soft-aim-assist cone angle for the current weather."""
+    if kind == "sand":
+        return base_cone_deg * SANDSTORM_AIM_CONE_SCALE
+    return base_cone_deg

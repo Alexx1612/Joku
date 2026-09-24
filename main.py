@@ -38,14 +38,18 @@ from game import vfx
 from game import accounts
 from game import characters
 from game import clipboard
+from game import live_events
 from game.entities import Player, Bag, Portal, NexusBot, find_nearby_bag, bag_by_id, withdraw_from_bag
-from game.realm_sim import RealmSim, auto_aim_direction, DUNGEON_THEMES, BONUS_DIFFICULTIES
-from game.items import load_vault, save_vault, vault_exists, VAULT_SLOTS, VAULT_CHEST_SIZE, PERMANENT_POTION_CAP
+from game.realm_sim import RealmSim, auto_aim_direction, DUNGEON_THEMES, BONUS_DIFFICULTIES, AUTO_AIM_CONE_DEG
+from game.items import (load_vault, save_vault, vault_exists, VAULT_SLOTS, VAULT_CHEST_SIZE,
+                         PERMANENT_POTION_CAP, identify_proc_kind, apply_socket, SLOT_WEAPON)
 
 (STATE_INTRO, STATE_NAME_ENTRY, STATE_CLASS_SELECT, STATE_NEXUS, STATE_REALM, STATE_BONUS,
  STATE_BAZAAR, STATE_VAULT_ROOM, STATE_VAULT, STATE_DEAD) = range(10)
 
 _LEGACY_SINGLEPLAYER_VAULT_KEY = "singleplayer"  # pre-accounts fixed vault key; kept only for one-time migration
+FIRE_BUFFER_WINDOW = 0.1  # seconds - an early fire click within this window of the weapon's
+# cooldown clearing still fires, instead of being silently dropped (see _handle_firing)
 SPEECH_BUBBLE_LIFETIME = 4.0
 CHAT_MAX_LEN = 1000
 CHAT_LOG_LIFETIME = 120.0  # chat log entries expire after 2 minutes
@@ -69,6 +73,8 @@ class Game:
         self.fullscreen = False
         self.help_open = False
         self.menu_selected = 0
+        self.echo_shop_open = False  # the Echo Keeper's shop panel, see _open_echo_shop
+        self.echo_shop_selected = 0
         self._base_size = (C.SCREEN_W, C.SCREEN_H)  # windowed-mode size, restored when leaving fullscreen
         # RESIZABLE gives the window a real title bar with a native maximize button
         # (next to minimize/close) - clicking it, or F11, or manually dragging an edge
@@ -92,12 +98,18 @@ class Game:
         self._last_level = 1
         self.drag_from = None       # ("backpack", idx) or ("equip", slot_type) while a drag is in progress
         self.drag_start_pos = None
+        self.pending_socket = None  # (source_backpack_idx, target_backpack_idx) awaiting an ENTER
+        # confirmation - set by dragging a socketable UT onto a different weapon in the
+        # backpack (see _transfer_item); requires an explicit confirm since it destroys
+        # the source item, so a routine backpack-reorganizing drag can't trigger it by accident
         self._dblclick_slot = None  # ("backpack", idx) of the last plain click, for double-click-to-use
         self._dblclick_time = 0     # detection - use_backpack_slot() now fires on a DOUBLE click, not a
         # single one, so a single click is free for trade-offering/bag-withdraw without also equipping/
         # consuming the item by accident
         self.DBLCLICK_MS = 350
         self.auto_fire_enabled = False  # I key: fires continuously without holding the mouse button
+        self._fire_buffer = 0.0  # seconds left to auto-fire a click that landed just before
+        # the weapon's cooldown cleared - see _handle_firing / FIRE_BUFFER_WINDOW
         self.chat_open = False
         self.chat_buffer = ""
         self._chat_select_all = False
@@ -154,6 +166,9 @@ class Game:
     def start_run(self, cls_name):
         self.player = Player(cls_name, name=self.player_name, pid="local")
         self.player.load_title()
+        # a fresh character only - never on resume_run, whose backpack_size/xp
+        # are already whatever was persisted (see accounts.apply_unlocks's docstring)
+        accounts.apply_unlocks(self.player, self.player_name)
         self.player.pos = self._nexus_spawn_pos()
         self.state = STATE_NEXUS
         self.realm_sim = None
@@ -260,8 +275,9 @@ class Game:
             self.player.pos.x += C.TILE * 1.5
 
     def die(self):
+        earned = accounts.award_echoes_for_death(self.player_name, self.player.level)
         self.death_info = dict(level=self.player.level, kills=self.player.kills,
-                                cls=self.player.cls_name)
+                                cls=self.player.cls_name, earned_echoes=earned)
         # permadeath means what it says - the saved character (if any) is gone for
         # good, not just marked dead, so the next login/respawn starts completely
         # fresh rather than resuming a corpse
@@ -347,6 +363,7 @@ class Game:
         while True:
             dt = self.clock.tick(C.FPS) / 1000.0
             dt = min(dt, 0.05)
+            dt = vfx.apply_hitstop(dt)
             if not self.handle_events():
                 break
             self.update(dt)
@@ -383,6 +400,8 @@ class Game:
             if event.type == pygame.KEYDOWN:
                 if self.chat_open:
                     self._handle_chat_key(event)
+                elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER) and self.pending_socket is not None:
+                    self._apply_pending_socket()
                 elif (event.key == pygame.K_RETURN and self.state in self.CHAT_STATES and not self.help_open
                       and self._portal_prompt is None):
                     # standing near a portal takes priority over opening chat -
@@ -403,23 +422,37 @@ class Game:
                 elif self.help_open and event.key == pygame.K_RETURN:
                     _, action = self._menu_items()[self.menu_selected]
                     action()
+                elif self.echo_shop_open and event.key in (pygame.K_UP, pygame.K_DOWN, pygame.K_w, pygame.K_s):
+                    items = self._echo_shop_items()
+                    step = -1 if event.key in (pygame.K_UP, pygame.K_w) else 1
+                    self.echo_shop_selected = (self.echo_shop_selected + step) % len(items)
+                elif self.echo_shop_open and event.key == pygame.K_RETURN:
+                    _, action = self._echo_shop_items()[self.echo_shop_selected]
+                    action()
                 elif event.key == pygame.K_i and self.state in (STATE_REALM, STATE_BONUS):
                     self.auto_fire_enabled = not self.auto_fire_enabled
                     self.push_feed(f"Auto-fire {'ON' if self.auto_fire_enabled else 'OFF'}",
                                     (150, 220, 255) if self.auto_fire_enabled else (170, 170, 180))
                 elif event.key == pygame.K_SPACE and self.state in (STATE_REALM, STATE_BONUS):
                     self._use_ability()
+                elif (event.key in (pygame.K_LSHIFT, pygame.K_RSHIFT)
+                      and self.state in (STATE_REALM, STATE_BONUS) and self.player is not None):
+                    self.player.try_dash()
                 elif event.key == pygame.K_m and self._current_minimap() is not None:
                     self._current_minimap().full_map_open = not self._current_minimap().full_map_open
                 elif event.key in (pygame.K_PLUS, pygame.K_EQUALS, pygame.K_KP_PLUS):
                     self._zoom_minimap(minimap.ZOOM_STEP)
                 elif event.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
                     self._zoom_minimap(-minimap.ZOOM_STEP)
+                elif event.key == pygame.K_ESCAPE and self.pending_socket is not None:
+                    self.pending_socket = None
                 elif event.key == pygame.K_ESCAPE:
                     if self._map_open():
                         self._current_minimap().full_map_open = False
                     elif self.help_open:
                         self.help_open = False
+                    elif self.echo_shop_open:
+                        self.echo_shop_open = False
                     elif self.state == STATE_VAULT:
                         pass  # closing the Vault is click-only now (see vault_close_button_rect) - never Enter/Escape
                     else:
@@ -457,6 +490,16 @@ class Game:
                     for i, rect in enumerate(ui.help_menu_item_rects(items)):
                         if rect.collidepoint(event.pos):
                             self.menu_selected = i
+                            _, action = items[i]
+                            action()
+                            break
+                elif self.echo_shop_open and ui.echo_shop_close_button_rect(self._echo_shop_items()).collidepoint(event.pos):
+                    self.echo_shop_open = False
+                elif self.echo_shop_open:
+                    items = self._echo_shop_items()
+                    for i, rect in enumerate(ui.echo_shop_menu_item_rects(items)):
+                        if rect.collidepoint(event.pos):
+                            self.echo_shop_selected = i
                             _, action = items[i]
                             action()
                             break
@@ -593,6 +636,21 @@ class Game:
             self.drag_from = slot
             self.drag_start_pos = pos
             self._ui_click_active = True
+            self.pending_socket = None  # a fresh drag cancels an unconfirmed socket request
+
+    def _apply_pending_socket(self):
+        if self.pending_socket is None:
+            return
+        i, j = self.pending_socket
+        self.pending_socket = None
+        p = self.player
+        if not (i < len(p.backpack) and j < len(p.backpack)) or i == j:
+            return
+        ok, msg = apply_socket(p.backpack[i], p.backpack[j])
+        color = (150, 220, 150) if ok else (220, 150, 90)
+        if ok:
+            p.backpack.pop(i)
+        self.push_feed(msg, color)
 
     def _inventory_mouse_up(self, pos):
         origin = self.drag_from
@@ -676,6 +734,16 @@ class Game:
         (wrong item type for the target equip slot, etc.) are silently cancelled."""
         p = self.player
         if origin[0] == "backpack" and dest[0] == "backpack":
+            i, j = origin[1], dest[1]
+            if i < len(p.backpack) and j < len(p.backpack):
+                src, tgt = p.backpack[i], p.backpack[j]
+                if tgt.slot == SLOT_WEAPON and src is not tgt and identify_proc_kind(src) is not None:
+                    # a destructive action (consumes src) - requires an explicit ENTER
+                    # confirm rather than applying instantly on drop, see handle_events
+                    self.pending_socket = (i, j)
+                    self.push_feed(f"Press ENTER to socket {src.name}'s proc onto {tgt.display_name} "
+                                    f"(consumes {src.name})", (200, 180, 255))
+                    return
             p.swap_backpack(origin[1], dest[1])
         elif origin[0] == "backpack" and dest[0] == "equip":
             i, slot_type = origin[1], dest[1]
@@ -761,6 +829,46 @@ class Game:
             self.enter_bazaar()
         elif tile == world.VAULT_TILE:
             self.enter_vault_room()
+        elif tile == world.ECHO_KEEPER_TILE and not self.echo_shop_open:
+            self._open_echo_shop()
+
+    # ------------------------------------------------------------ Echo Keeper --
+    def _echo_shop_items(self):
+        """(label, action) pairs, same shape as _menu_items()'s O-key menu -
+        an already-owned/maxed row just gets a no-op action so Enter on it is safe."""
+        unlocks = accounts.get_unlocks(self.player_name)
+        slots = int(unlocks.get("backpack_slots", 0))
+        items = []
+        if slots < accounts.MAX_BACKPACK_BONUS_SLOTS:
+            cost = accounts.BACKPACK_SLOT_COST + slots * accounts.BACKPACK_SLOT_COST_STEP
+            items.append((f"+1 Backpack Slot - {cost} Echoes ({slots}/{accounts.MAX_BACKPACK_BONUS_SLOTS})",
+                          self._buy_backpack_slot))
+        else:
+            items.append(("Backpack Slots: MAXED", lambda: None))
+        if unlocks.get("starting_xp_boost"):
+            items.append(("Starting XP Boost: OWNED", lambda: None))
+        else:
+            items.append((f"Starting XP Boost - {accounts.STARTING_XP_COST} Echoes (future characters)",
+                          self._buy_starting_xp))
+        items.append(("Close", self._close_echo_shop))
+        return items
+
+    def _open_echo_shop(self):
+        self.echo_shop_open = True
+        self.echo_shop_selected = 0
+
+    def _close_echo_shop(self):
+        self.echo_shop_open = False
+
+    def _buy_backpack_slot(self):
+        ok, msg = accounts.buy_backpack_slot(self.player_name)
+        self.push_feed(msg, (150, 230, 210) if ok else (220, 150, 90))
+        if ok and self.player is not None:
+            self.player.backpack_size += 1
+
+    def _buy_starting_xp(self):
+        ok, msg = accounts.buy_starting_xp_boost(self.player_name)
+        self.push_feed(msg, (150, 230, 210) if ok else (220, 150, 90))
 
     def _vault_room_chest_index(self, pos):
         """Chests are numbered in row-major grid order, matching the layout
@@ -1148,10 +1256,11 @@ class Game:
                 return  # full map open - pause, same as in the Realm/Bonus Room
             tmap = {STATE_NEXUS: self.nexus_map, STATE_BAZAAR: self.bazaar_map,
                     STATE_VAULT_ROOM: self.vault_room_map}[self.state]
-            # keys=None while the options/help menu is open too, same "typing in
-            # chat suppresses movement" pattern just above - otherwise WASD leaks
-            # through the menu and moves the player by accident while browsing it.
-            keys = None if (self.chat_open or self.help_open) else pygame.key.get_pressed()
+            # keys=None while the options/help menu (or the Echo Keeper shop) is
+            # open too, same "typing in chat suppresses movement" pattern just
+            # above - otherwise WASD leaks through the menu and moves the player
+            # by accident while browsing it.
+            keys = None if (self.chat_open or self.help_open or self.echo_shop_open) else pygame.key.get_pressed()
             self.player.update(dt, keys, tmap.bounds(), tmap.is_solid, tmap.speed_multiplier,
                                 cam_angle=self.cam.angle)
             self.cam.follow(self.player.pos)
@@ -1180,7 +1289,8 @@ class Game:
         mm = self.realm_minimap if sim is self.realm_sim else self.bonus_minimap
         if mm.full_map_open:
             # checking the full map is a menu screen - pause the action while it's up
-            mm.reveal(p.pos)
+            weather_kind = world.weather_for_tile(sim.realm_map.tile_at(p.pos.x, p.pos.y))
+            mm.reveal(p.pos, radius=weather.reveal_radius_for(weather_kind, minimap.REVEAL_RADIUS_TILES))
             return
         keys = None if (self.chat_open or self.help_open) else pygame.key.get_pressed()
         prev_pos = pygame.Vector2(p.pos)
@@ -1191,9 +1301,10 @@ class Game:
         dx, dy = vfx.shake_offset(dt)
         self.cam.pos.x += dx
         self.cam.pos.y += dy
-        mm.reveal(p.pos)
         tile_here = sim.realm_map.tile_at(p.pos.x, p.pos.y)
-        self.weather_fx.update(dt, world.weather_for_tile(tile_here))
+        weather_kind = world.weather_for_tile(tile_here)
+        mm.reveal(p.pos, radius=weather.reveal_radius_for(weather_kind, minimap.REVEAL_RADIUS_TILES))
+        self.weather_fx.update(dt, weather_kind)
         self._dust_cd = max(0.0, self._dust_cd - dt)
         if self._dust_cd <= 0 and p.pos.distance_to(prev_pos) > 2:
             self._dust_cd = 0.15
@@ -1209,7 +1320,7 @@ class Game:
             self.realm_ambience.update(dt, bounds, kinds=vfx.REALM_AMBIENT_KINDS.get(biome_name))
         boss_before = sim.boss
         backpack_before = len(p.backpack)
-        self._handle_firing(p, sim)
+        self._handle_firing(p, sim, dt)
         sim.update(dt, {p.pid: p})
         for pid, msg, color in sim.events:
             self.push_feed(msg, color)
@@ -1265,18 +1376,26 @@ class Game:
         # yet - see RealmSim.begin_tick()'s docstring
         sim.begin_tick()
 
-    def _handle_firing(self, p, sim):
+    def _handle_firing(self, p, sim, dt):
         if self.chat_open or self.help_open:
+            self._fire_buffer = 0.0
             return  # typing, or browsing the options menu, shouldn't also fire your weapon
         wants_fire = (self.auto_fire_enabled or pygame.mouse.get_pressed()[0]) and not self._ui_click_active
-        if wants_fire and p.can_fire():
+        if wants_fire:
+            self._fire_buffer = FIRE_BUFFER_WINDOW
+        elif self._fire_buffer > 0:
+            self._fire_buffer = max(0.0, self._fire_buffer - dt)
+        if self._fire_buffer > 0 and p.can_fire():
+            self._fire_buffer = 0.0
             mx, my = pygame.mouse.get_pos()
             target = self.cam.inverse((mx, my))
             direction = target - p.pos
             if direction.length_squared() < 1:
                 direction = p.facing
             direction = direction.normalize()
-            direction = auto_aim_direction(p.pos, direction, sim.enemies)
+            weather_kind = world.weather_for_tile(sim.realm_map.tile_at(p.pos.x, p.pos.y))
+            cone_deg = weather.aim_cone_for(weather_kind, AUTO_AIM_CONE_DEG)
+            direction = auto_aim_direction(p.pos, direction, sim.enemies, cone_deg=cone_deg)
             p.register_fire()
             sim.player_fire(p, direction)
             audio.play_shoot(p.cls_name)
@@ -1316,12 +1435,18 @@ class Game:
             d = self.death_info
             ui.draw_center_text(s, "YOU DIED",
                                  f"{d['cls'].title()} reached level {d['level']} with {d['kills']} kills. "
+                                 f"Earned {d.get('earned_echoes', 0)} Echoes. "
                                  f"Permadeath - press Enter or click below to try again.", (220, 60, 60))
             ui.draw_death_screen_button(s, pygame.mouse.get_pos())
         if self.help_open:
             items = self._menu_items()
             self.menu_selected %= len(items)
             ui.draw_help_overlay(s, menu_items=items, selected_idx=self.menu_selected, mouse_pos=pygame.mouse.get_pos())
+        if self.echo_shop_open:
+            items = self._echo_shop_items()
+            self.echo_shop_selected %= len(items)
+            ui.draw_echo_shop_overlay(s, accounts.get_echoes(self.player_name), menu_items=items,
+                                       selected_idx=self.echo_shop_selected, mouse_pos=pygame.mouse.get_pos())
 
     def _draw_hub(self, tmap, mm, name, hint_text):
         s = self.screen
@@ -1347,6 +1472,11 @@ class Game:
         vfx.draw(s, self.cam)
         hint = ui._FONT_M.render(hint_text, True, (220, 210, 230))
         s.blit(hint, (C.SCREEN_W // 2 - hint.get_width() // 2, 82))
+        if tmap is self.nexus_map:
+            event_label = live_events.active_label()
+            if event_label:
+                banner = ui._FONT_S.render(f"Live event: {event_label}", True, (255, 220, 120))
+                s.blit(banner, (C.SCREEN_W // 2 - banner.get_width() // 2, 104))
         ui.draw_hud(s, name, 0, False)
         mp = pygame.mouse.get_pos()
         ui.draw_player_panel(s, self.player, auto_fire=False)
@@ -1400,10 +1530,14 @@ class Game:
         for b in sim.bullets:
             b.draw(s, self.cam)
         self.player.draw(s, self.cam)
+        if self.player.fishing_state is not None:
+            vfx.draw_fishing_bobber(s, self.cam, self.player.pos, self.player.fishing_state)
         self._draw_speech_bubbles(s)
         vfx.draw(s, self.cam)
         ui.draw_damage_popups(s, self.cam, self.popups)
-        ui.draw_day_night_overlay(s, sim.light_level, sim.blood_moon_active)
+        torch_positions = [self.cam(pos) for pos in
+                           world.nearby_torch_world_positions(sim.realm_map, self.player.pos.x, self.player.pos.y)]
+        ui.draw_day_night_overlay(s, sim.light_level, sim.blood_moon_active, torch_positions)
         if not sim.is_bonus_room:
             ui.draw_day_night_clock(s, sim.light_level, sim.blood_moon_active)
         self.weather_fx.draw(s)

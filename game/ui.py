@@ -473,14 +473,20 @@ def _tooltip(surf, pos, item):
         surf.blit(_FONT_S.render(line, True, color), (x + 8, y + 6 + i * 20))
 
 
-def draw_peer_tooltip(surf, pos, peer):
+def draw_peer_tooltip(surf, pos, peer, crew_name=""):
     """A co-op peer's gear/stats on hover - mirrors RotMG showing a nearby
     player's level/equipment/HP when you hover their name. `peer.net_totals`
-    is required (i.e. peer must come from Player.from_net_state)."""
+    is required (i.e. peer must come from Player.from_net_state).
+    `crew_name` is a client-local best-effort lookup (see game/crews.py) -
+    empty unless the peer happens to resolve in this client's own crew
+    membership index."""
     title_suffix = f" {peer.title}" if peer.title else ""
     lines = [f"{peer.name}{title_suffix} - {peer.cls_name.title()} Lv{peer.level}"]
-    slot_labels = [("weapon", "Weapon"), ("armor", "Armor"), ("ring", "Ring"), ("ability", "Ability")]
     line_colors = [(230, 220, 160)]
+    if crew_name:
+        lines.append(f"Crew: {crew_name}")
+        line_colors.append((150, 210, 255))
+    slot_labels = [("weapon", "Weapon"), ("armor", "Armor"), ("ring", "Ring"), ("ability", "Ability")]
     for attr, label in slot_labels:
         it = getattr(peer, attr)
         if it:
@@ -637,9 +643,51 @@ def draw_name_entry(surf, buffer, elapsed=0.0, fade_in=NAME_ENTRY_FADE_IN):
         surf.blit(overlay, (0, 0))
 
 
-def draw_day_night_overlay(surf, light_level, blood_moon=False):
+PLAYER_LIGHT_RADIUS = 130
+_LIGHT_SPRITE_CACHE = {}
+
+
+def _get_light_sprite(radius):
+    """A pre-baked radial-gradient 'light' sprite, cached by radius - built
+    once per distinct radius and reused every frame (never rebuilt per-frame).
+    Painted from the outside in with progressively smaller, higher-alpha
+    filled circles: pygame.draw overwrites pixels rather than alpha-blending
+    them, so the last (smallest) circle to cover a given pixel wins, which
+    produces a true radial falloff from ~255 alpha at the center down to 0 at
+    the edge using only cheap filled-circle draws, no per-pixel Python loop."""
+    cached = _LIGHT_SPRITE_CACHE.get(radius)
+    if cached is not None:
+        return cached
+    size = radius * 2
+    sprite = pygame.Surface((size, size), pygame.SRCALPHA)
+    center = (radius, radius)
+    for r in range(radius, 0, -1):
+        alpha = int(255 * (1.0 - r / radius))
+        pygame.draw.circle(sprite, (0, 0, 0, alpha), center, r)
+    _LIGHT_SPRITE_CACHE[radius] = sprite
+    return sprite
+
+
+TORCH_LIGHT_RADIUS = 70
+
+
+def draw_day_night_overlay(surf, light_level, blood_moon=False, torch_screen_positions=None):
     """A translucent full-screen tint - deep blue at night, tinted red during a
-    Blood Moon, nothing at high noon. light_level: 1.0 (noon) .. 0.0 (midnight)."""
+    Blood Moon, nothing at high noon - with a soft lightmap cutout around the
+    player's own position so standing still doesn't plunge you into total
+    dark. The player is always exactly at screen-center: the camera follows
+    the player every frame (Camera.follow), and Camera.__call__/cam(cam.pos)
+    always maps to (screen_w/2, screen_h/2) regardless of Q/E rotation (see
+    game/world.py's Camera class) - so the cutout needs no extra position
+    argument threaded through every call site. Implemented by blitting a
+    cached radial-gradient sprite onto the SRCALPHA overlay with
+    BLEND_RGBA_SUB: the light sprite's color is pure black, so subtracting it
+    only reduces the overlay's alpha channel where it lands (more transparent
+    = brighter), leaving the tint color itself untouched everywhere else.
+    light_level: 1.0 (noon) .. 0.0 (midnight). torch_screen_positions is an
+    optional iterable of (x, y) SCREEN-space positions (already run through
+    the caller's camera) for nearby torch props - each gets a smaller
+    TORCH_LIGHT_RADIUS cutout of its own, same technique as the player's."""
     dark = 1.0 - light_level
     if dark <= 0.02:
         return
@@ -647,6 +695,15 @@ def draw_day_night_overlay(surf, light_level, blood_moon=False):
     tint = (120, 20, 20) if blood_moon else (10, 15, 45)
     overlay = pygame.Surface((C.SCREEN_W, C.SCREEN_H), pygame.SRCALPHA)
     overlay.fill((*tint, alpha))
+    light = _get_light_sprite(PLAYER_LIGHT_RADIUS)
+    lx = C.SCREEN_W // 2 - PLAYER_LIGHT_RADIUS
+    ly = C.SCREEN_H // 2 - PLAYER_LIGHT_RADIUS
+    overlay.blit(light, (lx, ly), special_flags=pygame.BLEND_RGBA_SUB)
+    if torch_screen_positions:
+        torch_light = _get_light_sprite(TORCH_LIGHT_RADIUS)
+        for tx, ty in torch_screen_positions:
+            overlay.blit(torch_light, (tx - TORCH_LIGHT_RADIUS, ty - TORCH_LIGHT_RADIUS),
+                         special_flags=pygame.BLEND_RGBA_SUB)
     surf.blit(overlay, (0, 0))
 
 
@@ -854,6 +911,77 @@ def draw_help_overlay(surf, menu_items=None, selected_idx=0, mouse_pos=(-1, -1))
     note_y = body_y0 + 26 + rows_per_col * 20 + 6
     for i, line in enumerate(note_lines):
         panel.blit(_FONT_S.render(line, True, (140, 140, 155)), (pad, note_y + i * 16))
+    surf.blit(panel, (x, y))
+
+
+# ------------------------------------------------------------ Echo Keeper --
+# The Batch-12 permadeath-currency shop panel - same "Up/Down navigable list,
+# geometry factored into its own function so a *_rects() helper can hit-test
+# the exact same layout" pattern as the O-key options overlay above.
+def _echo_shop_geometry(menu_items=None):
+    pad = 16
+    menu_items = menu_items or []
+    title_bar_h = _FONT_S.get_height() + 8
+    content_y0 = 2 + title_bar_h + 4
+    menu_w = max((_FONT_S.size(label)[0] for label, _ in menu_items), default=0) + 40
+    title_w = _FONT_M.size("Echo Keeper")[0]
+    w = max(menu_w, title_w, 260) + pad * 2
+    h = content_y0 + 24 + len(menu_items) * 26 + pad
+    x = (C.SCREEN_W - w) // 2
+    y = (C.SCREEN_H - h) // 2
+    return x, y, w, h, content_y0
+
+
+def echo_shop_close_button_rect(menu_items=None):
+    x, y, w, h, _content_y0 = _echo_shop_geometry(menu_items)
+    return pygame.Rect(x + w - 26, y + 6, 18, 18)
+
+
+def echo_shop_menu_item_rects(menu_items=None):
+    menu_items = menu_items or []
+    x, y, w, h, content_y0 = _echo_shop_geometry(menu_items)
+    pad = 16
+    body_y0 = content_y0 + 24
+    rects = []
+    for i in range(len(menu_items)):
+        ly = body_y0 + i * 26
+        rects.append(pygame.Rect(x + pad - 4, y + ly - 2, w - pad * 2 + 8, 24))
+    return rects
+
+
+def draw_echo_shop_overlay(surf, echoes, menu_items=None, selected_idx=0, mouse_pos=(-1, -1)):
+    """menu_items: list of (label, action) pairs, same shape draw_help_overlay
+    uses - a static "already owned"/"maxed" row just passes a no-op action."""
+    pad = 16
+    menu_items = menu_items or []
+    x, y, w, h, content_y0 = _echo_shop_geometry(menu_items)
+    panel, content_y0 = _ornate_panel(w, h, title="Echo Keeper")
+
+    close = pygame.Rect(w - 26, 6, 18, 18)
+    hovered_close = close.collidepoint(mouse_pos[0] - x, mouse_pos[1] - y)
+    pygame.draw.rect(panel, (170, 70, 70) if hovered_close else (110, 55, 60), close, border_radius=3)
+    pygame.draw.rect(panel, (230, 200, 200), close, width=1, border_radius=3)
+    m = 4
+    pygame.draw.line(panel, (255, 235, 235), (close.x + m, close.y + m),
+                      (close.x + close.w - m, close.y + close.h - m), width=2)
+    pygame.draw.line(panel, (255, 235, 235), (close.x + close.w - m, close.y + m),
+                      (close.x + m, close.y + close.h - m), width=2)
+
+    balance = _FONT_S.render(f"Echoes: {echoes}", True, (170, 230, 220))
+    panel.blit(balance, (pad, content_y0))
+    body_y0 = content_y0 + 24
+    local_mouse = (mouse_pos[0] - x, mouse_pos[1] - y)
+    for i, (label, _action) in enumerate(menu_items):
+        ly = body_y0 + i * 26
+        row_rect = pygame.Rect(pad - 4, ly - 2, w - pad * 2 + 8, 24)
+        selected = i == selected_idx
+        hovered = row_rect.collidepoint(local_mouse)
+        if selected or hovered:
+            fill = (90, 80, 130, 220) if selected else (70, 65, 95, 180)
+            pygame.draw.rect(panel, fill, row_rect, border_radius=4)
+        color = (255, 235, 170) if selected else (220, 220, 230) if hovered else (200, 200, 215)
+        prefix = "> " if selected else "  "
+        panel.blit(_FONT_S.render(prefix + label, True, color), (pad, ly))
     surf.blit(panel, (x, y))
 
 
@@ -1294,6 +1422,11 @@ def draw_speech_bubble(surf, cam, world_pos, text, age, name=None, text_color=(2
 
 
 PORTAL_DIFFICULTY_COLORS = {"Easy": (120, 220, 120), "Medium": (230, 200, 80), "Hard": (230, 90, 90)}
+# A readiness signpost so players self-select instead of guessing blind -
+# echoes ROTMG's own real "Combat Power" rework, kept here as a simple
+# static suggestion per BONUS_DIFFICULTIES tier rather than a live gear-score
+# calculation (that's a much bigger system than a portal label needs).
+PORTAL_DIFFICULTY_SUGGESTED_LEVEL = {"Easy": "Lv 1+", "Medium": "Lv 8+", "Hard": "Lv 15+"}
 
 
 def draw_portal_label(surf, cam, portal):
@@ -1305,7 +1438,8 @@ def draw_portal_label(surf, cam, portal):
     neither (entrance/realm_exit/phase2 portals carry neither)."""
     text, color = None, (220, 220, 220)
     if getattr(portal, "difficulty", None):
-        text = portal.difficulty
+        suggested = PORTAL_DIFFICULTY_SUGGESTED_LEVEL.get(portal.difficulty)
+        text = f"{portal.difficulty} ({suggested})" if suggested else portal.difficulty
         color = PORTAL_DIFFICULTY_COLORS.get(portal.difficulty, color)
     elif getattr(portal, "label", None):
         text = portal.label
@@ -1322,7 +1456,9 @@ def draw_portal_label(surf, cam, portal):
 
 def _portal_label_text(portal):
     if getattr(portal, "difficulty", None):
-        return portal.difficulty, PORTAL_DIFFICULTY_COLORS.get(portal.difficulty, (220, 220, 220))
+        suggested = PORTAL_DIFFICULTY_SUGGESTED_LEVEL.get(portal.difficulty)
+        text = f"{portal.difficulty} ({suggested})" if suggested else portal.difficulty
+        return text, PORTAL_DIFFICULTY_COLORS.get(portal.difficulty, (220, 220, 220))
     if getattr(portal, "label", None):
         return portal.label, (255, 225, 150)
     return None, None

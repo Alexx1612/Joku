@@ -573,6 +573,68 @@ _CAVE_LURKER = [
 ]
 _CAVE_LURKER_PAL = {"p": (58, 48, 78), "P": (88, 74, 116), "E": (200, 100, 255), "C": (68, 58, 92)}
 
+# --- Quadruped body-plan archetype (Batch 13, track Q3): a shared body+legs
+# "chassis" (two stances - 4-legged and 6-legged/crawler) reused across all 5
+# targets below, each given its own distinguishing head-topper feature
+# (antlers/ears/frill/shell-spikes) and palette - the "small archetype
+# library, varied by params" approach the pixel-art research recommended,
+# instead of 5 fully bespoke hand-authored grids. Replaces the old reused-
+# shape placeholders (deer was a recolored yeti, etc.) with real distinct
+# silhouettes.
+_QUAD_BODY_LEGS_4 = [
+    " bbbbbbbbbbbb ",
+    "bbbBeBBBBeBbbb",
+    "bbbBBBBBBBBbbb",
+    " bbbbbbbbbbbb ",
+    "   l      l   ",
+    "   l      l   ",
+    "   k      k   ",
+]
+_QUAD_BODY_LEGS_6 = [
+    " bbbbbbbbbbbb ",
+    "bbbBeBBBBeBbbb",
+    "bbbBBBBBBBBbbb",
+    " bbbbbbbbbbbb ",
+    "l  l      l  l",
+    "k  k      k  k",
+]
+_LIZARD_BODY_LEGS = [
+    "bbbBeBBBBeBbbb",
+    "bbbBBBBBBBBbbb",
+    " bbbbbbbbbbbb ",
+    "  l  tt   l   ",
+    "  k  tt   k   ",
+]
+
+_DEER = [
+    "  a        a  ",
+    "   a      a   ",
+    "    a.  .a    ",
+    "  bbbbbbbbbb  ",
+] + _QUAD_BODY_LEGS_4 + ["      tt      "]
+
+_FOREST_HARE = [
+    "  r        r  ",
+    "  r        r  ",
+    "  r        r  ",
+    "  bbbbbbbbbb  ",
+] + _QUAD_BODY_LEGS_4 + ["      tt      "]
+
+_DESERT_LIZARD = [
+    "  g        g  ",
+    " ggbbbbbbbbgg ",
+] + _LIZARD_BODY_LEGS
+
+_RUBBLE_CRAWLER = [
+    "  bb      bb  ",
+    " bbbbbbbbbbbb ",
+] + _QUAD_BODY_LEGS_4
+
+_BRINE_CRAWLER = [
+    " s          s ",
+    "s bbbbbbbbbb s",
+] + _QUAD_BODY_LEGS_6
+
 _BOSS = [
     "..OOOOOOOOOOOOOO..",
     ".OOKKKKKKKKKKKKOO.",
@@ -665,20 +727,102 @@ _TOTEM_PAL = {"o": (120, 112, 98), "h": (160, 150, 130), "E": (235, 205, 70), "v
               "C": (84, 78, 68)}
 _DEEP_STALKER_PAL = {"p": (25, 20, 35), "P": (45, 38, 60), "E": (255, 60, 180), "C": (30, 26, 42)}
 
+# Batch 13 Track Q2: bespoke silhouettes for 5 "aerial/voice" mobs that were
+# previously reusing an unrelated grid (a bat/ghost/harpy/frost-wraith shape)
+# with just a new palette - the same _TOTEM-style upgrade above, applied to a
+# small perching-bird archetype (songbird/marsh_heron, sharing the b/B/h/k/l
+# key convention below, varied by proportion - plump+short vs. tall+long-necked)
+# and a robed ethereal-singer archetype (siren_wraith/abyssal_chorister/
+# choir_warden, sharing the h/H/e/G/r key convention - hood/inner-robe/eye/
+# glowing "song" rune/tapering robe-tendril - varied by posture and hood shape).
+_SONGBIRD = [
+    "    .bbbb.      ",
+    "   bbbbbbbb     ",
+    "  bbbcccbbbk    ",
+    "  bbcccceccbk   ",
+    "  bbcccccbbb    ",
+    " tbbbbbbbbbb    ",
+    " ttbbbbbbbbb    ",
+    "  ttbbbbbbb     ",
+    "    kk  kk      ",
+    "    kk  kk      ",
+    "     .    .     ",
+]
+_MARSH_HERON = [
+    "           h    ",
+    "          hk    ",
+    "         h      ",
+    "        n       ",
+    "       n        ",
+    "      nb        ",
+    "     nbB        ",
+    "    nbBB        ",
+    "    bBBb        ",
+    "     bbb        ",
+    "     ll  l      ",
+    "     ll  l      ",
+    "     ll  l      ",
+    "      l   l     ",
+]
+_SIREN_WRAITH = [
+    "    .hhhhh.     ",
+    "   hhhhhhhhh    ",
+    "  hhhhhhhhhhh   ",
+    "  hHHHHHHHHHh   ",
+    "  hH  eyye  Hh  ",
+    "  hHH  GG  HHh  ",
+    " ahHHHHHHHHHha  ",
+    " a hHHHHHHh  a  ",
+    "    HHHHHH      ",
+    "    rrrrrr      ",
+    "   rrrrrrrr     ",
+    "   rr    rr     ",
+    "   r      r     ",
+]
+_ABYSSAL_CHORISTER = [
+    "     .hhhh.     ",
+    "    hhhhhhhh    ",
+    "   hhHHHHHHhh   ",
+    "   hH  ee  Hh   ",
+    "   hH      Hh   ",
+    "   hHH GGG HHh  ",
+    "    hHHHHHHh    ",
+    "    .hhhhhh.    ",
+    "     rrrrrr     ",
+    "     rrrrrr     ",
+    "      rrrr      ",
+    "       rr       ",
+]
+_CHOIR_WARDEN = [
+    "      hhhh   s  ",
+    "     hhhhhh  s  ",
+    "    hhHHHHhh s  ",
+    "    hH eeee Hh  ",
+    "    hHHHHHHHHh  ",
+    "   hHH GGGG HHh ",
+    "   hHHHHHHHHHHh ",
+    "    hhhhhhhhhh  ",
+    "     rrr  rrr   ",
+    "     rrr  rrr   ",
+    "     rr    rr   ",
+    "      r    r    ",
+]
+
 # Neutral-mob palettes (reuse existing grids below - tint-reuse stopgap per the usual
 # convention, real bespoke sprites are the visual session's to pick up whenever)
-_FOREST_HARE_PAL = {"M": (120, 90, 60), "D": (150, 115, 80), "B": (90, 70, 48),
-                     "h": (170, 140, 100), "e": (20, 16, 12), "E": (60, 40, 24),
-                     "f": (240, 235, 220), "C": (70, 55, 38)}
+_FOREST_HARE_PAL = {"r": (200, 190, 175), "b": (185, 170, 150), "B": (225, 215, 200),
+                     "e": (30, 25, 20), "l": (150, 140, 122), "k": (90, 80, 68),
+                     "t": (245, 240, 230)}
 _CAVE_MOTH_PAL = {"G": (200, 190, 230), "W": (240, 235, 250), "e": (140, 60, 180), "u": (170, 150, 210)}
-_SONGBIRD_PAL = {"M": (150, 40, 40), "D": (200, 70, 50), "B": (40, 30, 20),
-                  "h": (90, 60, 40), "e": (20, 16, 12), "E": (255, 210, 60),
-                  "f": (245, 235, 210), "C": (60, 45, 30)}
-_DEER_PAL = {"w": (150, 110, 70), "E": (30, 22, 15), "t": (200, 170, 130),
-             "C": (110, 80, 50), "u": (80, 60, 40), "f": (235, 225, 200), "s": (140, 100, 65)}
-_DESERT_LIZARD_PAL = {"c": (150, 165, 90), "C": (180, 195, 120), "E": (255, 210, 60),
-                       "t": (110, 125, 60), "p": (80, 95, 45)}
-_MARSH_HERON_PAL = {"G": (150, 165, 160), "W": (225, 230, 220), "e": (40, 45, 42), "u": (100, 115, 108)}
+_SONGBIRD_PAL = {"b": (200, 70, 50), "c": (230, 140, 90), "e": (20, 16, 12),
+                  "k": (90, 60, 30), "t": (150, 40, 40)}
+_DEER_PAL = {"a": (90, 60, 40), "b": (150, 110, 70), "B": (195, 150, 105), "e": (25, 20, 15),
+             "l": (110, 80, 50), "k": (60, 45, 30), "t": (230, 225, 210)}
+_DESERT_LIZARD_PAL = {"g": (130, 150, 60), "b": (170, 190, 100), "B": (205, 220, 140),
+                       "e": (40, 35, 15), "l": (140, 160, 80), "k": (90, 100, 50),
+                       "t": (150, 170, 85)}
+_MARSH_HERON_PAL = {"h": (150, 165, 160), "n": (170, 185, 180), "b": (200, 205, 195),
+                     "B": (225, 230, 220), "k": (90, 70, 40), "l": (100, 115, 108)}
 
 # "The Reforging" storyline - island flare/song guardian palettes (see
 # entities.ENEMY_KINDS). Each reuses an existing base grid with a new
@@ -687,35 +831,348 @@ _MARSH_HERON_PAL = {"G": (150, 165, 160), "W": (225, 230, 220), "e": (40, 45, 42
 _EMBER_WISP_PAL = {"G": (200, 90, 40), "W": (255, 170, 80), "e": (60, 20, 10), "u": (150, 60, 20)}
 _FURY_SHARD_PAL = {"M": (60, 40, 30), "D": (180, 70, 30), "B": (40, 30, 25), "h": (90, 60, 45),
                     "e": (20, 10, 8), "E": (255, 120, 40), "f": (255, 220, 150), "C": (35, 25, 20)}
-_RUBBLE_CRAWLER_PAL = {"c": (110, 90, 70), "C": (150, 120, 95), "E": (255, 90, 30), "t": (70, 50, 35),
-                        "p": (50, 35, 25)}
+_RUBBLE_CRAWLER_PAL = {"b": (120, 105, 90), "B": (160, 145, 125), "e": (255, 100, 40),
+                        "l": (95, 82, 70), "k": (60, 52, 45)}
 _SPITE_SPIRIT_PAL = {"G": (140, 40, 40), "W": (220, 90, 70), "e": (40, 10, 10), "u": (100, 30, 30)}
+# --- Q4 humanoid-guardian archetype (Batch 13): shared silhouette template -
+# a peaked/plated head silhouette (rows 0-3), a torso block carrying one
+# "regalia" accent distinct per mob - jagged shard spikes, a hollow ember
+# visor, cracked stone plating, glowing crack-lines, or a flared acolyte
+# hem/staff (rows 4-7), tapering to legs or a robe hem (rows 8+). Every
+# instance below reuses this row skeleton but varies proportions/accent
+# placement/which palette key goes where, per mob - not a copy-paste reskin.
+_SHARD_SENTINEL = [
+    "  .oo.    .oo.  ",
+    " oohhoo  oohho  ",
+    " ohhEhh  hEhho  ",
+    "  ohh  tt  ho   ",
+    " oCCCCCCCCCCCo  ",
+    "oCCvCCCCCCCvCCo ",
+    "oCCCCCCCCCCCCCo ",
+    " oCC        CCo ",
+    " oC          Co ",
+    "  o          o  ",
+]
 _SHARD_SENTINEL_PAL = {"o": (95, 70, 55), "h": (135, 105, 80), "E": (255, 140, 40), "t": (230, 190, 120),
                         "v": (50, 35, 25), "C": (80, 60, 45)}
+_ECHO_KNIGHT = [
+    "   .dddddd.     ",
+    "  ddCCCCCCdd    ",
+    " ddCChhhhCCdd   ",
+    " dCCEhh  hhECCd ",
+    " dCh   tt   hCd ",
+    "  Coo      ooC  ",
+    "  CoCCCCCCCoC   ",
+    " dCCCCCCCCCCCd  ",
+    " dCC  CCCC  CCd ",
+    "  Cv        vC  ",
+    "  Cv        vC  ",
+]
 _ECHO_KNIGHT_PAL = {"o": (90, 60, 50), "h": (130, 90, 75), "E": (255, 110, 50), "t": (230, 150, 90),
                      "v": (45, 25, 20), "C": (70, 45, 38), "d": (55, 35, 28)}
 _SHATTERED_GOLEM_PAL = {"w": (100, 85, 75), "E": (255, 120, 40), "t": (230, 160, 90), "C": (75, 62, 54),
                          "u": (55, 45, 38), "f": (100, 85, 75), "s": (85, 70, 60)}
 _FRACTURE_HOUND_PAL = {"d": (55, 35, 28), "D": (95, 60, 45), "E": (255, 130, 40), "f": (40, 28, 22)}
+_STONE_REVENANT = [
+    "   PPPPPPPP     ",
+    "  PPCCCCCCPP    ",
+    " PPCCpEEpCCPP   ",
+    " PCCCC  CCCCP   ",
+    " PCCCCCCCCCCP   ",
+    "PPCCCCCCCCCCPP  ",
+    "PPCCCCCCCCCCPP  ",
+    " PCC  CC  CCP   ",
+    " PP        PP   ",
+]
 _STONE_REVENANT_PAL = {"p": (70, 55, 48), "P": (110, 88, 75), "E": (255, 140, 60), "C": (55, 42, 36)}
+_CINDER_WARDEN = [
+    "   .dddddd.     ",
+    "  ddDDDDDDdd    ",
+    " ddDoEE  EEoDd  ",
+    " dDo   tt   oDd ",
+    "  dDDDDDDDDDd   ",
+    " dDDEDDddDDEDDd ",
+    " dDDD  EE  DDDd ",
+    "  dD        Dd  ",
+    "  d          d  ",
+]
 _CINDER_WARDEN_PAL = {"d": (120, 35, 20), "D": (180, 60, 30), "E": (255, 220, 60), "o": (255, 140, 40),
                        "t": (80, 25, 15)}
 _TIDE_WISP_PAL = {"G": (60, 140, 160), "W": (170, 230, 235), "e": (15, 40, 50), "u": (60, 110, 130)}
+_PEARL_ACOLYTE = [
+    "   .CCCCCC.     ",
+    "  CChhhhhhCC    ",
+    " CChEhh  hEhCC  ",
+    " Chh   tt   hC  ",
+    "  CCCCCCCCCC    ",
+    " oCCCvvvvCCo d  ",
+    " oCCCCCCCCCo d  ",
+    "oCCC      CCCo d",
+    "oCC        CCo  ",
+    " C          C   ",
+]
 _PEARL_ACOLYTE_PAL = {"o": (70, 95, 100), "h": (110, 140, 145), "E": (230, 240, 250), "t": (220, 235, 240),
                        "v": (30, 50, 55), "C": (55, 78, 82), "d": (40, 60, 64)}
-_BRINE_CRAWLER_PAL = {"c": (40, 110, 110), "C": (70, 150, 150), "E": (255, 200, 80), "t": (25, 70, 70),
-                       "p": (18, 50, 50)}
-_ABYSSAL_CHORISTER_PAL = {"M": (20, 45, 55), "D": (45, 90, 100), "B": (15, 30, 38), "h": (60, 110, 120),
-                           "e": (10, 20, 25), "E": (120, 220, 230), "f": (200, 235, 240), "C": (18, 35, 42)}
+_BRINE_CRAWLER_PAL = {"s": (40, 130, 130), "b": (50, 140, 140), "B": (90, 180, 175),
+                       "e": (255, 210, 90), "l": (35, 110, 108), "k": (20, 75, 72)}
+_ABYSSAL_CHORISTER_PAL = {"h": (45, 90, 100), "H": (60, 110, 120), "e": (10, 20, 25),
+                           "G": (120, 220, 230), "r": (20, 45, 55)}
 _CORAL_SENTINEL_PAL = {"o": (200, 110, 110), "h": (230, 150, 150), "E": (255, 240, 200), "t": (235, 225, 210),
                         "v": (100, 55, 55), "C": (170, 90, 90)}
 _DROWNED_CUSTODIAN_PAL = {"p": (40, 70, 80), "P": (70, 110, 120), "E": (150, 230, 235), "C": (30, 55, 62)}
 _KELP_STALKER_PAL = {"d": (20, 55, 45), "D": (35, 95, 75), "E": (150, 230, 120), "f": (15, 40, 32)}
 _SHELLBACK_GUARDIAN_PAL = {"w": (90, 130, 140), "E": (255, 220, 150), "t": (230, 235, 235), "C": (70, 100, 110),
                             "u": (50, 75, 82), "f": (90, 130, 140), "s": (75, 110, 118)}
-_SIREN_WRAITH_PAL = {"f": (90, 140, 150), "h": (200, 220, 220), "E": (255, 230, 180), "y": (150, 200, 190),
-                      "k": (50, 80, 85)}
-_CHOIR_WARDEN_PAL = {"W": (140, 200, 210), "C": (200, 235, 240), "e": (30, 55, 65)}
+_SIREN_WRAITH_PAL = {"h": (90, 140, 150), "H": (200, 220, 220), "e": (30, 40, 45),
+                      "y": (150, 200, 190), "G": (255, 230, 180), "a": (170, 205, 205),
+                      "r": (60, 95, 100)}
+_CHOIR_WARDEN_PAL = {"h": (140, 200, 210), "H": (200, 235, 240), "e": (30, 55, 65),
+                      "G": (230, 250, 255), "r": (90, 150, 160), "s": (210, 235, 240)}
+
+# --- Batch 13 Track Q1: ethereal/wisp-flyer archetype generators ---
+# Per this session's pixel-art research: a small parametrized body-plan
+# archetype library, varied by proportion/params, is more efficient than
+# fully bespoke hand-typed grids per mob while still giving each mob its
+# own genuinely distinct silhouette (not another palette-swapped _GHOST/
+# _BAT reuse). These generate real ASCII pixel-grids programmatically.
+
+
+def _wisp_grid(chars, width=17, height=14, core_rx=5.3, core_ry=4.6, tail_rows=5, eyes=True):
+    """A small rounded ethereal floating creature: a glowing radial core
+    plus a tapering wispy tail. `chars` maps role name -> grid char (rim/
+    core/eye/shadow), matching whichever palette dict the mob already has,
+    so this one generator produces genuinely different silhouettes for
+    ember_wisp/spite_spirit/tide_wisp purely from its numeric params."""
+    rim, core, eye = chars["rim"], chars["core"], chars["eye"]
+    cx = (width - 1) / 2.0
+    core_h = height - tail_rows
+    cy = core_h * 0.46
+    rows = []
+    for y in range(core_h):
+        row = [" "] * width
+        for x in range(width):
+            dx = (x - cx) / core_rx
+            dy = (y - cy) / core_ry
+            dist = math.hypot(dx, dy)
+            if dist <= 0.5:
+                row[x] = core
+            elif dist <= 0.92:
+                row[x] = rim if (x - y) % 3 else core
+            elif dist <= 1.08:
+                row[x] = rim
+        rows.append("".join(row))
+    for t in range(tail_rows):
+        row = [" "] * width
+        frac = 1.0 - t / max(1, tail_rows - 1)
+        span = max(0.6, core_rx * 0.85 * frac)
+        for x in range(width):
+            dx = x - cx
+            if abs(dx) <= span and (int(round(dx)) + t) % 3 != 2:
+                row[x] = core if t < 2 else rim
+        rows.append("".join(row))
+    if eyes:
+        ey = int(round(cy))
+        offset = max(1, int(round(core_rx * 0.4)))
+        for ex in (int(round(cx - offset)), int(round(cx + offset))):
+            if 0 <= ey < len(rows) and 0 <= ex < width:
+                r = list(rows[ey])
+                r[ex] = eye
+                rows[ey] = "".join(r)
+    return rows
+
+
+def _shard_grid(chars, width=15, height=15, elongation=1.0):
+    """A small angular floating crystal-shard creature: a diamond/prism
+    silhouette built from straight faceted edges, deliberately unlike
+    `_wisp_grid`'s soft rounded blob - so `fury_shard` reads as an actual
+    shard instead of yet another ghost-shaped recolor."""
+    outer, mid, body, hi, eye = chars["outer"], chars["mid"], chars["body"], chars["hi"], chars["eye"]
+    cx = (width - 1) / 2.0
+    top, bottom = 1, height - 2
+    mid_y = (top + bottom) / 2.0
+    rows = []
+    for y in range(height):
+        row = [" "] * width
+        if top <= y <= bottom:
+            frac = ((y - top) / max(1.0, mid_y - top)) if y <= mid_y else \
+                   ((bottom - y) / max(1.0, bottom - mid_y) * elongation)
+            half = frac * (width / 2.0 - 1)
+            for x in range(width):
+                dx = abs(x - cx)
+                if dx <= half:
+                    if dx <= half * 0.35:
+                        row[x] = hi if y < mid_y else body
+                    elif dx <= half * 0.75:
+                        row[x] = mid
+                    else:
+                        row[x] = outer
+        rows.append("".join(row))
+    ey = int(round(mid_y - 1))
+    for ex in (int(round(cx - 2)), int(round(cx + 2))):
+        if 0 <= ey < len(rows) and 0 <= ex < width:
+            r = list(rows[ey])
+            r[ex] = eye
+            rows[ey] = "".join(r)
+    return rows
+
+
+def _moth_grid(chars, width=17, height=12, wing_rx=7.0, wing_ry=3.6):
+    """A small winged night-moth: two horizontal wing lobes either side of
+    a thin vertical body - a fundamentally different (wing-shaped, wide/
+    flat) silhouette from the rounded-blob wisp archetype, since a moth
+    forcing itself into a wisp shape would read as arbitrary, not designed."""
+    rim, core, eye, shadow = chars["rim"], chars["core"], chars["eye"], chars["shadow"]
+    cx = (width - 1) / 2.0
+    cy = (height - 1) / 2.0
+    rows = []
+    for y in range(height):
+        row = [" "] * width
+        for x in range(width):
+            if abs(x - cx) <= 1:
+                row[x] = shadow
+                continue
+            for side in (-1, 1):
+                wx = cx + side * (wing_rx * 0.55)
+                dist = math.hypot((x - wx) / wing_rx, (y - cy) / wing_ry)
+                if dist <= 0.55:
+                    row[x] = core
+                    break
+                elif dist <= 1.0:
+                    row[x] = rim
+                    break
+        rows.append("".join(row))
+    ey = int(round(cy))
+    ex = int(round(cx))
+    if 0 <= ey < len(rows) and 0 <= ex < width:
+        r = list(rows[ey])
+        r[ex] = eye
+        rows[ey] = "".join(r)
+    return rows
+
+
+# Four genuinely distinct silhouettes from the 3 generators above, one
+# per target mob, each tuned via its own params (not a shared shape):
+_EMBER_WISP_CHARS = {"rim": "G", "core": "W", "eye": "e"}
+_EMBER_WISP = _wisp_grid(_EMBER_WISP_CHARS, core_rx=4.6, core_ry=4.0, tail_rows=6, eyes=True)
+
+_SPITE_SPIRIT_CHARS = {"rim": "G", "core": "W", "eye": "e"}
+_SPITE_SPIRIT = _wisp_grid(_SPITE_SPIRIT_CHARS, core_rx=3.6, core_ry=5.4, tail_rows=3, eyes=True)
+
+_TIDE_WISP_CHARS = {"rim": "G", "core": "W", "eye": "e"}
+_TIDE_WISP = _wisp_grid(_TIDE_WISP_CHARS, width=19, core_rx=6.4, core_ry=3.4, tail_rows=7, eyes=True)
+
+_FURY_SHARD_CHARS = {"outer": "M", "mid": "D", "body": "B", "hi": "h", "eye": "e"}
+_FURY_SHARD = _shard_grid(_FURY_SHARD_CHARS, elongation=1.6)
+
+_CAVE_MOTH_CHARS = {"rim": "G", "core": "W", "eye": "e", "shadow": "u"}
+_CAVE_MOTH = _moth_grid(_CAVE_MOTH_CHARS)
+
+# --- Batch 13 Track Q5: real silhouettes for 6 "Reforging" guardians that
+# previously just palette-swapped an unrelated existing base grid (a
+# shattered_golem literally reused the yeti shape, etc.) - see the plan doc.
+# Two shared, parametrized body-plan archetypes rather than 6 fully bespoke
+# grids: a "blocky construct" archetype (chunky, symmetric, armored/crested)
+# and a "low-slung creature" archetype (elongated, forward head, trailing
+# tail/legs). Each archetype function assembles the common base/leg rows;
+# every mob still supplies its own distinct crown/torso or head/spine rows,
+# so the six stay genuinely different from each other and from the 14
+# pre-existing base shapes, not just re-palettes.
+def _construct_body(crown_rows, torso_rows, leg_char):
+    return crown_rows + torso_rows + [
+        f"    {leg_char}{leg_char}      {leg_char}{leg_char}    ",
+        f"    {leg_char}{leg_char}      {leg_char}{leg_char}    ",
+    ]
+
+
+def _lowslung_body(head_rows, spine_rows, tail_char):
+    return head_rows + spine_rows + [
+        f"  {tail_char}{tail_char}  {tail_char}{tail_char}  {tail_char}{tail_char}  ",
+    ]
+
+
+_SHATTERED_GOLEM = _construct_body(
+    crown_rows=[
+        "   .wwwwwwwww.   ",
+        "  wwwCwwEwwCwww  ",
+        " wwCCwwwwwwwCCww ",
+    ],
+    torso_rows=[
+        "wwwwwwssssswwwwww",
+        "wwsssCtttttCsssww",
+        " wsCCttttttCCsw  ",
+        "  sCCC     CCCs  ",
+        "   sCC     CCs   ",
+    ],
+    leg_char="f",
+)
+
+_CORAL_SENTINEL = _construct_body(
+    crown_rows=[
+        "   .ohhhhho.   ",
+        "  ohhEohoEhho  ",
+        " ohhCCCCCChho  ",
+    ],
+    torso_rows=[
+        "ohhhtCtCtCthhho",
+        " ohhCtttttChho ",
+        "  ohCC   CCho  ",
+    ],
+    leg_char="v",
+)
+
+_SHELLBACK_GUARDIAN = _construct_body(
+    crown_rows=[
+        "   .wwwwwww.   ",
+        "  wwwwEwEwww   ",
+    ],
+    torso_rows=[
+        " wwCCCCCCCCww  ",
+        "wwCttCtCtCttCww",
+        "wwCCCsssssCCCww",
+        " wCCC     CCCw ",
+        "  wC       Cw  ",
+    ],
+    leg_char="f",
+)
+
+_FRACTURE_HOUND = _lowslung_body(
+    head_rows=[
+        ".d          d.",
+        " ddEdd  ddEdd ",
+    ],
+    spine_rows=[
+        "  dDDddddDDd  ",
+        " dDfDfDfDfDd  ",
+        " ddDDDDDDDDdd ",
+    ],
+    tail_char="d",
+)
+
+_DROWNED_CUSTODIAN = _lowslung_body(
+    head_rows=[
+        "   .pPPPp.   ",
+        "  pPEppEPp   ",
+    ],
+    spine_rows=[
+        " pPPCCCCPPp  ",
+        "pPCC    CCPp ",
+        " pPC    CPp  ",
+    ],
+    tail_char="p",
+)
+
+_KELP_STALKER = _lowslung_body(
+    head_rows=[
+        ".d           .",
+        " ddEdd   ddEd ",
+    ],
+    spine_rows=[
+        "  dDdDdDdDdD  ",
+        "   dDfDfDfd   ",
+        "    dDDDDd    ",
+    ],
+    tail_char="f",
+)
 
 ENEMY_GRIDS = {"bat": (_BAT, _BAT_PAL), "ghost": (_GHOST, _GHOST_PAL),
                "skeleton": (_SKELETON, _SKELETON_PAL), "imp": (_IMP, _IMP_PAL),
@@ -741,22 +1198,22 @@ ENEMY_GRIDS = {"bat": (_BAT, _BAT_PAL), "ghost": (_GHOST, _GHOST_PAL),
                "thorn_warden_phase2": (_BOSS, _THORN_WARDEN_PHASE2_PAL),
                "sand_wyrm_phase2": (_BOSS, _SAND_WYRM_PHASE2_PAL),
                # neutral (always-passive), and now also unshootable/flee-on-threat, ambient wildlife
-               "forest_hare": (_BAT, _FOREST_HARE_PAL), "cave_moth": (_GHOST, _CAVE_MOTH_PAL),
-               "songbird": (_BAT, _SONGBIRD_PAL), "deer": (_YETI, _DEER_PAL),
-               "desert_lizard": (_SCORPION, _DESERT_LIZARD_PAL), "marsh_heron": (_GHOST, _MARSH_HERON_PAL),
+               "forest_hare": (_FOREST_HARE, _FOREST_HARE_PAL), "cave_moth": (_CAVE_MOTH, _CAVE_MOTH_PAL),
+               "songbird": (_SONGBIRD, _SONGBIRD_PAL), "deer": (_DEER, _DEER_PAL),
+               "desert_lizard": (_DESERT_LIZARD, _DESERT_LIZARD_PAL), "marsh_heron": (_MARSH_HERON, _MARSH_HERON_PAL),
                "totem": (_TOTEM, _TOTEM_PAL),
                # "The Reforging" island guardians - shard pool (warm ember/rubble)
-               "ember_wisp": (_GHOST, _EMBER_WISP_PAL), "fury_shard": (_BAT, _FURY_SHARD_PAL),
-               "rubble_crawler": (_SCORPION, _RUBBLE_CRAWLER_PAL), "spite_spirit": (_GHOST, _SPITE_SPIRIT_PAL),
-               "shard_sentinel": (_TROLL, _SHARD_SENTINEL_PAL), "echo_knight": (_GHOUL, _ECHO_KNIGHT_PAL),
-               "shattered_golem": (_YETI, _SHATTERED_GOLEM_PAL), "fracture_hound": (_PANTHER, _FRACTURE_HOUND_PAL),
-               "stone_revenant": (_CAVE_LURKER, _STONE_REVENANT_PAL), "cinder_warden": (_SALAMANDER, _CINDER_WARDEN_PAL),
+               "ember_wisp": (_EMBER_WISP, _EMBER_WISP_PAL), "fury_shard": (_FURY_SHARD, _FURY_SHARD_PAL),
+               "rubble_crawler": (_RUBBLE_CRAWLER, _RUBBLE_CRAWLER_PAL), "spite_spirit": (_SPITE_SPIRIT, _SPITE_SPIRIT_PAL),
+               "shard_sentinel": (_SHARD_SENTINEL, _SHARD_SENTINEL_PAL), "echo_knight": (_ECHO_KNIGHT, _ECHO_KNIGHT_PAL),
+               "shattered_golem": (_SHATTERED_GOLEM, _SHATTERED_GOLEM_PAL), "fracture_hound": (_FRACTURE_HOUND, _FRACTURE_HOUND_PAL),
+               "stone_revenant": (_STONE_REVENANT, _STONE_REVENANT_PAL), "cinder_warden": (_CINDER_WARDEN, _CINDER_WARDEN_PAL),
                # choir pool (cool teal/coral/pearl)
-               "tide_wisp": (_GHOST, _TIDE_WISP_PAL), "pearl_acolyte": (_GHOUL, _PEARL_ACOLYTE_PAL),
-               "brine_crawler": (_SCORPION, _BRINE_CRAWLER_PAL), "abyssal_chorister": (_BAT, _ABYSSAL_CHORISTER_PAL),
-               "coral_sentinel": (_TROLL, _CORAL_SENTINEL_PAL), "drowned_custodian": (_CAVE_LURKER, _DROWNED_CUSTODIAN_PAL),
-               "kelp_stalker": (_PANTHER, _KELP_STALKER_PAL), "shellback_guardian": (_YETI, _SHELLBACK_GUARDIAN_PAL),
-               "siren_wraith": (_HARPY, _SIREN_WRAITH_PAL), "choir_warden": (_FROST_WRAITH, _CHOIR_WARDEN_PAL)}
+               "tide_wisp": (_TIDE_WISP, _TIDE_WISP_PAL), "pearl_acolyte": (_PEARL_ACOLYTE, _PEARL_ACOLYTE_PAL),
+               "brine_crawler": (_BRINE_CRAWLER, _BRINE_CRAWLER_PAL), "abyssal_chorister": (_ABYSSAL_CHORISTER, _ABYSSAL_CHORISTER_PAL),
+               "coral_sentinel": (_CORAL_SENTINEL, _CORAL_SENTINEL_PAL), "drowned_custodian": (_DROWNED_CUSTODIAN, _DROWNED_CUSTODIAN_PAL),
+               "kelp_stalker": (_KELP_STALKER, _KELP_STALKER_PAL), "shellback_guardian": (_SHELLBACK_GUARDIAN, _SHELLBACK_GUARDIAN_PAL),
+               "siren_wraith": (_SIREN_WRAITH, _SIREN_WRAITH_PAL), "choir_warden": (_CHOIR_WARDEN, _CHOIR_WARDEN_PAL)}
 
 
 def _validate_grids(named_grids):
