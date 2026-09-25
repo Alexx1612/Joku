@@ -26,3 +26,7 @@ achievements/
 characters/
 friends/
 vaults/
+
+# Local client settings (options menu)
+settings.json
+settings.json.tmp

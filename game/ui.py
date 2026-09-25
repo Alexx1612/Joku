@@ -286,24 +286,47 @@ def pet_panel_rect(player):
     drag-and-drop feed hit-test) can both no-op cleanly."""
     if getattr(player, "pet", None) is None:
         return None
-    h = 30 + PET_PANEL_ROW_H * 3 + 20
+    h = 30 + PET_PANEL_ROW_H * 3 + 26 + 20 + 34
     return pygame.Rect(_panel_block_x0(), _dock_top_y(), PLAYER_PANEL_WIDTH, h)
 
 
-def pet_feed_target_rect(player):
-    """Same rect as the pet panel body - dragging any backpack item onto it
-    feeds the pet (see entities.Player.feed_pet), the same drag-and-drop-onto-
-    a-target convention every other slot in this file already uses."""
-    return pet_panel_rect(player)
+def pet_pack_button_rect(player):
+    """The pet panel's "Pack" button (active pet -> carrier item, see
+    Player.pack_pet) - None with no pet, like pet_panel_rect."""
+    rect = pet_panel_rect(player)
+    if rect is None:
+        return None
+    return pygame.Rect(rect.right - 8 - 90, rect.bottom - 8 - 24, 90, 24)
 
 
-def draw_pet_panel(surf, player, dragging=False):
+def pet_tab_rect():
+    """The "Pet" label in the Inventory/Pet tab strip (see draw_panel_tabs)."""
+    x0 = _panel_block_x0()
+    y0 = _player_panel_top_y() + PLAYER_PANEL_HEIGHT + 14
+    seg_w = PLAYER_PANEL_WIDTH // 2
+    return pygame.Rect(x0 + seg_w, y0 - 2, seg_w, PANEL_TAB_STRIP_H + 2)
+
+
+def pet_feed_target_rect(player, mode="pet"):
+    """Where a dragged backpack item can be dropped to feed the pet (see
+    entities.Player.feed_pet - food, or a maxed carrier to fuse). In pet mode
+    that's the whole pet panel; in inventory mode it's the "Pet" tab label
+    instead - the pet panel's rect overlaps the equip bar + first backpack row
+    there, and hit-testing it would swallow every drop onto those slots."""
+    if getattr(player, "pet", None) is None:
+        return None
+    return pet_panel_rect(player) if mode == "pet" else pet_tab_rect()
+
+
+def draw_pet_panel(surf, player, dragging=False, mouse_pos=(-1, -1)):
     """Compact pet-info HUD panel: the pet's 3 independently-leveled ability
-    slots (heal/magic/attack - see entities.Pet) each with a level and a
-    progress-to-next-level bar, plus a feed hint. `dragging`: a backpack item
-    is currently being dragged, so the panel's border lights up as a valid
-    drop target, matching how equip slots highlight during a drag."""
-    from game.items import PET_KINDS, PET_RARITY_MAX_LEVEL, PET_LEVEL_XP_STEP
+    slots (heal/magic/attack - see entities.Pet) each with a level, its current
+    effective numbers and a progress-to-next-level bar, the pet's Bond (lifetime
+    investment, see items.pet_bond_level) and a Pack button. `dragging`: a
+    backpack item is currently being dragged, so the panel's border lights up as
+    a valid drop target (food, or a maxed carrier to fuse)."""
+    from game.items import (PET_KINDS, PET_RARITY_MAX_LEVEL, PET_LEVEL_XP_STEP, PET_RARITY_COLORS,
+                            pet_ability_stats, pet_bond_progress)
     pet = getattr(player, "pet", None)
     if pet is None:
         return
@@ -311,27 +334,39 @@ def draw_pet_panel(surf, player, dragging=False):
     panel, _ = _ornate_panel(rect.w, rect.h, border=CHROME_GOLD if dragging else CHROME_GOLD_DIM)
     d = PET_KINDS.get(pet.kind, {})
     name = d.get("name", pet.kind.title())
-    title = _FONT_S.render(f"Pet: {name} ({pet.rarity})", True, (230, 210, 150))
+    title = _FONT_S.render(f"{name} ({pet.rarity})", True, PET_RARITY_COLORS.get(pet.rarity, (230, 210, 150)))
     panel.blit(title, (8, 6))
     max_level = PET_RARITY_MAX_LEVEL.get(pet.rarity, 10)
-    labels = {"heal": ("Heal", (110, 230, 140)), "magic": ("Magic", (120, 170, 255)),
-              "attack": ("Attack", (255, 170, 90))}
+    bond = getattr(pet, "bond", 0.0)
+    bond_lvl, bond_frac = pet_bond_progress(bond)
+    labels = {"heal": ("Heal", (110, 230, 140), "hp"), "magic": ("Magic", (120, 170, 255), "mp"),
+              "attack": ("Attack", (255, 170, 90), "dmg")}
     y = 28
     for key in ("heal", "magic", "attack"):
         st = pet.abilities[key]
-        label, color = labels[key]
+        label, color, unit = labels[key]
         lvl = st["level"]
+        mag, cd = pet_ability_stats(key, lvl, bond_lvl)
         txt = _FONT_S.render(f"{label} Lv{lvl}", True, (200, 200, 215))
         panel.blit(txt, (8, y))
+        eff = _FONT_S.render(f"{mag}{unit}/{cd:.1f}s" + ("  MAX" if lvl >= max_level else ""), True,
+                             (255, 220, 120) if lvl >= max_level else (160, 160, 175))
+        panel.blit(eff, (rect.w - 8 - eff.get_width(), y))
         if lvl < max_level:
             frac = min(1.0, st["xp"] / PET_LEVEL_XP_STEP)
             _bar(panel, 8, y + 15, rect.w - 16, 5, frac, color, (40, 40, 46), gloss=False)
-        else:
-            maxed = _FONT_S.render("MAX", True, (255, 220, 120))
-            panel.blit(maxed, (rect.w - 8 - maxed.get_width(), y))
         y += PET_PANEL_ROW_H
-    hint = _FONT_S.render("Drag an item here to feed", True, (150, 150, 165))
+    bt = _FONT_S.render(f"Bond {bond_lvl}  (x{1 + 0.04 * bond_lvl:.2f} power)", True, (255, 160, 200))
+    panel.blit(bt, (8, y + 2))
+    _bar(panel, 8, y + 18, rect.w - 16, 5, bond_frac, (255, 120, 190), (40, 40, 46), gloss=False)
+    y += 26
+    hint = _FONT_S.render("Drop food, or a maxed carrier", True, (150, 150, 165))
     panel.blit(hint, (rect.w // 2 - hint.get_width() // 2, y + 2))
+    btn = pet_pack_button_rect(player).move(-rect.x, -rect.y)
+    local_mouse = (mouse_pos[0] - rect.x, mouse_pos[1] - rect.y)
+    _bevel_button(panel, btn, (70, 80, 120), hovered=btn.collidepoint(local_mouse))
+    pt = _FONT_S.render("Pack", True, (225, 230, 255))
+    panel.blit(pt, (btn.centerx - pt.get_width() // 2, btn.centery - pt.get_height() // 2))
     surf.blit(panel, (rect.x, rect.y))
 
 
@@ -360,25 +395,34 @@ def _dock_top_y():
     return _player_panel_top_y() + PLAYER_PANEL_HEIGHT + 14 + PANEL_TAB_STRIP_H + 6
 
 
-def draw_panel_tabs(surf, active_mode):
+def draw_panel_tabs(surf, active_mode, feed_drop_hint=False):
     """A small RotMG-style tab strip labeling which of Inventory/Pet is
     currently shown in the switched dock slot below (see draw_inventory/
     draw_pet_panel - only one of the two is ever drawn per frame; this is
-    what makes the Tab key discoverable instead of a hidden keybind)."""
+    what makes the Tab key discoverable instead of a hidden keybind).
+    feed_drop_hint: an item is being dragged in inventory mode - the Pet tab is
+    then the feed drop target (see pet_feed_target_rect), so it lights up."""
     x0 = _panel_block_x0()
     y0 = _player_panel_top_y() + PLAYER_PANEL_HEIGHT + 14
     w = PLAYER_PANEL_WIDTH
     seg_w = w // 2
+    if feed_drop_hint and active_mode == "inventory":
+        tab = pet_tab_rect()
+        pygame.draw.rect(surf, (70, 55, 25), tab, border_radius=4)
+        pygame.draw.rect(surf, CHROME_GOLD, tab, width=1, border_radius=4)
     for i, (label, mode) in enumerate((("Inventory", "inventory"), ("Pet", "pet"))):
         active = mode == active_mode
         color = (230, 210, 150) if active else (120, 120, 132)
+        if feed_drop_hint and mode == "pet" and active_mode == "inventory":
+            label, color = "Feed pet", (255, 220, 120)
         t = _FONT_S.render(label, True, color)
         surf.blit(t, (x0 + i * seg_w + seg_w // 2 - t.get_width() // 2, y0))
         if active:
             pygame.draw.line(surf, color, (x0 + i * seg_w + 4, y0 + t.get_height() + 1),
                               (x0 + (i + 1) * seg_w - 4, y0 + t.get_height() + 1), 2)
-    hint = _FONT_S.render("[Tab]", True, (100, 100, 112))
-    surf.blit(hint, (x0 + w - hint.get_width(), y0))
+    if not (feed_drop_hint and active_mode == "inventory"):
+        hint = _FONT_S.render("[Tab]", True, (100, 100, 112))
+        surf.blit(hint, (x0 + w - hint.get_width(), y0))
 
 
 def equip_slot_rects():
@@ -397,10 +441,11 @@ def equip_slot_rects():
     return rects
 
 
-def draw_inventory(surf, player, mouse_pos, dragging_from=None):
+def draw_inventory(surf, player, mouse_pos, dragging_from=None, highlighted=()):
     """dragging_from: the (kind, index_or_slot) currently being dragged, if any - so its
     origin slot can be dimmed instead of showing the item twice (once in-place, once
-    following the cursor)."""
+    following the cursor). highlighted: backpack indices to mark (items offered in an
+    open trade - they stay in the backpack until the swap, see server.py's Trade)."""
     equip_items = {"weapon": player.weapon, "ability": player.ability,
                     "armor": player.armor, "ring": player.ring}
     hovered = None
@@ -430,6 +475,8 @@ def draw_inventory(surf, player, mouse_pos, dragging_from=None):
             _tier_badge(surf, rect, it)
             if rect.collidepoint(mouse_pos):
                 hovered = it
+        if i in highlighted:  # offered in the open trade
+            pygame.draw.rect(surf, (235, 200, 80), rect, width=2, border_radius=3)
     if hovered and dragging_from is None:
         _tooltip(surf, mouse_pos, hovered)
 
@@ -514,6 +561,17 @@ def _tooltip(surf, pos, item):
     if item.proc:
         lines.append(item.proc)
         stat_line_count += 1
+    if item.pet_state:
+        from game.items import PET_KINDS, PET_RARITY_MAX_LEVEL, pet_bond_level, pet_is_maxed
+        rarity = PET_KINDS.get(item.pet_kind, {}).get("rarity", "common")
+        levels = item.pet_state.get("levels", {})
+        cap = PET_RARITY_MAX_LEVEL.get(rarity, 10)
+        bond_lvl = pet_bond_level(item.pet_state.get("bond", 0.0))
+        lines.append(f"{rarity.title()} pet" + ("  - MAXED" if pet_is_maxed(rarity, levels) else ""))
+        lines.append("Lv " + " ".join(f"{k[0].upper()}{levels.get(k, 1)}" for k in ("heal", "magic", "attack"))
+                     + f"  (cap {cap})")
+        lines.append(f"Bond {bond_lvl} (x{1 + 0.04 * bond_lvl:.2f} power)")
+        stat_line_count += 3
     desc_lines = _wrap_text(item.description, _FONT_S, TOOLTIP_WRAP_WIDTH) if item.description else []
     lines.extend(desc_lines)
     w = max(max(_FONT_S.size(l)[0] for l in lines) + 16, 120)
@@ -850,96 +908,160 @@ def draw_damage_popups(surf, cam, popups):
 
 HELP_LINES = [
     ("Move", "WASD / Arrows"),
-    ("Aim", "Mouse"),
-    ("Fire", "Left click"),
+    ("Aim / fire", "Mouse / Left click"),
     ("Auto-fire toggle", "I"),
-    ("Use/equip item", "1-8"),
-    ("Interact", "Enter"),
-    ("Nexus", "R"),
+    ("Ability", "Space"),
+    ("Dash / roll", "Shift"),
+    ("Use / equip slot", "1-8, double-click"),
+    ("Move items", "Click + drag"),
+    ("Drop item", "Right-click slot"),
+    ("Open ground bag", "Right-click"),
+    ("Feed pet", "Drag item onto pet"),
+    ("Pet / inventory panel", "Tab"),
+    ("Fish / wish / talk", "F"),
+    ("Quest log (story)", "J"),
+    ("Chat / enter portal", "Enter"),
+    ("Nexus / leave dungeon", "R"),
     ("Rotate camera", "Q / E"),
     ("Reset camera", "X"),
-    ("Fullscreen (wider view)", "F11"),
-    ("Full map / zoom", "M, scroll or +/-"),
-    ("This menu", "O"),
-    ("Quit / close menu", "Esc"),
+    ("Full map / zoom", "M, scroll, +/-"),
+    ("Fullscreen", "F11"),
+    ("Friends (co-op)", "L"),
+    ("Options menu", "O"),
+    ("Close / quit", "Esc"),
 ]
-HELP_NOTE = "Aim gets a soft assist near enemies. Click a backpack slot works too."
+HELP_NOTE = ("Chat commands: /nexus /realm /vault /bazaar /trade /help "
+             "(co-op also: /w <name> <msg>, /crew). Aim gets a soft assist near enemies.")
+
+_OPT_ROW_H = 26
+_OPT_HEADER_H = 24
+_OPT_LEFT_W = 400
+_OPT_SLIDER_W = 120
+_OPT_TITLE = "Options  (Up/Down select, Left/Right change, Enter)"
+
+
+def _as_rows(menu_items):
+    """Accepts options_menu.Row objects or legacy (label, action) pairs - the
+    latter become plain action rows, so older callers/tests keep working."""
+    from game.options_menu import Row
+    return [item if isinstance(item, Row) else Row("action", item[0], "", action=item[1])
+            for item in (menu_items or [])]
 
 
 def _help_panel_geometry(menu_items=None):
-    """Computes the help/options panel's (x, y, w, h, col_w, rows_per_col,
-    menu_h, note_lines) - factored out of draw_help_overlay so
-    help_close_button_rect() can hit-test the exact same rect the panel is
-    actually drawn at, instead of duplicating/guessing the size math."""
+    """(x, y, w, h, layout, content_y0, controls_x, col_w, note_lines) - one
+    place for the options panel's size math so the draw and every hit-test
+    helper below agree on the exact same rects. `layout` is a list of
+    ("header", section, local_y) / ("row", row_index, local_y) entries for
+    the settings column; the controls reference sits in a column to its right."""
     pad = 16
-    menu_items = menu_items or []
+    rows = _as_rows(menu_items)
+    content_y0 = 2 + _FONT_S.get_height() + 8 + 10
+    layout = []
+    ly = content_y0
+    section = None
+    for i, row in enumerate(rows):
+        if row.section and row.section != section:
+            section = row.section
+            layout.append(("header", section, ly))
+            ly += _OPT_HEADER_H
+        layout.append(("row", i, ly))
+        ly += _OPT_ROW_H
+    left_h = ly - content_y0
 
-    cols = 2
-    rows_per_col = math.ceil(len(HELP_LINES) / cols)
     col_w = 0
     for label, keys in HELP_LINES:
-        label_w = _FONT_S.size(label)[0]
-        keys_w = _FONT_S.size(keys)[0]
-        col_w = max(col_w, label_w + keys_w + 28)
-    controls_w = col_w * cols + pad * (cols - 1)
+        col_w = max(col_w, _FONT_S.size(label)[0] + _FONT_S.size(keys)[0] + 28)
+    controls_h = 26 + len(HELP_LINES) * 19
 
-    menu_w = max((_FONT_S.size(label)[0] for label, _ in menu_items), default=0) + 40
-    title_w = _FONT_M.size("Controls")[0]
-    w = max(controls_w, menu_w, title_w) + pad * 2
-
-    menu_h = (26 * len(menu_items) + 30) if menu_items else 0
-    controls_h = 26 + rows_per_col * 20
+    controls_x = pad + (_OPT_LEFT_W + pad * 2 if rows else 0)
+    w = max(controls_x + col_w + pad, _FONT_S.size(_OPT_TITLE)[0] + 70)
     note_lines = _wrap_lines(_FONT_S, HELP_NOTE, w - pad * 2) or [""]
-    h = menu_h + (14 if menu_items else 0) + controls_h + 6 + len(note_lines) * 16 + pad * 2
+    h = content_y0 + max(left_h, controls_h) + 14 + len(note_lines) * 16 + pad
 
     x = C.SCREEN_W // 2 - w // 2
-    y = min(max(20, C.SCREEN_H // 2 - h // 2), max(20, C.SCREEN_H - h - 20))
-    return x, y, w, h, col_w, rows_per_col, menu_h, note_lines
+    y = min(max(10, C.SCREEN_H // 2 - h // 2), max(10, C.SCREEN_H - h - 10))
+    return x, y, w, h, layout, content_y0, controls_x, col_w, note_lines
 
 
 def help_close_button_rect(menu_items=None):
-    """Absolute screen rect of the help overlay's X close button, top-right
-    corner of the panel - same click-to-close pattern as the bag window/
-    friends panel, so the options menu doesn't rely on O/Esc alone."""
-    x, y, w, h, *_ = _help_panel_geometry(menu_items)
+    """Absolute screen rect of the options panel's X close button (top-right)."""
+    x, y, w, *_ = _help_panel_geometry(menu_items)
     return pygame.Rect(x + w - 26, y + 6, 18, 18)
 
 
+def _row_local_rect(ly):
+    return pygame.Rect(16 - 4, ly - 2, _OPT_LEFT_W + 8, _OPT_ROW_H - 2)
+
+
+def _slider_local_rect(row_rect):
+    return pygame.Rect(row_rect.right - 60 - _OPT_SLIDER_W, row_rect.centery - 4, _OPT_SLIDER_W, 8)
+
+
 def help_menu_item_rects(menu_items=None):
-    """Absolute screen rects for each row of the options overlay's
-    interactive menu list (menu_items, (label, action) pairs), mirroring
-    the local-space rect draw_help_overlay highlights for the selected row
-    - lets the mouse-down handler hit-test a click the same way it already
-    does for every other panel's *_rects() helper."""
-    menu_items = menu_items or []
-    if not menu_items:
+    """Absolute screen rects for each settings row, in menu_items order."""
+    rows = _as_rows(menu_items)
+    if not rows:
         return []
-    pad = 16
-    x, y, w, h, col_w, rows_per_col, menu_h, note_lines = _help_panel_geometry(menu_items)
-    body_y0 = pad
-    rects = []
-    for i in range(len(menu_items)):
-        ly = body_y0 + 30 + i * 26
-        rects.append(pygame.Rect(x + pad - 4, y + ly - 2, w - pad * 2 + 8, 24))
+    x, y, w, h, layout, *_ = _help_panel_geometry(rows)
+    rects = [None] * len(rows)
+    for kind, ref, ly in layout:
+        if kind == "row":
+            rects[ref] = _row_local_rect(ly).move(x, y)
     return rects
 
 
+def help_slider_rect(menu_items, index):
+    """Absolute rect of a slider row's bar (None for non-slider rows) - the
+    click-to-set target options_menu.handle_click uses."""
+    rows = _as_rows(menu_items)
+    if not (0 <= index < len(rows)) or rows[index].kind != "slider":
+        return None
+    return _slider_local_rect(help_menu_item_rects(rows)[index])
+
+
+def _draw_row_value(panel, row, row_rect, selected):
+    """The right-hand value widget of one settings row, in panel-local coords."""
+    right = row_rect.right - 8
+    cy = row_rect.centery
+    if row.kind == "slider":
+        bar = _slider_local_rect(row_rect)
+        frac = max(0.0, min(1.0, row.get()))
+        pygame.draw.rect(panel, (40, 38, 52), bar, border_radius=4)
+        if frac > 0:
+            pygame.draw.rect(panel, (120, 190, 230) if selected else (95, 150, 190),
+                             (bar.x, bar.y, max(4, int(bar.w * frac)), bar.h), border_radius=4)
+        pygame.draw.rect(panel, CHROME_GOLD_DIM, bar, width=1, border_radius=4)
+        knob_x = bar.x + int(bar.w * frac)
+        pygame.draw.circle(panel, (240, 228, 200), (knob_x, cy), 6)
+        pygame.draw.circle(panel, CHROME_GOLD, (knob_x, cy), 6, 1)
+        txt = _FONT_S.render(row.value_text(), True, (220, 220, 230))
+        panel.blit(txt, (right - txt.get_width(), cy - txt.get_height() // 2))
+    elif row.kind == "toggle":
+        on = bool(row.get())
+        pill = pygame.Rect(right - 50, cy - 9, 50, 18)
+        pygame.draw.rect(panel, (60, 130, 80) if on else (70, 60, 70), pill, border_radius=9)
+        pygame.draw.rect(panel, CHROME_GOLD_DIM, pill, width=1, border_radius=9)
+        knob = (pill.right - 9, cy) if on else (pill.x + 9, cy)
+        pygame.draw.circle(panel, (240, 236, 220), knob, 6)
+        txt = _FONT_S.render("ON" if on else "OFF", True, (235, 240, 235) if on else (190, 180, 190))
+        tx = pill.x + 7 if on else pill.right - 7 - txt.get_width()
+        panel.blit(txt, (tx, cy - txt.get_height() // 2))
+    elif row.kind == "cycle":
+        txt = _FONT_S.render(f"<  {row.value_text()}  >", True, (255, 235, 170) if selected else (200, 210, 225))
+        panel.blit(txt, (right - txt.get_width(), cy - txt.get_height() // 2))
+
+
 def draw_help_overlay(surf, menu_items=None, selected_idx=0, mouse_pos=(-1, -1)):
-    """A real, centered options menu - RotMG has an actual O-key options screen with
-    real settings on it, not just a controls reference; this shows both: an
-    interactive Up/Down-navigable list of toggles/actions (menu_items, a list of
-    (label, action) pairs) in its own two-column layout, then the full controls
-    reference below it in its own two-column grid. Every dimension here is measured
-    from the actual text (not a guessed fixed width) and the whole panel is centered
-    and clamped to fit the screen, so nothing is ever cut off or runs off-screen
-    regardless of resolution or how many menu items are showing that frame - the
-    previous version used a fixed 300px-wide side panel that both didn't reliably
-    fit its own text and could overflow past the bottom of the screen."""
+    """The O-key options screen: settings grouped by section on the left
+    (sliders, ON/OFF toggles, < choice > cyclers, plain actions - see
+    game/options_menu.py for the model/input side), the full controls
+    reference on the right, and chat commands along the bottom. All sizes come
+    from _help_panel_geometry so drawing and hit-testing never disagree."""
     pad = 16
-    menu_items = menu_items or []
-    section_gap = 14
-    x, y, w, h, col_w, rows_per_col, menu_h, note_lines = _help_panel_geometry(menu_items)
-    panel, _ = _ornate_panel(w, h)
+    rows = _as_rows(menu_items)
+    x, y, w, h, layout, content_y0, controls_x, col_w, note_lines = _help_panel_geometry(rows)
+    panel, _ = _ornate_panel(w, h, title=_OPT_TITLE)
 
     close = pygame.Rect(w - 26, 6, 18, 18)
     hovered_close = close.collidepoint(mouse_pos[0] - x, mouse_pos[1] - y)
@@ -951,38 +1073,73 @@ def draw_help_overlay(surf, menu_items=None, selected_idx=0, mouse_pos=(-1, -1))
     pygame.draw.line(panel, (255, 235, 235), (close.x + close.w - m, close.y + m),
                       (close.x + m, close.y + close.h - m), width=2)
 
-    body_y0 = pad
-    if menu_items:
-        mtitle = _FONT_M.render("Menu (Up/Down, Enter)", True, (230, 220, 180))
-        panel.blit(mtitle, (pad, body_y0))
-        local_mouse = (mouse_pos[0] - x, mouse_pos[1] - y)
-        for i, (label, _action) in enumerate(menu_items):
-            ly = body_y0 + 30 + i * 26
-            row_rect = pygame.Rect(pad - 4, ly - 2, w - pad * 2 + 8, 24)
-            selected = i == selected_idx
-            hovered = row_rect.collidepoint(local_mouse)
-            if selected or hovered:
-                fill = (90, 80, 130, 220) if selected else (70, 65, 95, 180)
-                pygame.draw.rect(panel, fill, row_rect, border_radius=4)
-            color = (255, 235, 170) if selected else (220, 220, 230) if hovered else (200, 200, 215)
-            prefix = "> " if selected else "  "
-            panel.blit(_FONT_S.render(prefix + label, True, color), (pad, ly))
-        body_y0 += menu_h + section_gap
-        pygame.draw.line(panel, (90, 90, 105), (pad, body_y0 - section_gap // 2),
-                          (w - pad, body_y0 - section_gap // 2), 1)
+    local_mouse = (mouse_pos[0] - x, mouse_pos[1] - y)
+    for kind, ref, ly in layout:
+        if kind == "header":
+            head = ref.upper()
+            panel.blit(_FONT_S.render(head, True, CHROME_GOLD), (pad, ly + 5))
+            pygame.draw.line(panel, CHROME_GOLD_DIM, (pad + _FONT_S.size(head)[0] + 8, ly + 13),
+                             (pad + _OPT_LEFT_W, ly + 13), 1)
+            continue
+        row = rows[ref]
+        row_rect = _row_local_rect(ly)
+        selected = ref == selected_idx
+        hovered = row_rect.collidepoint(local_mouse)
+        if selected or hovered:
+            fill = (90, 80, 130, 220) if selected else (70, 65, 95, 180)
+            pygame.draw.rect(panel, fill, row_rect, border_radius=4)
+        color = (255, 235, 170) if selected else (220, 220, 230) if hovered else (200, 200, 215)
+        prefix = "> " if selected else "  "
+        label = _FONT_S.render(prefix + row.label, True, color)
+        panel.blit(label, (pad, row_rect.centery - label.get_height() // 2))
+        _draw_row_value(panel, row, row_rect, selected)
 
-    title = _FONT_M.render("Controls (O to close)", True, (230, 220, 180))
-    panel.blit(title, (pad, body_y0))
+    note_y = h - pad - len(note_lines) * 16
+    if rows:
+        sep_x = controls_x - pad
+        pygame.draw.line(panel, (90, 90, 105), (sep_x, content_y0), (sep_x, note_y - 12), 1)
+    panel.blit(_FONT_M.render("Controls", True, (230, 220, 180)), (controls_x, content_y0))
     for i, (label, keys) in enumerate(HELP_LINES):
-        col, row = divmod(i, rows_per_col)
-        lx = pad + col * (col_w + pad)
-        ly = body_y0 + 26 + row * 20
-        panel.blit(_FONT_S.render(label, True, (190, 190, 205)), (lx, ly))
+        ly = content_y0 + 26 + i * 19
+        panel.blit(_FONT_S.render(label, True, (190, 190, 205)), (controls_x, ly))
         keytxt = _FONT_S.render(keys, True, (150, 210, 170))
-        panel.blit(keytxt, (lx + col_w - keytxt.get_width(), ly))
-    note_y = body_y0 + 26 + rows_per_col * 20 + 6
+        panel.blit(keytxt, (controls_x + col_w - keytxt.get_width(), ly))
+    pygame.draw.line(panel, (90, 90, 105), (pad, note_y - 7), (w - pad, note_y - 7), 1)
     for i, line in enumerate(note_lines):
-        panel.blit(_FONT_S.render(line, True, (140, 140, 155)), (pad, note_y + i * 16))
+        panel.blit(_FONT_S.render(line, True, (150, 150, 165)), (pad, note_y + i * 16))
+    surf.blit(panel, (x, y))
+
+
+# ------------------------------------------------------------ quit confirm --
+def _quit_confirm_geometry():
+    w, h = 340, 136
+    return (C.SCREEN_W - w) // 2, (C.SCREEN_H - h) // 2, w, h
+
+
+def quit_confirm_button_rects():
+    """(quit_rect, stay_rect) in absolute screen coords."""
+    x, y, w, h = _quit_confirm_geometry()
+    return (pygame.Rect(x + 40, y + h - 44, 110, 30), pygame.Rect(x + w - 150, y + h - 44, 110, 30))
+
+
+def draw_quit_confirm(surf, mouse_pos=(-1, -1), message="Quit the game?"):
+    """Esc with nothing else open asks first instead of instantly closing."""
+    dim = pygame.Surface((C.SCREEN_W, C.SCREEN_H), pygame.SRCALPHA)
+    dim.fill((0, 0, 0, 120))
+    surf.blit(dim, (0, 0))
+    x, y, w, h = _quit_confirm_geometry()
+    panel, content_y0 = _ornate_panel(w, h, title="Leaving so soon?")
+    msg = _FONT_M.render(message, True, (235, 225, 200))
+    panel.blit(msg, (w // 2 - msg.get_width() // 2, content_y0 + 10))
+    hint = _FONT_S.render("Enter / Y = quit    Esc / N = stay", True, (150, 150, 165))
+    panel.blit(hint, (w // 2 - hint.get_width() // 2, content_y0 + 36))
+    for rect, text, base in zip(quit_confirm_button_rects(), ("Quit", "Stay"), ((130, 60, 60), (60, 90, 130))):
+        local = rect.move(-x, -y)
+        hovered = rect.collidepoint(mouse_pos)
+        pygame.draw.rect(panel, tuple(min(255, c + 40) for c in base) if hovered else base, local, border_radius=5)
+        pygame.draw.rect(panel, CHROME_GOLD, local, width=1, border_radius=5)
+        t = _FONT_M.render(text, True, (245, 240, 230))
+        panel.blit(t, (local.centerx - t.get_width() // 2, local.centery - t.get_height() // 2))
     surf.blit(panel, (x, y))
 
 
@@ -1057,8 +1214,7 @@ def draw_echo_shop_overlay(surf, echoes, menu_items=None, selected_idx=0, mouse_
     surf.blit(panel, (x, y))
 
 
-def draw_item_feed(surf, messages):
-    y = 90
+def draw_item_feed(surf, messages, y=90):
     for msg, color, t in messages:
         alpha = min(255, int(255 * min(1.0, t)))
         txt = _FONT_M.render(msg, True, color)
@@ -1350,6 +1506,12 @@ def trade_offer_slot_rects(mine=True):
     return rects
 
 
+def trade_my_offer_area_rect():
+    """The whole "my offer" grid - dropping a dragged backpack item here offers it."""
+    rects = trade_offer_slot_rects(mine=True)
+    return rects[0].unionall(rects[1:]).inflate(12, 12)
+
+
 def trade_accept_button_rect():
     x0, y0 = _trade_panel_origin()
     return pygame.Rect(x0 + 20, y0 + TRADE_PANEL_H - 40, 130, 30)
@@ -1369,7 +1531,7 @@ def draw_trade_panel(surf, trade, you_name="You", mouse_pos=(-1, -1)):
     panel, _ = _ornate_panel(TRADE_PANEL_W, TRADE_PANEL_H)
     title = _FONT_M.render(f"Trading with {trade['other_name']}", True, (230, 210, 150))
     panel.blit(title, (TRADE_PANEL_W // 2 - title.get_width() // 2, 10))
-    pygame.draw.line(panel, (90, 90, 105), (TRADE_PANEL_W // 2, 40), (TRADE_PANEL_W // 2, TRADE_PANEL_H - 50), 1)
+    pygame.draw.line(panel, (90, 90, 105), (TRADE_PANEL_W // 2, 40), (TRADE_PANEL_W // 2, TRADE_PANEL_H - 134), 1)
 
     mine_ok, their_ok = trade["my_accept"], trade["their_accept"]
     mine_label = _FONT_S.render(f"{you_name} ({'accepted' if mine_ok else 'offering'})", True,
@@ -1402,11 +1564,14 @@ def draw_trade_panel(surf, trade, you_name="You", mouse_pos=(-1, -1)):
                 if slot_rect.collidepoint(local_mouse):
                     hovered_item = it
 
+    if trade.get("status"):
+        st = _FONT_S.render(trade["status"], True, (255, 150, 120))
+        panel.blit(st, (TRADE_PANEL_W // 2 - st.get_width() // 2, TRADE_PANEL_H - 128))
     if trade.get("timer") is not None:
         t_txt = _FONT_M.render(f"Confirming in {trade['timer']:.1f}s...", True, (255, 220, 120))
-        panel.blit(t_txt, (TRADE_PANEL_W // 2 - t_txt.get_width() // 2, TRADE_PANEL_H - 108))
+        panel.blit(t_txt, (TRADE_PANEL_W // 2 - t_txt.get_width() // 2, TRADE_PANEL_H - 106))
 
-    hint = _FONT_S.render("Click backpack to offer, an offered item to withdraw it", True, (150, 150, 165))
+    hint = _FONT_S.render("Click/drag items to offer, click an offer to remove", True, (150, 150, 165))
     panel.blit(hint, (TRADE_PANEL_W // 2 - hint.get_width() // 2, TRADE_PANEL_H - 80))
 
     accept_rect = pygame.Rect(20, TRADE_PANEL_H - 40, 130, 30)
@@ -1422,6 +1587,89 @@ def draw_trade_panel(surf, trade, you_name="You", mouse_pos=(-1, -1)):
     surf.blit(panel, (x0, y0))
     if hovered_item is not None:
         _tooltip(surf, mouse_pos, hovered_item)
+
+
+TRADE_INVITE_W, TRADE_INVITE_H = 340, 84
+
+
+def _trade_invite_origin():
+    return (C.SCREEN_W // 2 - TRADE_INVITE_W // 2, 64)
+
+
+def trade_invite_button_rects():
+    """(accept_rect, decline_rect) of the incoming-trade-request prompt, screen space."""
+    x0, y0 = _trade_invite_origin()
+    return (pygame.Rect(x0 + 30, y0 + TRADE_INVITE_H - 38, 120, 28),
+            pygame.Rect(x0 + TRADE_INVITE_W - 150, y0 + TRADE_INVITE_H - 38, 120, 28))
+
+
+def draw_trade_invite(surf, invite, mouse_pos=(-1, -1)):
+    """invite: the server's {"from_name", "time_left"} (see server._trade_invite_for)."""
+    x0, y0 = _trade_invite_origin()
+    panel, _ = _ornate_panel(TRADE_INVITE_W, TRADE_INVITE_H)
+    surf.blit(panel, (x0, y0))
+    title = _FONT_S.render(f"{invite['from_name']} wants to trade ({int(invite.get('time_left', 0))}s)",
+                           True, (230, 210, 150))
+    surf.blit(title, (x0 + TRADE_INVITE_W // 2 - title.get_width() // 2, y0 + 12))
+    for rect, label, color in zip(trade_invite_button_rects(), ("Accept", "Decline"),
+                                  ((60, 140, 70), (140, 55, 55))):
+        _bevel_button(surf, rect, color, hovered=rect.collidepoint(mouse_pos))
+        t = _FONT_S.render(label, True, (240, 240, 240))
+        surf.blit(t, (rect.centerx - t.get_width() // 2, rect.centery - t.get_height() // 2))
+
+
+INSPECT_PANEL_W, INSPECT_PANEL_H = 300, 184
+
+
+def inspect_panel_rect():
+    return pygame.Rect(16, C.SCREEN_H // 2 - INSPECT_PANEL_H // 2, INSPECT_PANEL_W, INSPECT_PANEL_H)
+
+
+def inspect_close_button_rect():
+    r = inspect_panel_rect()
+    return pygame.Rect(r.right - 30, r.top + 6, 24, 24)
+
+
+def inspect_slot_rects():
+    r = inspect_panel_rect()
+    return [pygame.Rect(r.x + 16 + i * (SLOT_SIZE + 8), r.y + 64, SLOT_SIZE, SLOT_SIZE) for i in range(4)]
+
+
+def draw_inspect_panel(surf, peer, mouse_pos=(-1, -1)):
+    """Another player's name/class/level, equipped gear (hover for tooltips) and
+    their real stat totals (peer.net_totals - see Player.from_net_state)."""
+    r = inspect_panel_rect()
+    panel, _ = _ornate_panel(r.w, r.h)
+    surf.blit(panel, r.topleft)
+    title = _FONT_M.render(peer.name, True, (230, 210, 150))
+    surf.blit(title, (r.x + 14, r.y + 10))
+    sub = _FONT_S.render(f"Level {peer.level} {peer.cls_name.title()}", True, (190, 190, 205))
+    surf.blit(sub, (r.x + 14, r.y + 36))
+    close = inspect_close_button_rect()
+    pygame.draw.rect(surf, (170, 70, 70) if close.collidepoint(mouse_pos) else (110, 55, 60), close, border_radius=4)
+    x_txt = _FONT_S.render("X", True, (255, 235, 235))
+    surf.blit(x_txt, (close.centerx - x_txt.get_width() // 2, close.centery - x_txt.get_height() // 2))
+    hovered = None
+    for rect, slot_type, label in zip(inspect_slot_rects(), ("weapon", "ability", "armor", "ring"), EQUIP_LABELS):
+        it = getattr(peer, slot_type, None)
+        _slot_frame(surf, rect, filled=it is not None, hovered=rect.collidepoint(mouse_pos))
+        if it is not None:
+            icon = sprites.item_icon(it.color, it.shape)
+            surf.blit(pygame.transform.smoothscale(icon, (SLOT_SIZE - 6, SLOT_SIZE - 6)), (rect.x + 3, rect.y + 3))
+            _tier_badge(surf, rect, it)
+            if rect.collidepoint(mouse_pos):
+                hovered = it
+        else:
+            lbl = _FONT_S.render(label, True, (70, 70, 78))
+            surf.blit(lbl, (rect.centerx - lbl.get_width() // 2, rect.centery - lbl.get_height() // 2))
+    totals = getattr(peer, "net_totals", {}) or {}
+    stats = [f"{k.upper()} {totals[k]}" for k in ("att", "deF", "spd", "dex", "vit", "wis") if k in totals]
+    for row in range(2):
+        line = "  ".join(stats[row * 3:row * 3 + 3])
+        t = _FONT_S.render(line, True, (180, 200, 220))
+        surf.blit(t, (r.x + 16, r.y + 64 + SLOT_SIZE + 12 + row * 18))
+    if hovered is not None:
+        _tooltip(surf, mouse_pos, hovered)
 
 
 SPEECH_BUBBLE_LIFETIME = 4.0
@@ -1968,3 +2216,104 @@ def draw_friends_panel(surf, friends_status, mouse_pos):
             surf.blit(t, (rect.centerx - t.get_width() // 2, rect.centery - t.get_height() // 2))
         rows.append((row_rect, tp_rect, trade_rect, remove_rect, name, online))
     return rows
+
+
+# ------------------------------------------------------------------ story --
+STORY_LOG_W = 250
+
+
+def draw_story_log(surf, log, expanded=True):
+    """The story quest log (game/story.StoryProgress.quest_log()) - docked left of
+    the player panel (see story_log_origin); bonus rooms show their own quest panel
+    instead. Collapsed = just the act title."""
+    if not log:
+        return
+    pad, bar_h, w = 10, 6, STORY_LOG_W
+    inner = w - pad * 2
+    title_lines = _wrap_text(log["title"], _FONT_S, inner)
+    hint_lines = _wrap_text(log["hint"], _FONT_S, inner) if expanded else []
+    rows = []
+    if expanded:
+        for o in log["objectives"]:
+            rows.append((_wrap_text(o["text"], _FONT_S, inner - 44), o["have"], o["need"]))
+    lh = _FONT_S.get_height() + 1
+    h = 10 + len(title_lines) * lh + 4
+    if expanded:
+        h += len(hint_lines) * lh + 6
+        for lines, _have, _need in rows:
+            h += len(lines) * lh + bar_h + 8
+    h += 6 + lh  # footer: key hint
+    panel, y = _ornate_panel(w, h)
+    y += 2
+    for line in title_lines:
+        panel.blit(_FONT_S.render(line, True, (245, 215, 130)), (pad, y))
+        y += lh
+    y += 4
+    if expanded:
+        for line in hint_lines:
+            panel.blit(_FONT_S.render(line, True, (170, 170, 185)), (pad, y))
+            y += lh
+        y += 6
+        for lines, have, need in rows:
+            done = have >= need
+            col = (140, 225, 150) if done else (225, 220, 230)
+            for i, line in enumerate(lines):
+                panel.blit(_FONT_S.render(("[x] " if done else "[ ] ") + line if i == 0 else "    " + line,
+                                          True, col), (pad, y))
+                y += lh
+            prog = _FONT_S.render(f"{have}/{need}", True, (205, 200, 215))
+            panel.blit(prog, (w - pad - prog.get_width(), y - lh))
+            _bar(panel, pad, y + 1, inner, bar_h, have / max(1, need),
+                 (120, 200, 120) if done else (230, 190, 90), (28, 24, 34))
+            y += bar_h + 8
+    foot = _FONT_S.render("J: " + ("hide details" if expanded else "quest details"), True, (120, 120, 135))
+    panel.blit(foot, (w - pad - foot.get_width(), y + 2))
+    surf.blit(panel, story_log_origin())
+
+
+def story_log_origin():
+    """Left of the right dock's player panel, top-aligned with it - clear of the
+    minimap/clock above, the dock itself, and the top-centre item feed."""
+    return _panel_block_x0() - 6 - STORY_LOG_W - 8, _player_panel_top_y() - 4
+
+
+def draw_story_banner(surf, text, time_left, duration=5.0):
+    """Big centered "ACT ... COMPLETE" banner - fades in/out over its lifetime."""
+    t = duration - time_left
+    alpha = int(255 * max(0.0, min(1.0, t / 0.4, time_left / 0.8)))
+    title = _FONT_L.render(text, True, (255, 215, 110))
+    sub = _FONT_M.render("Checkpoint saved - even death can't take this act back.", True, (225, 220, 230))
+    w = max(title.get_width(), sub.get_width()) + 60
+    h = title.get_height() + sub.get_height() + 34
+    panel, _ = _ornate_panel(w, h)
+    panel.blit(title, (w // 2 - title.get_width() // 2, 12))
+    panel.blit(sub, (w // 2 - sub.get_width() // 2, 18 + title.get_height()))
+    panel.set_alpha(alpha)
+    surf.blit(panel, (C.SCREEN_W // 2 - w // 2, int(C.SCREEN_H * 0.22)))
+
+
+CREDITS_SCROLL_SPEED = 38  # px/sec
+
+
+def credits_finished(t):
+    from game.story import CREDITS_LINES
+    return t * CREDITS_SCROLL_SPEED > C.SCREEN_H * 0.6 + len(CREDITS_LINES) * 34
+
+
+def draw_credits(surf, t):
+    """Scrolling end credits (game/story.CREDITS_LINES) over a dark veil."""
+    from game.story import CREDITS_LINES
+    veil = pygame.Surface((C.SCREEN_W, C.SCREEN_H), pygame.SRCALPHA)
+    veil.fill((6, 4, 12, min(235, int(t * 200))))
+    surf.blit(veil, (0, 0))
+    y0 = C.SCREEN_H - t * CREDITS_SCROLL_SPEED
+    for i, line in enumerate(CREDITS_LINES):
+        y = y0 + i * 34
+        if y < -40 or y > C.SCREEN_H + 10:
+            continue
+        font = _FONT_L if i == 0 else _FONT_M
+        color = (255, 215, 110) if i == 0 or line.isupper() else (225, 220, 235)
+        txt = font.render(line, True, color)
+        surf.blit(txt, (C.SCREEN_W // 2 - txt.get_width() // 2, int(y)))
+    skip = _FONT_S.render("Enter / Esc to skip", True, (140, 140, 155))
+    surf.blit(skip, (C.SCREEN_W - skip.get_width() - 16, C.SCREEN_H - skip.get_height() - 12))

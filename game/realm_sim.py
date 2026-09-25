@@ -16,6 +16,7 @@ import random
 import pygame
 
 from game import world
+from game import story
 from game import achievements
 from game import vfx
 from game import crews
@@ -322,7 +323,17 @@ DUNGEON_THEMES = {
     "wind_spire": dict(label="Wind Spire", floor=world.STONE, wall=world.WALL_SPIRE,
                         kinds=["harpy", "scorpion", "bat", "cliff_strider", "dune_stalker"],
                         weights=[25, 20, 15, 20, 20], bosses=["boss", "void_reaper", "sand_wyrm"]),
+    # the story finale (game/story.py) - never dropped as a shard (not in THEME_FOR_KIND),
+    # only opened by Father Given once Act III is done. A short gauntlet ending in the
+    # Mad God, whose phase 2 spawns on the spot when phase 1 dies (see _reward).
+    "forge": dict(label="The Forge", floor=world.ASH, wall=world.WALL_EMBER,
+                  kinds=["salamander", "cinder_wisp", "imp", "ghoul", "husk_wanderer"],
+                  weights=[25, 20, 20, 20, 15], bosses=["mad_god"]),
 }
+FORGE_DIFFICULTY = "Medium"
+STORY_CREDIT_RADIUS = 1200.0  # co-op: everyone within this range of an island/guardian kill gets story credit
+LANDMARK_GUARDIAN_HP_SCALE = 4.0
+LANDMARK_GUARDIAN_ESCORTS = 2
 THEME_FOR_KIND = {
     "cave_lurker": "cave", "ghoul": "cave", "deep_stalker": "cave", "husk_wanderer": "cave",
     "frost_wraith": "frozen_crypt", "yeti": "frozen_crypt", "glacier_shard": "frozen_crypt",
@@ -377,8 +388,14 @@ WALL_OBSTACLE_HP = 30
 
 
 class RealmSim:
-    def __init__(self, bonus=False, theme="generic", difficulty_name=None):
+    def __init__(self, bonus=False, theme="generic", difficulty_name=None, story_act=0):
         self.is_bonus_room = bonus
+        # enemy HP multiplier from story progress (game/story.act_scale) - seeded from the
+        # entering player's act for the initial population, then refreshed every update()
+        # from the furthest-along player present (see _refresh_story_scale)
+        self.story_scale = story.act_scale(story_act)
+        self._story_players = []  # alive players as of the current update() - story credit targets
+        self._landmark_guardians = {}  # landmark idx -> its awake Landmark Guardian Enemy
         self._entrance_pos = None
         self._boss_room_pos = None
         theme_key = theme if theme in DUNGEON_THEMES else "generic"
@@ -486,7 +503,9 @@ class RealmSim:
             self._populate_fixed_rooms(dinfo)
             self._hidden_room = dinfo.get("hidden_room")
             self._phase2_pocket = dinfo.get("phase2_pocket")
-            if self._hidden_room and random.random() < SECRET_QUEST_CHANCE:
+            if theme_key == "forge":
+                self._phase2_pocket = None  # the Mad God's phase 2 is immediate, not door-gated
+            if self._hidden_room and random.random() < SECRET_QUEST_CHANCE and theme_key != "forge":
                 self._start_secret_quest()
             if self._phase2_pocket is not None:
                 self._start_phase2_quest()
@@ -564,7 +583,7 @@ class RealmSim:
         boss_kind = random.choice(self.theme["bosses"])
         # 1.4x the usual boss scaling - a genuinely harder "???" secret boss,
         # not a re-tint (rank/aggro already come out "boss"/True from ENEMY_KINDS)
-        secret_boss = Enemy(boss_kind, boss_pos, level_scale=self.difficulty["enemy_scale"] * 1.4)
+        secret_boss = Enemy(boss_kind, boss_pos, level_scale=self.difficulty["enemy_scale"] * 1.4 * self.story_scale)
         self.enemies.append(secret_boss)
         self.vfx_events.append(("boss_appear", boss_pos.x, boss_pos.y, (220, 90, 255)))
         self.events.append((None, "A hidden door grinds open somewhere in the dungeon...", (200, 170, 255)))
@@ -586,7 +605,7 @@ class RealmSim:
                 ty = random.randint(rect.top + 1, rect.bottom - 2)
                 pos = pygame.Vector2(tx * TILE + TILE / 2, ty * TILE + TILE / 2)
                 kind = random.choices(self.theme["kinds"], weights=self.theme["weights"])[0]
-                e = Enemy(kind, pos, level_scale=self.difficulty["enemy_scale"])
+                e = Enemy(kind, pos, level_scale=self.difficulty["enemy_scale"] * self.story_scale)
                 e.room_idx = len(self.rooms) - 1
                 self.enemies.append(e)
                 room_state["enemies"].append(e)
@@ -655,7 +674,7 @@ class RealmSim:
     def _spawn_dungeon_boss(self):
         kind = random.choice(self.theme["bosses"])
         self._phase1_boss_kind = kind  # remembered for _maybe_open_phase2_door's f"{kind}_phase2" spawn later
-        self.boss = Enemy(kind, self._boss_room_pos, level_scale=self.difficulty["enemy_scale"])
+        self.boss = Enemy(kind, self._boss_room_pos, level_scale=self.difficulty["enemy_scale"] * self.story_scale)
         self.enemies.append(self.boss)
         self.vfx_events.append(("boss_appear", self.boss.pos.x, self.boss.pos.y, (255, 140, 0)))
 
@@ -793,29 +812,30 @@ class RealmSim:
         # the landmark building or the terrace above. A biome with fewer than
         # 3 lairs simply gets no landmark, same "rare skip, not a bug"
         # convention as the terrace loop just above.
-        third_by_biome = {}
-        for biome_name in second_by_biome:
-            candidates = [lair for lair in self.lairs
-                          if world.GROUND_TO_BIOME_NAME.get(
-                              self.realm_map.tile_at(lair["pos"].x, lair["pos"].y)) == biome_name
-                          and lair is not toughest_by_biome.get(biome_name)
-                          and lair is not second_by_biome.get(biome_name)]
-            if candidates:
-                third_by_biome[biome_name] = max(candidates, key=lambda l: l["difficulty_scale"])
-        for biome_name, lair in third_by_biome.items():
-            center_tile = (int(lair["pos"].x // TILE), int(lair["pos"].y // TILE))
-            candidate_rect = world.landmark_rect(center_tile)
-            if any(candidate_rect.inflate(4, 4).colliderect(r) for r in placed_rects):
-                continue
-            rect = world.stamp_landmark(self.realm_map.grid, center_tile, biome_name)
-            placed_rects.append(rect)
+        # The story (game/story.py) sends you to these, so a collision no longer skips a
+        # biome outright: its lairs are tried toughest-first until one fits.
+        for biome_name in toughest_by_biome:
+            candidates = sorted((lair for lair in self.lairs
+                                 if world.GROUND_TO_BIOME_NAME.get(
+                                     self.realm_map.tile_at(lair["pos"].x, lair["pos"].y)) == biome_name
+                                 and lair is not toughest_by_biome.get(biome_name)
+                                 and lair is not second_by_biome.get(biome_name)),
+                                key=lambda l: l["difficulty_scale"], reverse=True)
             defn = world.LANDMARK_DEFS.get(biome_name)
             if defn is None:
                 continue
-            self.landmarks.append({
-                "pos": pygame.Vector2(center_tile[0] * TILE + TILE / 2, center_tile[1] * TILE + TILE / 2),
-                "biome": biome_name, "name": defn["name"], "lore": defn["lore"],
-            })
+            for lair in candidates:
+                center_tile = (int(lair["pos"].x // TILE), int(lair["pos"].y // TILE))
+                candidate_rect = world.landmark_rect(center_tile)
+                if any(candidate_rect.inflate(4, 4).colliderect(r) for r in placed_rects):
+                    continue
+                rect = world.stamp_landmark(self.realm_map.grid, center_tile, biome_name)
+                placed_rects.append(rect)
+                self.landmarks.append({
+                    "pos": pygame.Vector2(center_tile[0] * TILE + TILE / 2, center_tile[1] * TILE + TILE / 2),
+                    "biome": biome_name, "name": defn["name"], "lore": defn["lore"],
+                })
+                break
 
         # Curated biome decoration vignettes (Track C, Batch 14) - 20
         # guaranteed hand-composed prop clusters per biome, additional to
@@ -957,7 +977,10 @@ class RealmSim:
             # player's very first entry finds them already spawned, not waiting
             # through an initial timer; every wave AFTER this one still refreshes
             # on the normal 5-minute ISLAND_QUEST_INTERVAL via _progress_island_event
-            self.islands.append({"idx": len(self.islands), "pos": center_world, "theme": theme,
+            # idx is the NAME index (ISLAND_NAMES/ISLAND_MINI_BOSS key), not the list position -
+            # a skipped placement above must not shift every later island's identity. The
+            # list position is stored separately for _progress_island_event's lookup.
+            self.islands.append({"idx": i, "slot": len(self.islands), "pos": center_world, "theme": theme,
                                   "label": name, "cooldown": 0.0,
                                   "alive_guardians": 0})
         self._stamp_island_hub()
@@ -1010,7 +1033,8 @@ class RealmSim:
                 if pos is None:
                     continue
                 kind = random.choices(lair["kinds"], weights=lair["weights"])[0]
-                enemy = Enemy(kind, pos, level_scale=lair["difficulty_scale"], home_pos=lair["pos"])
+                enemy = Enemy(kind, pos, level_scale=lair["difficulty_scale"] * self.story_scale,
+                              home_pos=lair["pos"])
                 enemy.lair_idx = idx
                 self.enemies.append(enemy)
 
@@ -1084,6 +1108,8 @@ class RealmSim:
         """players: dict[pid, Player], shared by every caller (1 in single-player, N in co-op).
         Caller must have already called begin_tick() this tick (see its docstring)."""
         alive = [p for p in players.values() if p.alive]
+        self._story_players = alive
+        self._refresh_story_scale(alive)
         self._update_day_night(dt)
         self._update_fishing(dt, players)
         self._update_weather_damage(dt, alive)
@@ -1235,7 +1261,7 @@ class RealmSim:
             return
         kind = random.choices(lair["kinds"], weights=lair["weights"])[0]
         avg_level = sum(p.level for p in alive) / len(alive)
-        scale = (1.0 + (avg_level - 1) * 0.08) * lair["difficulty_scale"]
+        scale = (1.0 + (avg_level - 1) * 0.08) * lair["difficulty_scale"] * self.story_scale
         moonlit = self.is_night and random.random() < MOONLIT_CHANCE
         if moonlit:
             scale *= 2.0 if self.blood_moon_active else 1.6
@@ -1253,7 +1279,7 @@ class RealmSim:
             avg_level = sum(p.level for p in alive) / len(alive)
             anchor = random.choice(alive).pos
             kind = random.choice(BOSS_KINDS)
-            self.boss = Enemy(kind, anchor + pygame.Vector2(0, -300), 1.0 + avg_level * 0.15)
+            self.boss = Enemy(kind, anchor + pygame.Vector2(0, -300), (1.0 + avg_level * 0.15) * self.story_scale)
             self.enemies.append(self.boss)
             self.events.append((None, "A Mad God's Avatar has appeared!", (255, 140, 0)))
             self.vfx_events.append(("boss_appear", self.boss.pos.x, self.boss.pos.y, (255, 140, 0)))
@@ -1285,8 +1311,8 @@ class RealmSim:
                 pos = self._find_spawn_pos_near(isl["pos"], min_tiles=2, max_tiles=6)
                 if pos is None:
                     pos = pygame.Vector2(isl["pos"])
-                enemy = Enemy(kind, pos)
-                enemy.island_idx = isl["idx"]
+                enemy = Enemy(kind, pos, level_scale=self.story_scale)
+                enemy.island_idx = isl["slot"]
                 self.enemies.append(enemy)
                 isl["alive_guardians"] += 1
             if mini_boss is not None:
@@ -1323,6 +1349,7 @@ class RealmSim:
             self._grant_achievement(killer, "reforger")
         theme = ISLAND_THEMES[isl["theme"]]
         self.events.append((None, f"{isl['label']} has been calmed. The Reforging continues.", theme["color"]))
+        self._story_credit("island", isl["idx"], near=isl["pos"], radius=STORY_CREDIT_RADIUS, killer=killer)
 
     def _tick_world_boss(self, dt, alive):
         """A rare, server-wide-announced roaming boss incursion - see the
@@ -1347,13 +1374,65 @@ class RealmSim:
             return  # try again next tick
         avg_level = sum(p.level for p in alive) / len(alive)
         kind = random.choice(BOSS_KINDS)
-        scale = WORLD_BOSS_LEVEL_SCALE_BASE + avg_level * WORLD_BOSS_LEVEL_SCALE_PER_LEVEL
+        scale = (WORLD_BOSS_LEVEL_SCALE_BASE + avg_level * WORLD_BOSS_LEVEL_SCALE_PER_LEVEL) * self.story_scale
         self.world_boss = Enemy(kind, pos, scale)
         self.world_boss.is_world_boss = True
         self.enemies.append(self.world_boss)
         self.events.append((None, "A shadow gathers over the Wastelands... a great terror stirs.",
                              WORLD_BOSS_ANNOUNCE_COLOR))
         self.vfx_events.append(("boss_appear", pos.x, pos.y, WORLD_BOSS_ANNOUNCE_COLOR))
+
+    # ------------------------------------------------------------ story --
+    def _refresh_story_scale(self, alive):
+        acts = [p.story.act for p in alive if getattr(p, "story", None) is not None]
+        if acts:
+            self.story_scale = story.act_scale(max(acts))
+
+    def _story_credit(self, kind, key=None, near=None, radius=None, killer=None):
+        """Feeds a story event to every player it should count for - everyone present
+        (near=None) or everyone within `radius` of `near`, plus the killer - and turns
+        the returned quest lines into per-player feed events."""
+        targets = [p for p in self._story_players
+                   if near is None or p.pos.distance_to(near) <= radius]
+        if killer is not None and killer not in targets:
+            targets.append(killer)
+        for p in targets:
+            progress = getattr(p, "story", None)
+            if progress is None:
+                continue
+            for msg, color in progress.on_event(kind, key):
+                self.events.append((p.pid, msg, color))
+
+    def _maybe_wake_landmark_guardian(self, p):
+        """A player whose current act needs a landmark's Guardian wakes it by walking
+        up to that landmark - at most one awake Guardian per landmark at a time, and a
+        dead/despawned one can be woken again by the next player who still needs it."""
+        progress = getattr(p, "story", None)
+        if progress is None:
+            return
+        for idx, lm in enumerate(self.landmarks):
+            if p.pos.distance_to(lm["pos"]) > self.LANDMARK_TRIGGER_RADIUS * 3:
+                continue
+            g = self._landmark_guardians.get(idx)
+            if g is not None and g.alive:
+                continue
+            if not progress.wants("guardian", lm["biome"]):
+                continue
+            kind = story.GUARDIAN_KIND.get(lm["biome"], "goblin")
+            spawn = self._find_spawn_pos_near(lm["pos"], min_tiles=2, max_tiles=5) or pygame.Vector2(lm["pos"])
+            g = Enemy(kind, spawn, level_scale=LANDMARK_GUARDIAN_HP_SCALE * self.story_scale, home_pos=lm["pos"])
+            g.radius = int(g.radius * 1.4)
+            g.aggro = True
+            g.story_guardian = lm["biome"]
+            self.enemies.append(g)
+            self._landmark_guardians[idx] = g
+            for _ in range(LANDMARK_GUARDIAN_ESCORTS):
+                pos = self._find_spawn_pos_near(lm["pos"], min_tiles=2, max_tiles=6)
+                if pos is not None:
+                    self.enemies.append(Enemy(kind, pos, level_scale=1.5 * self.story_scale, home_pos=lm["pos"]))
+            self.events.append((None, f"The Guardian of {lm['name']} wakes up, and it is NOT a morning person!",
+                                 (255, 170, 90)))
+            self.vfx_events.append(("boss_appear", spawn.x, spawn.y, (255, 170, 90)))
 
     LANDMARK_TRIGGER_RADIUS = 48  # world units (~1.5 tiles) - close enough to read as "found it",
     # not triggered by merely passing within sight of the prop cluster
@@ -1367,6 +1446,7 @@ class RealmSim:
         if not self.landmarks:
             return
         for p in alive:
+            self._maybe_wake_landmark_guardian(p)
             visited = self._landmark_visited.setdefault(p.pid, set())
             for idx, lm in enumerate(self.landmarks):
                 if idx in visited:
@@ -1437,7 +1517,8 @@ class RealmSim:
             if b.owner == "enemy":
                 for p in players.values():
                     if p.alive and b.hit_test(p.pos, p.radius):
-                        real = p.take_damage(b.dmg)
+                        # "armor_pierce" (the Mad God's aimed volley + nova only) skips deF entirely
+                        real = p.take_damage(b.dmg, pierce_armor=b.status_effect == "armor_pierce")
                         self.events.append((p.pid, f"-{real} hp", (230, 90, 90)))
                         self.damage_popups.append((p.pos.x, p.pos.y, real, (255, 90, 90)))
                         # no per-bullet shooter reference is tracked (b.owner is just the
@@ -1577,6 +1658,24 @@ class RealmSim:
         self._progress_secret_quest(enemy)
         self._progress_phase2_quest(enemy)
         self._progress_island_event(enemy, killer)
+        guardian_biome = getattr(enemy, "story_guardian", None)
+        if guardian_biome is not None:
+            self.events.append((None, f"The Guardian of {story.landmark_name(guardian_biome)} has been put to bed.",
+                                 (255, 200, 120)))
+            self._story_credit("guardian", guardian_biome, near=enemy.pos, radius=STORY_CREDIT_RADIUS, killer=killer)
+        if enemy is self.boss and enemy.kind == "mad_god":
+            # the finale's phase 2 is immediate - he gets back up, angrier, right where he fell
+            self.boss = Enemy("mad_god_phase2", enemy.pos,
+                              level_scale=self.difficulty["enemy_scale"] * self.story_scale)
+            self.enemies.append(self.boss)
+            self.events.append((None, "The Mad God: \"That was my WARM-UP.\" He gets back up, glowing red.",
+                                 (255, 90, 60)))
+            self.vfx_events.append(("boss_appear", enemy.pos.x, enemy.pos.y, (255, 90, 60)))
+            return
+        if enemy is self.boss and self.is_bonus_room and not enemy.kind.endswith("_phase2")                 and self.theme_key != "forge":
+            self._story_credit("dungeon", None, killer=killer)
+        if enemy is self.boss and enemy.kind == "mad_god_phase2":
+            self._story_credit("mad_god", None, killer=killer)
         if enemy.rank == "boss":
             if enemy is self.boss:
                 is_phase1 = not enemy.kind.endswith("_phase2")
@@ -1679,7 +1778,8 @@ class RealmSim:
                                 self.theme["floor"], theme_name=self.theme_key)
         pcx, pcy = self._phase2_pocket["center"]
         boss_pos = pygame.Vector2(pcx * TILE + TILE / 2, pcy * TILE + TILE / 2)
-        self.boss = Enemy(f"{self._phase1_boss_kind}_phase2", boss_pos, level_scale=self.difficulty["enemy_scale"])
+        self.boss = Enemy(f"{self._phase1_boss_kind}_phase2", boss_pos,
+                          level_scale=self.difficulty["enemy_scale"] * self.story_scale)
         self.enemies.append(self.boss)
         self.vfx_events.append(("boss_appear", boss_pos.x, boss_pos.y, (255, 90, 60)))
         self.events.append((None, "A passage rumbles open - the way to the boss's lair is clear!",

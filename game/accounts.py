@@ -198,3 +198,26 @@ def apply_unlocks(player, name: str) -> None:
         player.backpack_size += slots
     if unlocks.get("starting_xp_boost"):
         player.gain_xp(STARTING_XP_BOOST_AMOUNT)
+
+
+# ----------------------------------------------------------------- story --
+# Account-wide act checkpoint (see game/story.py): the number of story acts this
+# account has completed. Only ever goes UP, so a permadeath costs the progress
+# inside the current act, never a whole finished act. Old accounts: missing = 0.
+def get_story_act(name: str) -> int:
+    rec = load_account(name)
+    try:
+        return max(0, int(rec.get("story_act", 0))) if rec else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def set_story_act(name: str, act: int) -> int:
+    """Raises the checkpoint to `act` (never lowers it). Returns the stored value."""
+    have = get_story_act(name)
+    if act <= have:
+        return have
+    rec = dict(load_account(name) or touch_account(name))
+    rec["story_act"] = int(act)
+    _save_account(name, rec)
+    return int(act)

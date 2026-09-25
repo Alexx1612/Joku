@@ -19,6 +19,24 @@ SAMPLE_RATE = 44100
 _enabled = False
 _channels = 1
 _cache = {}
+# live volume multipliers from game/settings.py (set_volumes) - applied on top of
+# every sound's own hard-coded relative volume, never replacing it
+_music_gain = 1.0
+_sfx_gain = 1.0
+
+
+def set_volumes(master=1.0, music=1.0, sfx=1.0, muted=False):
+    """Applies the options-menu volumes live: SFX take the new gain on their next
+    play, the looping theme channel is re-leveled immediately."""
+    global _music_gain, _sfx_gain
+    scale = 0.0 if muted else max(0.0, min(1.0, master))
+    _music_gain = scale * max(0.0, min(1.0, music))
+    _sfx_gain = scale * max(0.0, min(1.0, sfx))
+    if _theme_channel is not None:
+        try:
+            _theme_channel.set_volume(_music_gain)
+        except pygame.error:
+            pass
 
 
 def init():
@@ -110,8 +128,12 @@ def _cached(key, factory):
 def _play(key, factory):
     if not _enabled:
         return
+    if _sfx_gain <= 0:
+        return
     try:
-        _cached(key, factory).play()
+        channel = _cached(key, factory).play()
+        if channel is not None:
+            channel.set_volume(_sfx_gain)
     except pygame.error:
         pass  # a bad buffer or a lost audio device must never crash gameplay
 
@@ -881,6 +903,8 @@ def play_theme(zone="nexus"):
         if _theme_channel is not None:
             _theme_channel.stop()
         _theme_channel = snd.play(loops=-1)
+        if _theme_channel is not None:
+            _theme_channel.set_volume(_music_gain)
     except pygame.error:
         pass
 

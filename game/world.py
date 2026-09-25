@@ -1919,6 +1919,7 @@ BONUS_ROOM_COUNT = 6  # fallback used by any theme not listed in ROOM_COUNT_BY_T
 ROOM_COUNT_BY_THEME = {
     "generic": 7, "frozen_crypt": 7, "jungle_ruins": 8,
     "cave": 8, "ember_den": 5, "sunken_grotto": 8, "wind_spire": 9,
+    "forge": 4,  # the story finale - a short gauntlet, then the Mad God (see realm_sim "forge")
 }
 ROOM_SIZE_BY_THEME = {
     "ember_den": (10, 15),  # fewer, larger rooms, tightly linked

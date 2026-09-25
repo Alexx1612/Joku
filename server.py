@@ -26,11 +26,12 @@ from game import constants as C
 from game import world
 from game import accounts
 from game import characters
+from game import story
 from game.entities import (Player, Bag, Portal, NexusBot, find_nearby_bag, bag_by_id,
                             withdraw_from_bag, BazaarChest, deposit_to_bag, spawn_bazaar_chests)
-from game.realm_sim import RealmSim, DUNGEON_THEMES, BONUS_DIFFICULTIES
+from game.realm_sim import RealmSim, DUNGEON_THEMES, BONUS_DIFFICULTIES, FORGE_DIFFICULTY
 from game.items import (load_vault, save_vault, VAULT_SLOTS, VAULT_CHEST_SIZE, VAULT_CHEST_COUNT,
-                         wish_fountain, apply_socket)
+                         wish_fountain, apply_socket, PET_KINDS)
 from game.netmsg import send_msg, MessageReader
 
 FIRE_BUFFER_WINDOW = 0.1  # seconds - an early "fire" input within this window of the weapon's
@@ -55,6 +56,10 @@ class Session:
         self.fire_buffer = 0.0  # seconds left to auto-fire an early "fire" input that arrived
         # just before the weapon's cooldown cleared - see _maybe_fire / FIRE_BUFFER_WINDOW
         self.pre_bonus_pos = None
+        self.story_feed = []  # [(msg, color)] story lines for this player's next snapshot (any zone)
+        self.story_banners = []  # completed-act titles for this player's next snapshot
+        self.given_heard = set()  # acts whose intro Father Given already told this session
+        self.bonus_from_nexus = False  # in the Forge (entered from the Nexus) - leaving returns there
         self.portal_prompt = None  # (theme, kind, difficulty, portal_id) while standing on/near a portal
         # this tick, or None - refreshed every tick in step(), consumed only by an explicit "enter_portal"
         # action (see _apply_action) - entering is a deliberate key press, not an automatic walk-over.
@@ -74,15 +79,19 @@ class Session:
         # instead of being silently forced into whichever one happened to be created first.
 
 
-# RotMG-style trade window: both sides drag items in, both hit accept, and only
-# after a short anti-scam confirmation countdown (any change resets it) does the
-# swap actually happen - see step()'s trade-tick block and _apply_action's
-# trade_* branches.
+# RotMG-style trade window: a request is only an INVITE until the other player
+# accepts it (see ServerState.trade_invites); then both sides offer items, both hit
+# accept, and only after a short anti-scam confirmation countdown (any change resets
+# it) does the swap actually happen - see step()'s trade-tick block and
+# _apply_action's trade_* branches. Offered items never leave the backpack until the
+# swap itself (offers are references to backpack Items), so a cancel, a disconnect
+# or a mid-trade pickup can never lose anything.
 TRADE_RANGE = 110
 BOT_TRADE_RADIUS = 55  # matches main.py's Game.BOT_TRADE_RADIUS
 TRADE_CONFIRM_SECONDS = 3.0
 TRADE_IDLE_TIMEOUT = 90.0
 TRADE_MAX_ITEMS = 8
+TRADE_INVITE_SECONDS = 20.0
 
 
 class Trade:
@@ -96,6 +105,7 @@ class Trade:
         self.accept_b = False
         self.confirm_timer = None
         self.idle_time = 0.0
+        self.status = None  # visible reason the swap didn't go through (e.g. a full backpack)
 
     def other(self, pid):
         return self.b_pid if pid == self.a_pid else self.a_pid
@@ -135,6 +145,7 @@ class ServerState:
         self.bazaar_ground_items = spawn_bazaar_chests()  # permanent chests + whatever players dropped
         self.chat_queue = []  # [(pid, zone, text), ...] - broadcast to same-zone snapshots this tick, then cleared
         self.trades = {}  # trade_id -> Trade
+        self.trade_invites = {}  # target pid -> {"from": requester pid, "t": seconds left}
         self._next_trade_id = 1
         self.nexus_bot = NexusBot(self.nexus_map.center_world_pos())
         self.autosave_cd = AUTOSAVE_INTERVAL  # see step()'s periodic character-progress save
@@ -194,18 +205,53 @@ def _bonus_players(state, bonus_sim_id):
             if s.zone == ZONE_BONUS and s.bonus_sim_id == bonus_sim_id}
 
 
+def _pet_result(s, p):
+    """Sends the feed/pack/fuse/hatch result Player left in pet_msg (see
+    entities.Player.feed_pet/pack_pet) to that player's client, plus whether it
+    was a fusion so the client can play the burst."""
+    if s is None or not p.pet_msg:
+        return
+    text, color = p.pet_msg
+    fused, p.pet_msg, p.pet_fused = p.pet_fused, None, False
+    try:
+        send_msg(s.sock, {"type": "pet_result", "message": text, "color": list(color), "fused": fused})
+    except OSError:
+        pass
+
+
+def _trade_notice(s, message):
+    if s is not None:
+        try:
+            send_msg(s.sock, {"type": "trade_notice", "message": message})
+        except OSError:
+            pass
+
+
 def _cancel_trade(state, trade, reason=None):
-    """Refunds every offered item back to its owner's backpack (space-permitting;
-    RotMG never destroys items on a cancel) and tears the trade down."""
-    for pid, offer in ((trade.a_pid, trade.offer_a), (trade.b_pid, trade.offer_b)):
+    """Tears the trade down - nothing to refund, offered items never left their
+    owner's backpack (see Trade / trade_offer)."""
+    for pid in (trade.a_pid, trade.b_pid):
         s = state.sessions.get(pid)
         if s is None:
             continue
-        for it in offer:
-            if len(s.player.backpack) < s.player.backpack_size:
-                s.player.backpack.append(it)
         s.trade_id = None
+        if reason:
+            _trade_notice(s, reason)
     state.trades.pop(trade.id, None)
+
+
+def _in_backpack(p, it):
+    return any(b is it for b in p.backpack)
+
+
+def _prune_offer(p, offer):
+    """Drops offer entries whose Item is no longer in the backpack (equipped, dropped,
+    used, ...). Returns True if anything was removed."""
+    kept = [it for it in offer if _in_backpack(p, it)]
+    if len(kept) == len(offer):
+        return False
+    offer[:] = kept
+    return True
 
 
 def _execute_trade(state, trade):
@@ -213,32 +259,74 @@ def _execute_trade(state, trade):
     if sa is None or sb is None:
         _cancel_trade(state, trade)
         return
-    room_a = len(sa.player.backpack) + len(trade.offer_b) <= sa.player.backpack_size
-    room_b = len(sb.player.backpack) + len(trade.offer_a) <= sb.player.backpack_size
-    if not (room_a and room_b):
-        _cancel_trade(state, trade)
+    pa, pb = sa.player, sb.player
+    if _prune_offer(pa, trade.offer_a) | _prune_offer(pb, trade.offer_b):
+        trade.reset_accept()
+        trade.status = "An offered item moved - check the offers and accept again"
         return
-    sa.player.backpack.extend(trade.offer_b)
-    sb.player.backpack.extend(trade.offer_a)
+    for p, give, get in ((pa, trade.offer_a, trade.offer_b), (pb, trade.offer_b, trade.offer_a)):
+        if len(p.backpack) - len(give) + len(get) > p.backpack_size:
+            trade.reset_accept()
+            trade.status = f"{p.name}'s backpack is too full"
+            return
+    for p, give in ((pa, trade.offer_a), (pb, trade.offer_b)):
+        p.backpack[:] = [bp for bp in p.backpack if not any(bp is it for it in give)]
+    pa.backpack.extend(trade.offer_b)
+    pb.backpack.extend(trade.offer_a)
     sa.trade_id = None
     sb.trade_id = None
     state.trades.pop(trade.id, None)
-    state.chat_queue.append((None, sa.zone, f"[Trade complete between {sa.player.name} and {sb.player.name}]"))
+    state.chat_queue.append((None, sa.zone, f"[Trade complete between {pa.name} and {pb.name}]"))
+
+
+def _can_trade_together(a, b):
+    return (a is not None and b is not None and a.zone == b.zone and a.zone != ZONE_DEAD
+            and a.player.alive and b.player.alive
+            and a.player.pos.distance_to(b.player.pos) <= TRADE_RANGE * 2.5)
+
+
+def _open_trade(state, a, b):
+    state.trade_invites.pop(a.pid, None)
+    state.trade_invites.pop(b.pid, None)
+    trade_id = state._next_trade_id
+    state._next_trade_id += 1
+    state.trades[trade_id] = Trade(trade_id, a.pid, b.pid)
+    a.trade_id = trade_id
+    b.trade_id = trade_id
+    state.chat_queue.append((None, a.zone, f"[{a.player.name} and {b.player.name} are trading]"))
+
+
+def _tick_trade_invites(state, dt):
+    for target_pid, inv in list(state.trade_invites.items()):
+        target, sender = state.sessions.get(target_pid), state.sessions.get(inv["from"])
+        inv["t"] -= dt
+        if sender is None or target is None:
+            state.trade_invites.pop(target_pid, None)
+            _trade_notice(sender, "Trade request cancelled - they left")
+        elif inv["t"] <= 0:
+            state.trade_invites.pop(target_pid, None)
+            _trade_notice(sender, f"Trade request to {target.player.name} expired")
+        elif not _can_trade_together(sender, target) or sender.trade_id is not None or target.trade_id is not None:
+            state.trade_invites.pop(target_pid, None)
+            _trade_notice(sender, f"Trade request to {target.player.name} cancelled")
 
 
 def _tick_trades(state, dt):
+    _tick_trade_invites(state, dt)
     for trade in list(state.trades.values()):
         sa, sb = state.sessions.get(trade.a_pid), state.sessions.get(trade.b_pid)
         if sa is None or sb is None:
-            _cancel_trade(state, trade)
+            _cancel_trade(state, trade, "Trade cancelled - the other player left")
             continue
-        if sa.player.pos.distance_to(sb.player.pos) > TRADE_RANGE * 2.5 or not sa.player.alive or not sb.player.alive:
-            _cancel_trade(state, trade)
+        if not _can_trade_together(sa, sb):
+            _cancel_trade(state, trade, "Trade cancelled - too far apart")
             continue
         trade.idle_time += dt
         if trade.idle_time > TRADE_IDLE_TIMEOUT:
-            _cancel_trade(state, trade)
+            _cancel_trade(state, trade, "Trade cancelled - idle too long")
             continue
+        if _prune_offer(sa.player, trade.offer_a) | _prune_offer(sb.player, trade.offer_b):
+            trade.reset_accept()
         if trade.accept_a and trade.accept_b:
             if trade.confirm_timer is None:
                 trade.confirm_timer = TRADE_CONFIRM_SECONDS
@@ -247,6 +335,43 @@ def _tick_trades(state, dt):
                 _execute_trade(state, trade)
         else:
             trade.confirm_timer = None
+
+
+def _story_event(s, kind, key=None):
+    s.story_feed.extend(s.player.story.on_event(kind, key))
+
+
+def _drain_story(state):
+    """Act checkpoints for every session: bank newly completed acts on the account
+    right away and queue the banner for the client (see game/story.py)."""
+    for s in state.sessions.values():
+        progress = s.player.story
+        if not progress.just_completed:
+            continue
+        for act_idx in progress.just_completed:
+            accounts.set_story_act(s.player.name, act_idx + 1)
+            s.story_banners.append(story.ACTS[act_idx]["title"])
+        progress.just_completed = []
+        if s.player.alive:
+            characters.save_character(s.player.name, s.player)
+
+
+def _fresh_story(name):
+    return story.StoryProgress(accounts.get_story_act(name))
+
+
+def _enter_forge(state, s):
+    """Father Given's finale portal - a private Forge instance for this player."""
+    bsim_id = state._next_bonus_sim_id
+    state._next_bonus_sim_id += 1
+    state.bonus_sims[bsim_id] = RealmSim(bonus=True, theme="forge", difficulty_name=FORGE_DIFFICULTY,
+                                         story_act=s.player.story.act)
+    s.pre_bonus_pos = None
+    s.bonus_from_nexus = True
+    s.player.pos = state.bonus_sims[bsim_id].spawn_point()
+    s.zone = ZONE_BONUS
+    s.bonus_sim_id = bsim_id
+    s.story_feed.append(("Father Given snaps his fingers. The floor is suddenly a portal. Rude.", (255, 200, 120)))
 
 
 def step(state, dt):
@@ -352,6 +477,9 @@ def step(state, dt):
             if s.zone != ZONE_DEAD and s.player.alive:
                 characters.save_character(s.player.name, s.player)
 
+    # 5c) story act checkpoints (see game/story.py)
+    _drain_story(state)
+
     # 6) trade windows - confirmation countdown, idle/out-of-range/death auto-cancel
     _tick_trades(state, dt)
 
@@ -384,7 +512,12 @@ def _apply_action(state, s, action):
         if 0 <= idx < len(p.backpack):
             it = p.backpack[idx]
             if it.slot in ("consumable", "temp_potion", "egg"):
-                p.use_potion(idx)
+                had_pet = p.pet is not None
+                if p.use_potion(idx) and it.slot == "egg":
+                    verb = "is back out" if it.pet_state else "hatched"
+                    p.pet_msg = (f"{PET_KINDS.get(it.pet_kind, {}).get('name', it.name)} {verb}!"
+                                 + (" (your old pet went into a carrier)" if had_pet else ""), (170, 220, 255))
+                    _pet_result(s, p)
             elif it.slot == "shard" and s.zone == ZONE_REALM:
                 theme_name = p.use_shard(idx)
                 if theme_name is not None:
@@ -403,6 +536,10 @@ def _apply_action(state, s, action):
     elif kind == "feed_pet":
         idx = action.get("idx", -1)
         p.feed_pet(idx)
+        _pet_result(s, p)
+    elif kind == "pack_pet":
+        p.pack_pet()
+        _pet_result(s, p)
     elif kind == "unequip":
         p.unequip(action.get("slot", ""))
     elif kind == "swap_backpack":
@@ -477,11 +614,13 @@ def _apply_action(state, s, action):
         if state.nexus_map.tile_at(p.pos.x, p.pos.y) == world.PORTAL:
             s.zone = ZONE_REALM
             p.pos = state.realm_sim.spawn_point()
+            _story_event(s, "zone", "realm")
     elif kind == "goto_bazaar" and s.zone == ZONE_NEXUS:
         if state.nexus_map.tile_at(p.pos.x, p.pos.y) == world.BAZAAR_PORTAL:
             s.zone = ZONE_BAZAAR
             p.pos = state.bazaar_map.center_world_pos()
     elif kind == "goto_nexus" and s.zone in (ZONE_REALM, ZONE_BAZAAR, ZONE_VAULT_ROOM, ZONE_BONUS):
+        s.bonus_from_nexus = False
         s.zone = ZONE_NEXUS
         p.pos = _nexus_spawn_pos(state)
     elif kind == "goto_vault_room" and s.zone == ZONE_NEXUS:
@@ -558,43 +697,58 @@ def _apply_action(state, s, action):
                     break
                 if dist <= best:
                     nearest, best = o, dist
-            if nearest is not None:
-                trade_id = state._next_trade_id
-                state._next_trade_id += 1
-                trade = Trade(trade_id, s.pid, nearest.pid)
-                state.trades[trade_id] = trade
-                s.trade_id = trade_id
-                nearest.trade_id = trade_id
-                state.chat_queue.append((None, s.zone, f"[{p.name} offers a trade to {nearest.player.name}]"))
+            if nearest is None:
+                _trade_notice(s, "No nearby player to trade with")
+            elif state.trade_invites.get(s.pid, {}).get("from") == nearest.pid:
+                _open_trade(state, nearest, s)  # they already asked us - mutual, open now
             else:
-                send_msg(s.sock, {"type": "trade_error", "message": "No nearby player to trade with"})
+                state.trade_invites[nearest.pid] = {"from": s.pid, "t": TRADE_INVITE_SECONDS}
+                _trade_notice(s, f"Trade request sent to {nearest.player.name}")
+    elif kind == "trade_invite_accept":
+        inv = state.trade_invites.pop(s.pid, None)
+        sender = state.sessions.get(inv["from"]) if inv else None
+        if sender is None:
+            _trade_notice(s, "No pending trade request")
+        elif s.trade_id is None and sender.trade_id is None and _can_trade_together(sender, s):
+            _open_trade(state, sender, s)
+        else:
+            _trade_notice(s, "That trade request is no longer valid")
+            _trade_notice(sender, f"{p.name} couldn't accept your trade")
+    elif kind == "trade_invite_decline":
+        inv = state.trade_invites.pop(s.pid, None)
+        if inv:
+            _trade_notice(state.sessions.get(inv["from"]), f"{p.name} declined your trade")
     elif kind == "trade_offer":
         trade = state.trades.get(s.trade_id)
         if trade is not None:
             idx = action.get("idx", -1)
             offer = trade.offer_of(s.pid)
-            if 0 <= idx < len(p.backpack) and len(offer) < TRADE_MAX_ITEMS:
-                offer.append(p.backpack.pop(idx))
+            if (0 <= idx < len(p.backpack) and len(offer) < TRADE_MAX_ITEMS
+                    and not any(it is p.backpack[idx] for it in offer)):
+                offer.append(p.backpack[idx])  # a reference - the item stays in the backpack
                 trade.reset_accept()
+                trade.status = None
                 trade.idle_time = 0.0
     elif kind == "trade_withdraw":
         trade = state.trades.get(s.trade_id)
         if trade is not None:
             idx = action.get("idx", -1)
             offer = trade.offer_of(s.pid)
-            if 0 <= idx < len(offer) and len(p.backpack) < p.backpack_size:
-                p.backpack.append(offer.pop(idx))
+            if 0 <= idx < len(offer):
+                offer.pop(idx)
                 trade.reset_accept()
+                trade.status = None
                 trade.idle_time = 0.0
     elif kind == "trade_accept":
         trade = state.trades.get(s.trade_id)
         if trade is not None:
             trade.set_accept(s.pid, True)
+            trade.status = None
             trade.idle_time = 0.0
     elif kind == "trade_cancel":
         trade = state.trades.get(s.trade_id)
         if trade is not None:
-            _cancel_trade(state, trade)
+            _cancel_trade(state, trade, f"{p.name} cancelled the trade")
     elif kind == "enter_portal":
         # the actual zone transition a portal offers - only ever runs on this
         # explicit action (sent when the client's ENTER key press matches an
@@ -620,7 +774,8 @@ def _apply_action(state, s, action):
             if bsim_id is None or bsim_id not in state.bonus_sims:
                 bsim_id = state._next_bonus_sim_id
                 state._next_bonus_sim_id += 1
-                state.bonus_sims[bsim_id] = RealmSim(bonus=True, theme=theme, difficulty_name=difficulty)
+                state.bonus_sims[bsim_id] = RealmSim(bonus=True, theme=theme, difficulty_name=difficulty,
+                                                     story_act=s.player.story.act)
                 state.portal_instance_map[pt_id] = bsim_id
             s.pre_bonus_pos = pygame.Vector2(s.player.pos)
             s.player.pos = state.bonus_sims[bsim_id].spawn_point()
@@ -630,9 +785,14 @@ def _apply_action(state, s, action):
             # phase-2 access is now a walked-through door (see world.open_phase2_door,
             # RealmSim._maybe_open_phase2_door) opened by its own quest, not a portal-
             # teleport kind - no special-case needed here anymore.
-            s.zone = ZONE_REALM
             s.bonus_sim_id = None
-            s.player.pos = s.pre_bonus_pos or state.realm_sim.spawn_point()
+            if s.bonus_from_nexus:
+                s.bonus_from_nexus = False
+                s.zone = ZONE_NEXUS
+                s.player.pos = _nexus_spawn_pos(state)
+            else:
+                s.zone = ZONE_REALM
+                s.player.pos = s.pre_bonus_pos or state.realm_sim.spawn_point()
         s.portal_prompt = None
     elif kind == "tp_to_player":
         target = state.sessions.get(action.get("pid"))
@@ -656,7 +816,15 @@ def _apply_action(state, s, action):
         near_bot = p.pos.distance_to(state.nexus_bot.pos) <= BOT_TRADE_RADIUS
         if not on_fountain and not near_bot:
             send_msg(s.sock, {"type": "wish_result",
-                               "error": "Stand in the fountain to wish, or approach the Guide to trade"})
+                               "error": "Stand in the fountain to wish, or walk up to Father Given to talk"})
+        elif near_bot:  # talking wins - Father Given starts out standing in the fountain plaza
+            # talking to Father Given: the story hint (and the Forge, in the Finale)
+            _story_event(s, "talk")
+            line = story.given_line(p.story, s.given_heard)
+            state.nexus_bot.speech = line
+            state.nexus_bot.speech_age = 0.0
+            if p.story.current() is story.ACTS[-1]:
+                _enter_forge(state, s)
         else:
             old, new, err = wish_fountain(p)
             if err:
@@ -671,6 +839,7 @@ def _apply_action(state, s, action):
                     state.nexus_bot.speech_age = 0.0
     elif kind == "respawn" and s.zone == ZONE_DEAD:
         s.player = Player(action.get("cls", "wizard"), name=p.name, pid=s.pid)
+        s.player.story = _fresh_story(p.name)
         s.player.pos = _nexus_spawn_pos(state)
         s.zone = ZONE_NEXUS
         s.death_info = None
@@ -698,10 +867,32 @@ def _trade_info_for(state, s):
         "their_offer": [it.to_json() for it in theirs],
         "my_accept": mine_accept, "their_accept": their_accept,
         "timer": trade.confirm_timer,
+        "status": trade.status,
+        # backpack indices of my offered items, so the client can highlight them in place
+        "my_offer_idx": [i for i, bp in enumerate(s.player.backpack) if any(bp is it for it in mine)],
     }
 
 
+def _trade_invite_for(state, s):
+    inv = state.trade_invites.get(s.pid)
+    sender = state.sessions.get(inv["from"]) if inv else None
+    if sender is None:
+        return None
+    return {"from_name": sender.player.name, "time_left": round(inv["t"], 1)}
+
+
 def _snapshot_for(state, s):
+    snap = _snapshot_core(state, s)
+    if s.zone != ZONE_DEAD:
+        # story: every zone carries the quest log; feed lines/banners ride exactly one snapshot
+        snap["quest_log"] = s.player.story.quest_log()
+        snap["story_feed"] = [[msg, list(color)] for msg, color in s.story_feed]
+        snap["story_banners"] = list(s.story_banners)
+        s.story_feed, s.story_banners = [], []
+    return snap
+
+
+def _snapshot_core(state, s):
     if s.zone == ZONE_DEAD:
         return {"type": "snapshot", "zone": "dead", "death_info": s.death_info}
     chats = [[pid, text] for pid, zone, text in state.chat_queue if zone == s.zone]
@@ -709,7 +900,8 @@ def _snapshot_for(state, s):
     if s.zone in (ZONE_NEXUS, ZONE_BAZAAR, ZONE_VAULT_ROOM):
         peers = [o.player.net_state() for o in state.sessions.values() if o.zone == s.zone and o is not s]
         payload = {"type": "snapshot", "zone": s.zone, "you": s.player.full_state(), "players": peers,
-                   "chats": chats, "trade": trade_info}
+                   "chats": chats, "trade": trade_info,
+                   "trade_invite": _trade_invite_for(state, s)}
         if s.zone == ZONE_BAZAAR:
             payload["ground_items"] = [g.net_state() for g in state.bazaar_ground_items]
         elif s.zone == ZONE_NEXUS:
@@ -789,6 +981,7 @@ def _snapshot_for(state, s):
         "light_level": sim.light_level, "blood_moon": sim.blood_moon_active,
         "chats": chats,
         "trade": trade_info,
+        "trade_invite": _trade_invite_for(state, s),
     }
 
 
@@ -833,9 +1026,11 @@ def handle_client(sock, addr, state):
         if saved is not None:
             player = Player.from_full_state(dict(saved, pid=pid, name=name))
             player.alive = True  # a dead character is never saved - see characters.delete_character
+            player.story = story.StoryProgress.from_json(saved.get("story"), accounts.get_story_act(name))
         else:
             player = Player(cls_name, name=name, pid=pid)
             accounts.apply_unlocks(player, name)
+            player.story = _fresh_story(name)
         with state.lock:
             player.pos = _nexus_spawn_pos(state)
             session = Session(pid, sock, player)

@@ -24,9 +24,40 @@ _shake_mag = 0.0
 _shake_time = 0.0
 _shake_total = 1.0
 _hitstop_until = 0  # absolute pygame.time.get_ticks() timestamp; 0 = not active
+# options-menu toggles (game/settings.py -> configure) - both clients share them
+_shake_enabled = True
+_hitstop_enabled = True
+_PARTICLE_SCALE = {"off": 0.0, "low": 0.4, "high": 1.0}
+_particle_scale = 1.0
+
+
+def configure(shake=True, hitstop=True, particles="high"):
+    """Screen shake / hit-stop on-off and the particle amount (off/low/high).
+    Turning shake or hit-stop off also cancels one already in progress."""
+    global _shake_enabled, _hitstop_enabled, _particle_scale, _shake_time, _hitstop_until
+    _shake_enabled, _hitstop_enabled = bool(shake), bool(hitstop)
+    _particle_scale = _PARTICLE_SCALE.get(particles, 1.0)
+    if not _shake_enabled:
+        _shake_time = 0.0
+    if not _hitstop_enabled:
+        _hitstop_until = 0
+    if _particle_scale <= 0:
+        _particles.clear()
+        _rings.clear()
+
+
+def _scaled(count):
+    """Particle count after the options-menu particle level - 'low' keeps at
+    least one particle so an effect never silently vanishes, 'off' keeps none."""
+    if _particle_scale >= 1.0 or count <= 0:
+        return count
+    if _particle_scale <= 0:
+        return 0
+    return max(1, int(round(count * _particle_scale)))
 
 
 def spawn_burst(pos, color, count=18, speed=(50, 190), life=(0.35, 0.75), radius=(2, 4), angle_range=(0, math.tau)):
+    count = _scaled(count)
     for _ in range(count):
         ang = random.uniform(*angle_range)
         spd = random.uniform(*speed)
@@ -40,6 +71,7 @@ def spawn_converge(pos, color, count=14, radius=60, life=(0.3, 0.55), pradius=(2
     """Particles start scattered around `pos` and flow INWARD toward it -
     the opposite of spawn_burst, used for drain/lifesteal so the effect
     reads as "being pulled in" rather than another outward explosion."""
+    count = _scaled(count)
     pos = pygame.Vector2(pos)
     for _ in range(count):
         ang = random.uniform(0, math.tau)
@@ -57,6 +89,7 @@ def spawn_rise(pos, color, count=10, life=(0.5, 0.9), speed=(25, 55), radius=(1,
     explosion or spawn_converge's inward pull. Used for heal/mana so pet/
     priest/ability healing has a clear, attached-to-the-player cue instead
     of just another ambient particle pop that's easy to miss mid-combat."""
+    count = _scaled(count)
     pos = pygame.Vector2(pos)
     for _ in range(count):
         start = pos + pygame.Vector2(random.uniform(-spread, spread), random.uniform(-4, 4))
@@ -67,6 +100,8 @@ def spawn_rise(pos, color, count=10, life=(0.5, 0.9), speed=(25, 55), radius=(1,
 
 
 def spawn_ring(pos, color, max_radius=70, life=0.45):
+    if _particle_scale <= 0:
+        return
     _rings.append({"pos": pygame.Vector2(pos), "life": life, "max_life": life,
                     "color": color, "max_radius": max_radius})
 
@@ -81,6 +116,7 @@ def spawn_dust(pos, color, count=2, life=(0.25, 0.45), speed=(5, 20), radius=(1,
 def spawn_stream(src, dst, color, count=10, life=0.4):
     """A handful of particles drifting from src to dst over `life` seconds -
     used for lifesteal drain (enemy -> caster)."""
+    count = _scaled(count)
     src, dst = pygame.Vector2(src), pygame.Vector2(dst)
     for i in range(count):
         t0 = i / max(1, count)
@@ -123,7 +159,9 @@ def draw_fishing_bobber(surf, cam, player_pos, fishing_state):
 
 def trigger_shake(duration, magnitude):
     global _shake_mag, _shake_time, _shake_total
-    if magnitude < _shake_mag:
+    if not _shake_enabled:
+        return
+    if magnitude < _shake_mag and _shake_time > 0:
         return
     _shake_mag, _shake_time, _shake_total = magnitude, duration, duration
 
@@ -146,6 +184,8 @@ def trigger_hitstop(duration_ms):
     hang - it always expires on real time regardless of what dt does meanwhile.
     Bigger wins, same "don't stack, don't shorten" rule as trigger_shake."""
     global _hitstop_until
+    if not _hitstop_enabled:
+        return
     end = pygame.time.get_ticks() + duration_ms
     if end > _hitstop_until:
         _hitstop_until = end

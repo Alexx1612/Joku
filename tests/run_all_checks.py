@@ -32,12 +32,18 @@ def main():
         print("No check_*.py scripts found under tests/.")
         return 1
 
+    # every check runs against a throwaway settings file, never the player's own
+    # settings.json (a saved fullscreen/fps cap/mute must not change test behaviour)
+    import tempfile
+    env = dict(os.environ)
+    env["RR_SETTINGS_PATH"] = os.path.join(tempfile.mkdtemp(prefix="rr_settings_"), "settings.json")
+
     results = []
     for path in scripts:
         name = os.path.basename(path)
         print(f"\n=== {name} " + "=" * max(1, 60 - len(name)))
         t0 = time.time()
-        proc = subprocess.run([PYTHON, path], cwd=TESTS_DIR, capture_output=True, text=True)
+        proc = subprocess.run([PYTHON, path], cwd=TESTS_DIR, capture_output=True, text=True, env=env)
         dt = time.time() - t0
         ok = proc.returncode == 0
         results.append((name, ok, dt))

@@ -685,6 +685,11 @@ _ASH_BEHEMOTH_PHASE2_PAL = _phase2_pal(_ASH_BEHEMOTH_PAL)
 _VOID_REAPER_PHASE2_PAL = _phase2_pal(_VOID_REAPER_PAL)
 _THORN_WARDEN_PHASE2_PAL = _phase2_pal(_THORN_WARDEN_PAL)
 _SAND_WYRM_PHASE2_PAL = _phase2_pal(_SAND_WYRM_PAL)
+# story finale boss (see realm_sim's "forge" theme) - pale gold + white-hot eyes on
+# the shared boss silhouette; phase 2 gets the same darker/redder retint as the others
+_MAD_GOD_PAL = {"O": (235, 200, 90), "K": (40, 20, 10), "o": (250, 235, 170),
+                "E": (255, 255, 255), "9": (255, 90, 40), "r": (255, 245, 210)}
+_MAD_GOD_PHASE2_PAL = _phase2_pal(_MAD_GOD_PAL)
 
 # a second signature mob per biome - same cheap-but-effective trick as the boss
 # palette variants: reuse an existing grid, just retint it, so ten more mobs
@@ -1348,6 +1353,7 @@ ENEMY_GRIDS = {"bat": (_BAT, _BAT_PAL), "ghost": (_GHOST, _GHOST_PAL),
                "void_reaper_phase2": (_BOSS, _VOID_REAPER_PHASE2_PAL),
                "thorn_warden_phase2": (_BOSS, _THORN_WARDEN_PHASE2_PAL),
                "sand_wyrm_phase2": (_BOSS, _SAND_WYRM_PHASE2_PAL),
+               "mad_god": (_BOSS, _MAD_GOD_PAL), "mad_god_phase2": (_BOSS, _MAD_GOD_PHASE2_PAL),
                # neutral (always-passive), and now also unshootable/flee-on-threat, ambient wildlife
                "forest_hare": (_FOREST_HARE, _FOREST_HARE_PAL), "cave_moth": (_CAVE_MOTH, _CAVE_MOTH_PAL),
                "songbird": (_SONGBIRD, _SONGBIRD_PAL), "deer": (_DEER, _DEER_PAL),
@@ -1420,7 +1426,7 @@ BOSS_KINDS = {"boss", "frost_monarch", "ash_behemoth", "void_reaper", "thorn_war
               "cinder_colossus", "rubble_warlord", "ashreach_revenant", "choir_sovereign", "coral_leviathan",
               # Batch 14 Track B2 - same treatment for the last 5 islands' mini-bosses
               "thornrock_colossus", "ashenreach_devourer", "tideglass_warden",
-              "driftbell_matriarch", "abyssal_choirmaster"}
+              "driftbell_matriarch", "abyssal_choirmaster", "mad_god", "mad_god_phase2"}
 
 
 def enemy_sprite(kind: str) -> pygame.Surface:
@@ -1928,5 +1934,17 @@ def item_icon(tier_color, shape="sword") -> pygame.Surface:
         pygame.draw.ellipse(surf, tier_color, (8, 5, 13, 19), width=1)
         for (sx, sy) in ((11, 10), (16, 9), (13, 15), (17, 15)):
             pygame.draw.circle(surf, (255, 245, 220), (sx, sy), 1)
+    elif shape == "carrier":
+        # a little barred pet carrier with a handle and two glowing eyes peeking out
+        # (a packed pet, see items.make_carrier) - frame in the item's tier color
+        pygame.draw.arc(surf, (90, 70, 50), (10, 2, 10, 9), 0, math.pi, 2)
+        pygame.draw.rect(surf, (55, 42, 32), (5, 7, 20, 18), border_radius=3)
+        pygame.draw.rect(surf, tier_color, (5, 7, 20, 18), width=1, border_radius=3)
+        pygame.draw.rect(surf, (20, 16, 22), (8, 11, 14, 11))
+        pygame.draw.circle(surf, (255, 240, 150), (12, 15), 1)
+        pygame.draw.circle(surf, (255, 240, 150), (18, 15), 1)
+        for bx in (10, 13, 16, 19):
+            pygame.draw.line(surf, (150, 140, 130), (bx, 11), (bx, 21), 1)
+        pygame.draw.rect(surf, OUTLINE, (5, 7, 20, 18), width=1, border_radius=3)
     _cache[key] = surf
     return surf

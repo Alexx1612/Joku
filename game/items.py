@@ -10,6 +10,7 @@ item tables (which run into the hundreds of entries per class) - see
 README for the honest scope of what was and wasn't hand-verified.
 """
 import json
+import math
 import os
 import random
 from dataclasses import dataclass, field
@@ -54,6 +55,10 @@ class Item:
     # checks this FIRST, before the name-based BOOMERANG_UT_NAMES/etc. lookup, so a
     # socketed weapon behaves identically downstream to a natively-procced UT.
     socketed_proc: str = None
+    # pet carriers only (SLOT_EGG + shape "carrier"): a packed pet's full state
+    # (Pet.net_state()) - using the item unpacks exactly that pet, levels/xp/bond
+    # intact, instead of hatching a fresh one (see Player.pack_pet/use_potion)
+    pet_state: dict = None
 
     @property
     def band(self) -> str:
@@ -65,7 +70,7 @@ class Item:
 
     @property
     def display_name(self) -> str:
-        prefix = f"[T{self.tier}] " if not self.is_ut else ""
+        prefix = f"[T{self.tier}] " if not self.is_ut and self.shape != "carrier" else ""
         return f"{prefix}{self.name}"
 
     def to_json(self):
@@ -74,7 +79,7 @@ class Item:
                     min_dmg=self.min_dmg, max_dmg=self.max_dmg, proc=self.proc,
                     effect=self.effect, mp_cost=self.mp_cost, magnitude=self.magnitude,
                     description=self.description, pet_kind=self.pet_kind, shard_theme=self.shard_theme,
-                    socketed_proc=self.socketed_proc)
+                    socketed_proc=self.socketed_proc, pet_state=self.pet_state)
 
     @staticmethod
     def from_json(d):
@@ -475,23 +480,58 @@ PET_FAMILY_BASE = {
 PET_ABILITY_KEYS = ("heal", "magic", "attack")
 # Egg rarity gates how far EACH ability can be leveled, and how advanced the
 # pet's specialty ability starts (its other two abilities always start at 1).
-PET_RARITY_MAX_LEVEL = {"common": 10, "uncommon": 15, "rare": 20, "legendary": 30}
-PET_RARITY_START_LEVEL = {"common": 3, "uncommon": 5, "rare": 7, "legendary": 10}
-PET_RARITY_ORDER = ["common", "uncommon", "rare", "legendary"]
+# "mythic" is fusion-only (two maxed legendaries, see Player.feed_pet) - it never
+# drops as an egg (_EGG_RARITY_WEIGHT has no entry for it).
+PET_RARITY_MAX_LEVEL = {"common": 10, "uncommon": 15, "rare": 20, "legendary": 30, "mythic": 40}
+PET_RARITY_START_LEVEL = {"common": 3, "uncommon": 5, "rare": 7, "legendary": 10, "mythic": 14}
+PET_RARITY_ORDER = ["common", "uncommon", "rare", "legendary", "mythic"]
+PET_RARITY_COLORS = {"common": (200, 200, 205), "uncommon": (120, 220, 130), "rare": (110, 170, 255),
+                     "legendary": (255, 190, 70), "mythic": (255, 110, 220)}
+# carrier item tier by rarity - only drives the icon/bag color band, a carrier is never fed
+PET_CARRIER_TIER = {"common": 2, "uncommon": 5, "rare": 8, "legendary": 11, "mythic": 12}
 
 PET_LEVEL_XP_STEP = 30    # flat feed-xp needed to advance one ability level
 PET_FEED_XP_PER_TIER = 6  # feed-xp granted per point of the fed item's tier, split across all 3 abilities
 
 
-def pet_ability_stats(ability, level):
+# Bond: lifetime feed-xp a pet has soaked up (every feed counts in full, even once
+# its abilities are capped, and fusion sums both pets' bond) - the "how much you've
+# put into it" knob. Bond level multiplies magnitudes (up to x2) and trims
+# cooldowns (up to -25%), see pet_ability_stats.
+PET_BOND_DIVISOR = 30
+PET_BOND_MAX_LEVEL = 25
+# heal/mana cooldowns never drop below this, however maxed/bonded the pet - keeps a
+# mythic pet a strong sustain companion rather than a free invulnerability aura
+PET_SUSTAIN_COOLDOWN_FLOOR = 1.5
+
+
+def pet_bond_level(bond):
+    return min(PET_BOND_MAX_LEVEL, int(math.sqrt(max(0.0, bond) / PET_BOND_DIVISOR)))
+
+
+def pet_bond_progress(bond):
+    """(level, fraction toward the next level) - fraction is 1.0 once capped."""
+    lvl = pet_bond_level(bond)
+    if lvl >= PET_BOND_MAX_LEVEL:
+        return lvl, 1.0
+    lo, hi = lvl * lvl * PET_BOND_DIVISOR, (lvl + 1) * (lvl + 1) * PET_BOND_DIVISOR
+    return lvl, (bond - lo) / (hi - lo)
+
+
+def pet_ability_stats(ability, level, bond_level=0):
     """magnitude/cooldown for one of a pet's 3 independent ability slots at a
     given level - replaces the old fixed per-kind values now that every pet
     can level (and simultaneously use) all 3 abilities instead of being
     locked to a single family forever. Modest per-level scaling, and cooldown
     is floored well above zero so a maxed pet still has a real cadence."""
     base = PET_FAMILY_BASE[ability]
-    magnitude = max(1, round(base["magnitude"] * (1 + 0.15 * (level - 1))))
-    cooldown = max(0.5, round(base["cooldown"] * (0.95 ** (level - 1)), 2))
+    # past level 30 (mythic-only territory) each level adds a third as much, so
+    # the extra mythic levels are a real upgrade without the curve running away
+    lvl_gain = 0.15 * (min(level, 30) - 1) + 0.05 * max(0, level - 30)
+    bond_level = max(0, min(PET_BOND_MAX_LEVEL, bond_level))
+    magnitude = max(1, round(base["magnitude"] * (1 + lvl_gain) * (1 + 0.04 * bond_level)))
+    floor = 0.5 if ability == "attack" else PET_SUSTAIN_COOLDOWN_FLOOR
+    cooldown = max(floor, round(base["cooldown"] * (0.95 ** (level - 1)) * (1 - 0.01 * bond_level), 2))
     return magnitude, cooldown
 
 
@@ -521,6 +561,22 @@ PET_KINDS = {
     "phoenix_chick": _pet_kind("salamander", (255, 170, 60), "heal", "legendary", "Phoenix Chick",
                                 "Hatched from an ember that never went out. Legends say a full-grown "
                                 "phoenix can raise the dead - this one just mends wounds, but fast."),
+    "tipsy_thunderbird": _pet_kind("harpy", (255, 240, 120), "attack", "legendary", "Tipsy Thunderbird",
+                                    "Swears it can fly in a straight line. Cannot. Still calls down "
+                                    "a crackling peck on anything that looks at you funny."),
+    "sommelier_serpent": _pet_kind("vine_serpent", (190, 90, 150), "magic", "legendary", "Sommelier Serpent",
+                                    "Swirls, sniffs, and judges your mana like a fine vintage - then "
+                                    "pours you another glass. Notes of oak and arcane regret."),
+    # mythic - fusion only (two maxed legendaries), never an egg drop
+    "hangover_hydra": _pet_kind("bog_crawler", (255, 120, 210), "heal", "mythic", "Hangover Hydra",
+                                 "Three heads, three headaches, one very caring disposition. Each "
+                                 "head insists the others are the drunk one. Mends wounds anyway."),
+    "last_call_leviathan": _pet_kind("vine_serpent", (120, 230, 255), "attack", "mythic", "Last-Call Leviathan",
+                                      "Rings a tiny bell and everything nearby is suddenly cut off. "
+                                      "Permanently. Tips generously in bite marks."),
+    "brewmaster_djinn": _pet_kind("ghost", (255, 170, 255), "magic", "mythic", "Brewmaster Djinn",
+                                   "Grants exactly one wish: 'more mana, please.' Grants it again. "
+                                   "And again. Has read the terms and conditions; you have not."),
     "sentient_fish": _pet_kind("frost_wraith", (120, 255, 170), "magic", "uncommon", "Sentient Fish",
                                 "Hooked, reeled in, and unmistakably judging you for it. Floats "
                                 "alongside in a small orb of water, muttering in bubbles, and "
@@ -533,6 +589,31 @@ def make_egg(kind: str, tier: int = 1) -> Item:
     return Item(f"{d['name']} Egg", SLOT_EGG, tier, "egg", pet_kind=kind,
                 description=f"An egg, warm to the touch. Hatches into a {d['name']} "
                             f"({d['rarity']}). {d['description']}")
+
+
+def pet_is_maxed(rarity, levels):
+    """True when every ability in `levels` ({ability: level}) sits at that rarity's cap."""
+    cap = PET_RARITY_MAX_LEVEL.get(rarity, 10)
+    return all(levels.get(ab, 0) >= cap for ab in PET_ABILITY_KEYS)
+
+
+def make_carrier(pet_state: dict) -> Item:
+    """A packed pet as a backpack item (see Player.pack_pet) - tradable, vaultable,
+    bag-droppable like any item; using it unpacks that exact pet."""
+    kind = pet_state["kind"]
+    d = PET_KINDS[kind]
+    rarity = d["rarity"]
+    levels = pet_state.get("levels", {})
+    maxed = pet_is_maxed(rarity, levels)
+    if rarity == "mythic":
+        hint = "Mythic - the top of the food chain, can't fuse further."
+    elif maxed:
+        hint = f"MAXED - drop onto your active maxed {rarity} pet to fuse them into a "                f"{PET_RARITY_ORDER[PET_RARITY_ORDER.index(rarity) + 1]} pet."
+    else:
+        hint = f"Max every ability to fuse it with another maxed {rarity} pet."
+    desc = f"Your {d['name']} is napping in here. Use it to let them out. {hint}"
+    return Item(f"{d['name']} Carrier", SLOT_EGG, PET_CARRIER_TIER[rarity], "carrier",
+                pet_kind=kind, description=desc, pet_state=dict(pet_state))
 
 
 # How much of a rank's tier band the toughest mob of that rank (difficulty
@@ -679,7 +760,8 @@ _EGG_RARITY_WEIGHT = {"common": 50, "uncommon": 25, "rare": 12, "legendary": 2}
 
 
 def _random_egg() -> Item:
-    kinds = list(PET_KINDS.keys())
+    # mythic (fusion-only) kinds have no weight entry, so they never drop as eggs
+    kinds = [k for k in PET_KINDS if PET_KINDS[k]["rarity"] in _EGG_RARITY_WEIGHT]
     weights = [_EGG_RARITY_WEIGHT[PET_KINDS[k]["rarity"]] for k in kinds]
     kind = random.choices(kinds, weights=weights)[0]
     return make_egg(kind)

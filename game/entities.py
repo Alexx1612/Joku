@@ -14,13 +14,15 @@ import pygame
 from game import constants as C
 from game import sprites
 from game import achievements
+from game.story import StoryProgress
 from game.audio import sound_family  # pure classification lookup, no pygame.mixer side effects
 from game.items import (make_starter_weapon, make_starter_ability, Item, SLOT_WEAPON, SLOT_ARMOR,
                          SLOT_RING, SLOT_ABILITY, SLOT_EGG, SLOT_SHARD, SLOT_TEMP_POTION,
                          PERMANENT_POTION_CAP, TEMP_POTION_DURATION, STAT_KEYS, PET_KINDS,
                          CLASS_ARMOR_ARCHETYPE, PET_ABILITY_KEYS, PET_RARITY_MAX_LEVEL,
                          PET_RARITY_START_LEVEL, PET_LEVEL_XP_STEP, PET_FEED_XP_PER_TIER,
-                         pet_ability_stats)
+                         pet_ability_stats, pet_bond_level, pet_is_maxed, make_carrier,
+                         PET_RARITY_ORDER)
 
 
 def _circle_clear(is_solid_fn, cx, cy, radius):
@@ -134,6 +136,8 @@ class Player:
         self.shield_hp = 0.0   # remaining absorb from a "shield"-effect ability
         self.shield_time = 0.0  # remaining seconds the shield lasts before decaying
         self.pet = None  # a hatched Pet, or None - see items.PET_KINDS / hatch_egg()
+        self.pet_msg = None  # (text, color) left by feed_pet/pack_pet for the owner to show
+        self.pet_fused = False  # one-shot: set by a successful fusion, cleared by the owner after its VFX
         self.backpack = []  # up to 8 loose items
         self.backpack_size = 8
         self.alive = True
@@ -149,6 +153,8 @@ class Player:
         # level-based guess.
         self._echo_xp_progress = 0
         self._echoes_this_life = 0
+        self.story = StoryProgress()  # critical-path progress (game/story.py) - the owner raises
+        # it to the account's act checkpoint right after construction/load
         # e.g. "the Bloodied" - NOT loaded from disk here (this constructor runs on every
         # network snapshot reconstruction too, at 20-30Hz; a file read per tick per player
         # would be a real perf regression). Real gameplay entry points (server join/respawn,
@@ -289,11 +295,20 @@ class Player:
                 self.backpack.pop(index)
                 return True
             if it.slot == SLOT_EGG:
-                self.pet = Pet(it.pet_kind, self.pos)
-                self.backpack.pop(index)
-                changed, title = achievements.unlock(self.name, "egg_parent")
-                if changed:
-                    self.title = title
+                # a carrier unpacks its exact pet; a plain egg hatches a fresh one.
+                # An already-active pet is packed into the SAME backpack slot the
+                # egg/carrier leaves, so this can never fail for lack of room.
+                new_pet = Pet.from_net_state(it.pet_state) if it.pet_state else Pet(it.pet_kind, self.pos)
+                new_pet.pos = pygame.Vector2(self.pos) + pygame.Vector2(-22, 18)
+                if self.pet is not None:
+                    self.backpack[index] = make_carrier(self.pet.net_state())
+                else:
+                    self.backpack.pop(index)
+                self.pet = new_pet
+                if not it.pet_state:
+                    changed, title = achievements.unlock(self.name, "egg_parent")
+                    if changed:
+                        self.title = title
                 return True
         return False
 
@@ -304,13 +319,18 @@ class Player:
         derived max level - eggs aren't fed (they're hatched via use_potion).
         Consumes the item and returns True on success, mirroring the other
         backpack-consumption methods (use_potion/use_shard)."""
+        self.pet_msg = None
         if self.pet is None or not (0 <= index < len(self.backpack)):
             return False
         it = self.backpack[index]
         if it.slot == SLOT_EGG:
+            if it.pet_state:
+                return self._fuse_pet(index)
+            self.pet_msg = ("Eggs hatch, they don't get eaten - use it instead", (220, 150, 90))
             return False
         total_xp = max(1, it.tier or 1) * PET_FEED_XP_PER_TIER
         per_ability = total_xp / len(PET_ABILITY_KEYS)
+        self.pet.bond += total_xp  # bond counts every feed in full, even once capped
         max_level = PET_RARITY_MAX_LEVEL[self.pet.rarity]
         for st in self.pet.abilities.values():
             if st["level"] >= max_level:
@@ -322,6 +342,67 @@ class Player:
             if st["level"] >= max_level:
                 st["xp"] = 0.0
         self.backpack.pop(index)
+        self.pet_msg = (f"Fed {it.display_name} to your pet (bond {pet_bond_level(self.pet.bond)})",
+                        (170, 220, 255))
+        return True
+
+    def _fuse_pet(self, index):
+        """Carrier dropped onto the active pet: two maxed same-rarity pets fuse into
+        one pet of the next rarity (family kept when a next-rarity kind shares it),
+        bond summed. Any rejection consumes nothing and leaves a reason in pet_msg."""
+        other = self.backpack[index].pet_state
+        other_kind = other.get("kind")
+        if other_kind not in PET_KINDS:
+            self.pet_msg = ("That carrier is empty?! (unknown pet)", (220, 150, 90))
+            return False
+        rarity = self.pet.rarity
+        other_rarity = PET_KINDS[other_kind]["rarity"]
+        if rarity == "mythic" or other_rarity == "mythic":
+            self.pet_msg = ("Mythic pets are already as fused as it gets", (220, 150, 90))
+            return False
+        if other_rarity != rarity:
+            self.pet_msg = (f"Fusion needs two pets of the same rarity ({rarity} vs {other_rarity})",
+                            (220, 150, 90))
+            return False
+        mine_maxed = pet_is_maxed(rarity, {k: v["level"] for k, v in self.pet.abilities.items()})
+        theirs_maxed = pet_is_maxed(rarity, other.get("levels", {}))
+        if not (mine_maxed and theirs_maxed):
+            who = "your active pet" if not mine_maxed else "the carried pet"
+            self.pet_msg = (f"Both pets must be maxed {rarity} pets - {who} isn't yet", (220, 150, 90))
+            return False
+        next_rarity = PET_RARITY_ORDER[PET_RARITY_ORDER.index(rarity) + 1]
+        family = PET_KINDS[self.pet.kind]["family"]
+        pool = [k for k, d in PET_KINDS.items() if d["rarity"] == next_rarity]
+        same_family = [k for k in pool if PET_KINDS[k]["family"] == family]
+        new_kind = random.choice(same_family or pool)
+        fused = Pet(new_kind, self.pet.pos)
+        fused.pos = pygame.Vector2(self.pet.pos)
+        carried = PET_RARITY_MAX_LEVEL[rarity] // 2
+        specialty = PET_KINDS[new_kind]["family"]
+        for ab, st in fused.abilities.items():
+            st["level"] = max(PET_RARITY_START_LEVEL[next_rarity], carried) if ab == specialty else carried
+            st["xp"] = 0.0
+        fused.bond = self.pet.bond + float(other.get("bond", 0.0))
+        self.backpack.pop(index)
+        self.pet = fused
+        self.pet_fused = True  # one-shot flag the owner (main.py/server.py) turns into a VFX burst
+        article = "an" if next_rarity[0] in "aeiou" else "a"
+        self.pet_msg = (f"FUSION! Your pets became {article} {next_rarity} {PET_KINDS[new_kind]['name']}!",
+                        PET_KINDS[new_kind]["tint"])
+        return True
+
+    def pack_pet(self):
+        """Active pet -> a carrier item in the backpack. Returns True on success;
+        pet_msg carries the feed line either way."""
+        if self.pet is None:
+            self.pet_msg = ("You don't have a pet out", (220, 150, 90))
+            return False
+        if len(self.backpack) >= self.backpack_size:
+            self.pet_msg = ("No backpack room for the carrier", (220, 150, 90))
+            return False
+        self.backpack.append(make_carrier(self.pet.net_state()))
+        self.pet_msg = (f"Packed {PET_KINDS[self.pet.kind]['name']} into a carrier", (170, 220, 255))
+        self.pet = None
         return True
 
     def use_shard(self, index):
@@ -459,10 +540,10 @@ class Player:
     def register_fire(self):
         self._fire_cd = self.atk_interval()
 
-    def take_damage(self, dmg):
+    def take_damage(self, dmg, pierce_armor=False):
         if self._dash_iframes > 0.0:
             return 0
-        real = C.apply_defense(dmg, self.total_stat("deF"))
+        real = dmg if pierce_armor else C.apply_defense(dmg, self.total_stat("deF"))
         if self.shield_hp > 0:
             absorbed = min(self.shield_hp, real)
             self.shield_hp -= absorbed
@@ -573,6 +654,7 @@ class Player:
             fishing_state=self.fishing_state,
             echo_xp_progress=self._echo_xp_progress,
             echoes_this_life=self._echoes_this_life,
+            story=self.story.to_json(),
         )
 
     @staticmethod
@@ -602,6 +684,7 @@ class Player:
         p.fishing_state = d.get("fishing_state")
         p._echo_xp_progress = d.get("echo_xp_progress", 0)
         p._echoes_this_life = d.get("echoes_this_life", 0)
+        p.story = StoryProgress.from_json(d.get("story"))
         return p
 
     @staticmethod
@@ -820,6 +903,13 @@ ENEMY_KINDS = {
                                  dmg=(7, 15), radius=17, aggro_range=99999, leash_range=99999),
     "abyssal_choirmaster": dict(kind="abyssal_choirmaster", rank="boss", hp=640, speed=42, pattern="spread",
                                  dmg=(8, 16), radius=18, aggro_range=99999, leash_range=99999),
+    # the story finale (game/story.py, the "forge" dungeon theme) - uses the shared
+    # spinning-ring "boss" pattern; its phase 2 ("mad_god_phase2", built below the
+    # BOSS_KINDS phase-2 loop) spawns the moment phase 1 dies, see RealmSim._reward
+    # own "mad_god" pattern (see Enemy._shoot) - the shared "boss" spinning ring
+    # alone barely ever reached a player, measured ~9 hp/s on a still lvl-20 Wizard
+    "mad_god": dict(kind="mad_god", rank="boss", hp=2200, speed=46, pattern="mad_god", dmg=(7, 14), radius=30,
+                    aggro_range=99999, leash_range=99999),
     # a stationary, damageable dungeon decoration - see realm_sim.SECRET_QUEST_KINDS'
     # "kill_totems" quest. speed=0 is safe (movement code is pure multiplication,
     # nothing divides by speed); neutral=True reuses the existing never-aggroes/
@@ -874,6 +964,14 @@ for _boss_kind in list(BOSS_KINDS):
         deF=round(_base.get("deF", 0) * PHASE2_HP_MULT),
     )
 
+_mg_lo, _mg_hi = ENEMY_KINDS["mad_god"]["dmg"]
+ENEMY_KINDS["mad_god_phase2"] = dict(
+    ENEMY_KINDS["mad_god"], kind="mad_god_phase2", hp=int(ENEMY_KINDS["mad_god"]["hp"] * PHASE2_HP_MULT),
+    # a smaller damage bump than other phase-2s: the extra counter-rotating ring in its
+    # "mad_god" pattern already roughly doubles its bullets on top of the faster fire rate
+    dmg=(int(_mg_lo * 1.15), int(_mg_hi * 1.15)), fire_rate_mult=PHASE2_FIRE_RATE_MULT,
+    deF=round(ENEMY_KINDS["mad_god"].get("deF", 0) * PHASE2_HP_MULT))
+
 # Random flavor lines shown as a speech bubble above an aggro'd mob (same mechanism
 # as NexusBot's speech/speech_age) - a small pool per sound family (see game.audio.
 # sound_family) rather than per-kind, matching the same "manageable scope" call as
@@ -907,7 +1005,7 @@ WILDLIFE_FLAVOR_LINES = ["*chirps*", "*rustles in the grass*", "*sniffs the air*
 # "charge"/erratic mobs already get credit for their pattern instead).
 PATTERN_DANGER = {
     "erratic": 0.75, "aimed": 1.0, "volley": 1.15, "spread": 1.3, "charge": 1.4,
-    "spiral": 1.5, "burst": 1.6, "boss_burrow": 1.7, "boss": 2.2, "boss_root": 2.4,
+    "spiral": 1.5, "burst": 1.6, "boss_burrow": 1.7, "boss": 2.2, "boss_root": 2.4, "mad_god": 3.0,
 }
 
 
@@ -920,7 +1018,7 @@ def _mob_difficulty_score(d):
 _DIFFICULTY_SCORE_BY_KIND = {k: _mob_difficulty_score(d) for k, d in ENEMY_KINDS.items()}
 _DIFFICULTY_RANGE_BY_RANK = {}
 for _kind, _d in ENEMY_KINDS.items():
-    if _kind.endswith("_phase2"):
+    if _kind.endswith("_phase2") or _kind == "mad_god":
         continue  # excluded from ranking - see difficulty_fraction()'s early-return for these;
         # including them would inflate the "boss" rank's max score and silently nerf every
         # ORDINARY boss's difficulty_fraction (and therefore its loot-roll tier), which is
@@ -936,7 +1034,7 @@ def difficulty_fraction(kind):
     of them - a neutral midpoint, not an arbitrary top/bottom pick. A "_phase2"
     variant always returns 1.0 (top of its rank's loot band) rather than
     participating in the ranking itself - see the exclusion above."""
-    if kind.endswith("_phase2"):
+    if kind.endswith("_phase2") or kind == "mad_god":
         return 1.0
     d = ENEMY_KINDS[kind]
     lo, hi = _DIFFICULTY_RANGE_BY_RANK[d["rank"]]
@@ -1307,7 +1405,7 @@ class Enemy:
 
     def _pattern_interval(self):
         return {"aimed": 1.4, "erratic": 2.0, "spread": 1.6, "burst": 2.2, "boss": 0.35,
-                "volley": 1.7, "spiral": 0.35, "charge": 1.0, "boss_root": 1.9}[self.pattern]
+                "volley": 1.7, "spiral": 0.35, "charge": 1.0, "boss_root": 1.9, "mad_god": 0.35}[self.pattern]
 
     def _bullet_radius(self):
         # visual-punch pass: a boss/elite's shots read as more threatening at a
@@ -1357,6 +1455,33 @@ class Enemy:
                     ang = (360 / 16) * i
                     out.append(_mk_bullet(self.pos, pygame.Vector2(1, 0).rotate(ang), speed * 1.3, dmg + 4,
                                            (255, 40, 40), radius=r + 1))
+        elif self.pattern == "mad_god":
+            # the story finale: the shared boss ring, PLUS an aimed 3-way volley every
+            # other shot (the ring alone can simply be stood beside), PLUS a periodic
+            # 16-bullet nova. Phase 2 adds a counter-rotating ring on top. The aimed volley
+            # and red nova are armor-piercing: defense is a flat subtraction (constants.apply_defense)
+            # and a lvl-20 Warrior/Priest sits at ~55-60 deF, which otherwise shrugs
+            # off every hit that doesn't one-shot a ~15-deF Wizard.
+            self._phase_cd -= self._pattern_interval()
+            self._mg_shot = getattr(self, "_mg_shot", 0) + 1
+            spin = (self._t * 90) % 360
+            rings = [spin] + ([-spin * 1.3] if self.kind.endswith("_phase2") else [])
+            for base in rings:
+                for i in range(6):
+                    out.append(_mk_bullet(self.pos, pygame.Vector2(1, 0).rotate(base + 60 * i), speed, dmg,
+                                           (255, 215, 90), radius=r))
+            # every 3rd shot in phase 2: its faster fire rate would otherwise ALSO speed
+            # up the volley - phase 2's extra danger is meant to be the second ring
+            if self._mg_shot % (3 if self.kind.endswith("_phase2") else 2) == 0:
+                for off in (-14, 0, 14):
+                    out.append(_mk_bullet(self.pos, aim_dir.rotate(off), speed * 1.25, dmg, (255, 255, 230),
+                                           radius=r, status_effect="armor_pierce"))
+            if self._phase_cd <= 0:
+                self._phase_cd = random.uniform(2.5, 4.0)
+                for i in range(16):
+                    out.append(_mk_bullet(self.pos, pygame.Vector2(1, 0).rotate(22.5 * i + spin / 2),
+                                           speed * 1.3, dmg, (255, 60, 40), radius=r + 1,
+                                           status_effect="armor_pierce"))
         elif self.pattern == "boss_root":
             # the Thorn Warden: a steady ring of thorns, plus every few shots a
             # slow double-ring "root pulse" - realm_sim.py checks _phase_cd<=0
@@ -2109,6 +2234,7 @@ class Pet:
         }
         self.pos = pygame.Vector2(owner_pos) + pygame.Vector2(-22, 18)
         self._t = random.uniform(0, 10)
+        self.bond = 0.0  # lifetime feed-xp invested - see items.pet_bond_level
 
     def update(self, dt, owner, enemies, bullets_out):
         self._t += dt
@@ -2123,14 +2249,14 @@ class Pet:
         events = []
         heal_st = self.abilities["heal"]
         if heal_st["cd"] <= 0 and owner.hp < owner.hp_max:
-            magnitude, cooldown = pet_ability_stats("heal", heal_st["level"])
+            magnitude, cooldown = pet_ability_stats("heal", heal_st["level"], pet_bond_level(self.bond))
             healed = min(owner.hp_max, owner.hp + magnitude) - owner.hp
             owner.hp += healed
             heal_st["cd"] = cooldown
             events.append(("heal", owner.pos.x, owner.pos.y, (110, 230, 140), healed))
         magic_st = self.abilities["magic"]
         if magic_st["cd"] <= 0 and owner.mp < owner.mp_max:
-            magnitude, cooldown = pet_ability_stats("magic", magic_st["level"])
+            magnitude, cooldown = pet_ability_stats("magic", magic_st["level"], pet_bond_level(self.bond))
             restored = min(owner.mp_max, owner.mp + magnitude) - owner.mp
             owner.mp += restored
             magic_st["cd"] = cooldown
@@ -2143,7 +2269,7 @@ class Pet:
                 if dist < best:
                     nearest, best = e, dist
             if nearest is not None:
-                magnitude, cooldown = pet_ability_stats("attack", attack_st["level"])
+                magnitude, cooldown = pet_ability_stats("attack", attack_st["level"], pet_bond_level(self.bond))
                 aim = nearest.pos - self.pos
                 bullets_out.append(_mk_bullet(self.pos, aim, 260, magnitude, (255, 170, 90),
                                                owner=owner.pid))
@@ -2162,7 +2288,8 @@ class Pet:
     def net_state(self):
         return dict(kind=self.kind, x=round(self.pos.x, 1), y=round(self.pos.y, 1),
                     levels={k: v["level"] for k, v in self.abilities.items()},
-                    xp={k: round(v["xp"], 1) for k, v in self.abilities.items()})
+                    xp={k: round(v["xp"], 1) for k, v in self.abilities.items()},
+                    bond=round(self.bond, 1))
 
     @staticmethod
     def from_net_state(d):
@@ -2174,4 +2301,5 @@ class Pet:
         for k, xp in d.get("xp", {}).items():
             if k in p.abilities:
                 p.abilities[k]["xp"] = xp
+        p.bond = float(d.get("bond", 0.0))  # old saves predate bond
         return p

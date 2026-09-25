@@ -8,20 +8,24 @@ portals, and swarming enemies with bullet patterns.
 For co-op with a friend, run server.py and have both players launch
 coop_client.py instead of this file - see README.md.
 
-Controls
+Controls (the in-game O menu shows the same list - see ui.HELP_LINES)
   WASD / arrows  - move
-  Mouse          - aim (soft assist near enemies)
-  Left click     - fire (auto-repeats while held, rate = your DEX)
-  I              - toggle auto-fire (fires continuously without holding click)
-  1-8            - use/equip backpack slot
-  Click+drag     - drag items between backpack/equip slots (or click to auto-equip/use)
-  Enter          - confirm menus / interact with the tile you're standing on
-  R              - Nexus (teleport to hub) while in the Realm
+  Mouse          - aim (soft assist near enemies); left click fires (held = auto-repeat)
+  I              - toggle auto-fire
+  Space          - class ability          Shift - dash / roll (brief i-frames)
+  1-8            - use/equip backpack slot (double-click a slot does the same)
+  Click+drag     - move items between backpack/equip/bag/vault; drag onto the pet to feed it
+  Right-click    - drop the backpack item under the cursor, else open the nearest ground bag
+  Tab            - switch the right dock between inventory and pet stats
+  F              - fish at water / wish at the fountain / talk to Father Given (story hints)
+  J              - expand / collapse the story quest log
+  Enter          - open chat, or enter the portal you're standing on
+  R              - back to the Nexus (Realm) / leave the dungeon
   Q / E          - rotate camera, X - reset it
-  F11            - fullscreen (shows more of the world, not just a bigger view)
   M              - full map (scroll wheel or +/- to zoom); a minimap is always in the corner
-  O              - toggle the controls overlay
-  Esc            - quit / leave the Vault / close the controls overlay
+  F11            - fullscreen (shows more of the world, not just a bigger view)
+  O              - options menu (volume, effects, FPS cap, ... - saved to settings.json)
+  Esc            - close whatever is open; with nothing open, asks before quitting
 """
 import math
 import random
@@ -39,9 +43,13 @@ from game import accounts
 from game import characters
 from game import clipboard
 from game import live_events
+from game import settings
+from game import options_menu
+from game import story
 from game.entities import (Player, Bag, Portal, NexusBot, find_nearby_bag, bag_by_id,
                             withdraw_from_bag, BazaarChest, deposit_to_bag, spawn_bazaar_chests)
-from game.realm_sim import RealmSim, auto_aim_direction, DUNGEON_THEMES, BONUS_DIFFICULTIES, AUTO_AIM_CONE_DEG
+from game.realm_sim import (RealmSim, auto_aim_direction, DUNGEON_THEMES, BONUS_DIFFICULTIES, AUTO_AIM_CONE_DEG,
+                             FORGE_DIFFICULTY)
 from game.items import (load_vault, save_vault, vault_exists, VAULT_SLOTS, VAULT_CHEST_SIZE,
                          PERMANENT_POTION_CAP, identify_proc_kind, apply_socket, SLOT_WEAPON)
 
@@ -70,10 +78,12 @@ class Game:
     def __init__(self):
         pygame.init()
         audio.init()
+        settings.load()  # before the first theme plays, so saved volumes apply from the start
         audio.play_theme()
         self.fullscreen = False
         self.help_open = False
         self.menu_selected = 0
+        self.quit_confirm_open = False  # Esc with nothing else open asks before quitting
         self.echo_shop_open = False  # the Echo Keeper's shop panel, see _open_echo_shop
         self.echo_shop_selected = 0
         self._base_size = (C.SCREEN_W, C.SCREEN_H)  # windowed-mode size, restored when leaving fullscreen
@@ -99,6 +109,7 @@ class Game:
         self._last_level = 1
         self.drag_from = None       # ("backpack", idx) or ("equip", slot_type) while a drag is in progress
         self.drag_start_pos = None
+        self._drag_state = None     # self.state when the current drag began - see _sync_drag_state
         self.pending_socket = None  # (source_backpack_idx, target_backpack_idx) awaiting an ENTER
         # confirmation - set by dragging a socketable UT onto a different weapon in the
         # backpack (see _transfer_item); requires an explicit confirm since it destroys
@@ -108,7 +119,7 @@ class Game:
         # single one, so a single click is free for trade-offering/bag-withdraw without also equipping/
         # consuming the item by accident
         self.DBLCLICK_MS = 350
-        self.auto_fire_enabled = False  # I key: fires continuously without holding the mouse button
+        self.auto_fire_enabled = settings.get("auto_fire")  # I key: fires continuously without holding the mouse button
         self.right_panel_mode = "inventory"  # Tab key: switches inventory vs. pet stats in the right dock
         self._fire_buffer = 0.0  # seconds left to auto-fire a click that landed just before
         # the weapon's cooldown cleared - see _handle_firing / FIRE_BUFFER_WINDOW
@@ -156,6 +167,13 @@ class Game:
         self._dust_cd = 0.0  # footstep-dust cooldown, see _update_sim
         self.bazaar_ground_items = spawn_bazaar_chests()  # permanent chests + whatever players drop
         self.death_info = None
+        self.quest_log_expanded = True  # J toggles the story quest log between full and title-only
+        self.story_banner = None  # [text, remaining_seconds] - the big "ACT COMPLETE" banner
+        self.credits_t = None  # seconds into the end credits while they're showing, else None
+        self._given_heard = set()  # acts whose intro Father Given already told this session
+        self._bonus_from_nexus = False  # the Forge is entered from the Nexus, so leaving returns there
+        if settings.get("fullscreen"):
+            self._toggle_fullscreen()
 
     # ---------------------------------------------------------- lifecycle --
     def _nexus_spawn_pos(self):
@@ -171,6 +189,7 @@ class Game:
         # a fresh character only - never on resume_run, whose backpack_size/xp
         # are already whatever was persisted (see accounts.apply_unlocks's docstring)
         accounts.apply_unlocks(self.player, self.player_name)
+        self.player.story = story.StoryProgress(accounts.get_story_act(self.player_name))
         self.player.pos = self._nexus_spawn_pos()
         self.state = STATE_NEXUS
         self.realm_sim = None
@@ -185,6 +204,8 @@ class Game:
         _submit_name_entry, which calls this when a save exists for the entered name."""
         self.player = Player.from_full_state(dict(saved_state, pid="local", name=self.player_name))
         self.player.alive = True  # a dead character is never saved (see characters.delete_character)
+        self.player.story = story.StoryProgress.from_json(saved_state.get("story"),
+                                                          accounts.get_story_act(self.player_name))
         self.player.pos = self._nexus_spawn_pos()
         self.state = STATE_NEXUS
         self.realm_sim = None
@@ -197,17 +218,44 @@ class Game:
             characters.save_character(self.player_name, self.player)
 
     def enter_realm(self):
-        self.realm_sim = RealmSim(bonus=False)
+        self.realm_sim = RealmSim(bonus=False, story_act=self.player.story.act)
         self.realm_minimap = minimap.MinimapState()
         self.player.pos = self.realm_sim.spawn_point()
         self.state = STATE_REALM
+        self._story_event("zone", "realm")
+
+    def _story_event(self, kind, key=None):
+        for msg, color in self.player.story.on_event(kind, key):
+            self.push_feed(msg, color)
+        self._drain_story_completions()
+
+    def _drain_story_completions(self):
+        """Act checkpoints: bank every newly completed act on the account right away
+        (so a crash or permadeath can't take it back) and show the banner/credits."""
+        progress = self.player.story if self.player is not None else None
+        if progress is None or not progress.just_completed:
+            return
+        for act_idx in progress.just_completed:
+            accounts.set_story_act(self.player_name, act_idx + 1)
+            self.story_banner = [f"{story.ACTS[act_idx]['title']} - COMPLETE", 5.0]
+            audio.play_levelup()
+        progress.just_completed = []
+        if progress.finished and self.credits_t is None:
+            self.credits_t = 0.0
+        self._save_character_progress()
+
+    def enter_forge(self):
+        self.enter_bonus_room(theme="forge", difficulty=FORGE_DIFFICULTY)
+        self._bonus_from_nexus = True
+        self.push_feed("Father Given snaps his fingers. The floor is suddenly a portal. Rude.", (255, 200, 120))
 
     def enter_bazaar(self):
         self.player.pos = self.bazaar_map.center_world_pos()
         self.state = STATE_BAZAAR
 
     def enter_bonus_room(self, theme="generic", kind=None, difficulty=None):
-        self.bonus_sim = RealmSim(bonus=True, theme=theme, difficulty_name=difficulty)
+        self.bonus_sim = RealmSim(bonus=True, theme=theme, difficulty_name=difficulty, story_act=self.player.story.act)
+        self._bonus_from_nexus = False
         self.bonus_minimap = minimap.MinimapState()
         self._pre_bonus_pos = pygame.Vector2(self.player.pos)
         self.player.pos = self.bonus_sim.spawn_point()
@@ -219,6 +267,10 @@ class Game:
         # teleport kind - no special-case needed here anymore, every portal touch
         # in a bonus room really does mean "leave the dungeon."
         self.bonus_sim = None
+        if self._bonus_from_nexus or self.realm_sim is None:
+            self._bonus_from_nexus = False
+            self.go_nexus()
+            return
         self.player.pos = self._pre_bonus_pos or self.realm_sim.spawn_point()
         self.state = STATE_REALM
 
@@ -286,6 +338,26 @@ class Game:
         characters.delete_character(self.player_name)
         self.state = STATE_DEAD
 
+    def _dock_mode(self):
+        """The right dock's effective Tab mode - falls back to inventory with no pet."""
+        if self.right_panel_mode == "pet" and getattr(self.player, "pet", None) is not None:
+            return "pet"
+        return "inventory"
+
+    def _show_pet_msg(self):
+        """Shows the feed/pack/fuse result Player left in pet_msg, plus the fusion burst."""
+        p = self.player
+        if p.pet_msg:
+            self.push_feed(*p.pet_msg)
+            p.pet_msg = None
+        if p.pet_fused:
+            p.pet_fused = False
+            pos = p.pos
+            vfx.spawn_burst(pos, (255, 120, 220), count=40, speed=(60, 230), life=(0.5, 1.0), radius=(2, 5))
+            vfx.spawn_ring(pos, (255, 200, 255), max_radius=90, life=0.6)
+            vfx.trigger_shake(0.25, 4)
+            audio.play_levelup()
+
     def push_feed(self, msg, color):
         self.feed.insert(0, [msg, color, 4.0])
         self.feed = self.feed[:4]
@@ -312,28 +384,24 @@ class Game:
         # requested size - keeps canvas/window/camera consistent even if the OS/driver
         # clamps or ignores part of the request
         self._resize_canvas(*self.window.get_size())
+        if settings.get("fullscreen") != self.fullscreen:
+            settings.change("fullscreen", self.fullscreen)
 
     def _menu_items(self):
-        """The O-key menu: an actual interactive list (Up/Down to move, Enter to
-        activate), not just a read-only controls reference - RotMG's own options
-        screen works the same way. The controls reference is still shown alongside it."""
-        items = [
-            (f"Auto-fire: {'ON' if self.auto_fire_enabled else 'OFF'}", self._menu_toggle_autofire),
-            (f"Fullscreen: {'ON' if self.fullscreen else 'OFF'}", self._toggle_fullscreen),
-            ("Reset camera rotation", self.cam.reset_rotation),
-        ]
-        if self.state in (STATE_REALM, STATE_BONUS):
-            mm = self._current_minimap()
-            if mm is not None:
-                items.append((f"Full map: {'OPEN' if mm.full_map_open else 'closed'}",
-                               self._menu_toggle_full_map))
-        if self.state != STATE_CLASS_SELECT:
-            items.append(("Abandon run (Class Select)", self._menu_quit_to_class_select))
-        items.append(("Close menu", self._menu_close))
-        return items
+        """The O-key options menu rows (see game/options_menu.py) - persisted
+        settings plus this client's own actions."""
+        mm = self._current_minimap() if self.state in (STATE_REALM, STATE_BONUS) else None
+        return options_menu.build_rows(
+            auto_fire_get=lambda: self.auto_fire_enabled, auto_fire_set=self._set_auto_fire,
+            fullscreen_get=lambda: self.fullscreen, fullscreen_toggle=self._toggle_fullscreen,
+            reset_camera=self.cam.reset_rotation, close=self._menu_close,
+            full_map=(lambda: mm.full_map_open, self._menu_toggle_full_map) if mm is not None else None,
+            leave=("Abandon run (Class Select)", self._menu_quit_to_class_select)
+            if self.state != STATE_CLASS_SELECT else None)
 
-    def _menu_toggle_autofire(self):
-        self.auto_fire_enabled = not self.auto_fire_enabled
+    def _set_auto_fire(self, enabled):
+        self.auto_fire_enabled = bool(enabled)
+        settings.change("auto_fire", self.auto_fire_enabled)
 
     def _menu_toggle_full_map(self):
         mm = self._current_minimap()
@@ -363,7 +431,7 @@ class Game:
     # ---------------------------------------------------------------- run --
     def run(self):
         while True:
-            dt = self.clock.tick(C.FPS) / 1000.0
+            dt = self.clock.tick(settings.fps_cap()) / 1000.0
             dt = min(dt, 0.05)
             dt = vfx.apply_hitstop(dt)
             if not self.handle_events():
@@ -399,6 +467,14 @@ class Game:
                 if event.type == pygame.KEYDOWN:
                     self._handle_name_entry_key(event)
                 continue
+            if self.quit_confirm_open:
+                if self._quit_confirm_event(event):
+                    return False
+                continue
+            if (self.credits_t is not None and event.type == pygame.KEYDOWN
+                    and event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_ESCAPE)):
+                self.credits_t = None  # skip the end credits
+                continue
             if event.type == pygame.KEYDOWN:
                 if self.chat_open:
                     self._handle_chat_key(event)
@@ -417,13 +493,11 @@ class Game:
                 elif event.key == pygame.K_o:
                     self.help_open = not self.help_open
                     self.menu_selected = 0
-                elif self.help_open and event.key in (pygame.K_UP, pygame.K_DOWN, pygame.K_w, pygame.K_s):
-                    items = self._menu_items()
-                    step = -1 if event.key in (pygame.K_UP, pygame.K_w) else 1
-                    self.menu_selected = (self.menu_selected + step) % len(items)
-                elif self.help_open and event.key == pygame.K_RETURN:
-                    _, action = self._menu_items()[self.menu_selected]
-                    action()
+                    self._cancel_drag()
+                elif self.help_open and event.key in options_menu.MENU_KEYS:
+                    new_sel = options_menu.handle_key(self._menu_items(), self.menu_selected, event.key)
+                    if new_sel is not None:
+                        self.menu_selected = new_sel
                 elif self.echo_shop_open and event.key in (pygame.K_UP, pygame.K_DOWN, pygame.K_w, pygame.K_s):
                     items = self._echo_shop_items()
                     step = -1 if event.key in (pygame.K_UP, pygame.K_w) else 1
@@ -431,8 +505,10 @@ class Game:
                 elif self.echo_shop_open and event.key == pygame.K_RETURN:
                     _, action = self._echo_shop_items()[self.echo_shop_selected]
                     action()
+                elif event.key == pygame.K_j and self.player is not None:
+                    self.quest_log_expanded = not self.quest_log_expanded
                 elif event.key == pygame.K_i and self.state in (STATE_REALM, STATE_BONUS):
-                    self.auto_fire_enabled = not self.auto_fire_enabled
+                    self._set_auto_fire(not self.auto_fire_enabled)
                     self.push_feed(f"Auto-fire {'ON' if self.auto_fire_enabled else 'OFF'}",
                                     (150, 220, 255) if self.auto_fire_enabled else (170, 170, 180))
                 elif (event.key == pygame.K_TAB
@@ -451,6 +527,8 @@ class Game:
                     self._zoom_minimap(-minimap.ZOOM_STEP)
                 elif event.key == pygame.K_ESCAPE and self.pending_socket is not None:
                     self.pending_socket = None
+                elif event.key == pygame.K_ESCAPE and self.drag_from is not None:
+                    self._cancel_drag()
                 elif event.key == pygame.K_ESCAPE:
                     if self._map_open():
                         self._current_minimap().full_map_open = False
@@ -461,7 +539,7 @@ class Game:
                     elif self.state == STATE_VAULT:
                         pass  # closing the Vault is click-only now (see vault_close_button_rect) - never Enter/Escape
                     else:
-                        return False
+                        self.quit_confirm_open = True
                 elif self.state == STATE_CLASS_SELECT:
                     self._class_select_key(event.key)
                 elif self.state == STATE_REALM:
@@ -491,13 +569,9 @@ class Game:
                 if self.help_open and ui.help_close_button_rect(self._menu_items()).collidepoint(event.pos):
                     self.help_open = False
                 elif self.help_open:
-                    items = self._menu_items()
-                    for i, rect in enumerate(ui.help_menu_item_rects(items)):
-                        if rect.collidepoint(event.pos):
-                            self.menu_selected = i
-                            _, action = items[i]
-                            action()
-                            break
+                    clicked = options_menu.handle_click(self._menu_items(), event.pos)
+                    if clicked is not None:
+                        self.menu_selected = clicked
                 elif self.echo_shop_open and ui.echo_shop_close_button_rect(self._echo_shop_items()).collidepoint(event.pos):
                     self.echo_shop_open = False
                 elif self.echo_shop_open:
@@ -524,10 +598,16 @@ class Game:
                       and ui.chat_log_rect(self.chat_log).collidepoint(event.pos)):
                     self.chat_open = True
                     self.chat_buffer = ""
+                elif (self.state in (STATE_NEXUS, STATE_BAZAAR, STATE_VAULT_ROOM, STATE_REALM, STATE_BONUS)
+                      and self._dock_mode() == "pet"
+                      and ui.pet_pack_button_rect(self.player).collidepoint(event.pos)):
+                    self.player.pack_pet()
+                    self._show_pet_msg()
                 elif self.state in (STATE_NEXUS, STATE_BAZAAR, STATE_VAULT_ROOM, STATE_REALM, STATE_BONUS):
                     self._inventory_mouse_down(event.pos)
             elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-                if self.drag_from is not None:
+                self._sync_drag_state()
+                if self.drag_from is not None and self.player is not None:
                     if self.state == STATE_VAULT:
                         self._vault_mouse_up(event.pos)
                     else:
@@ -555,6 +635,13 @@ class Game:
                 self._base_size = self.window.get_size()
                 self._resize_canvas(*self._base_size)
         return True
+
+    def _quit_confirm_event(self, event):
+        """Handles one event while the quit confirmation is up; True = really quit."""
+        verdict = options_menu.quit_confirm_verdict(event)
+        if verdict is not None:
+            self.quit_confirm_open = False
+        return bool(verdict)
 
     def _current_minimap(self):
         if self.state == STATE_REALM:
@@ -594,7 +681,7 @@ class Game:
             for i, rect in enumerate(ui.bag_slot_rects(self.cam(bag.pos))):
                 if rect.collidepoint(pos):
                     return ("bag", i)
-        pet_rect = ui.pet_feed_target_rect(self.player)
+        pet_rect = ui.pet_feed_target_rect(self.player, self._dock_mode())
         if pet_rect is not None and pet_rect.collidepoint(pos):
             return ("pet", None)
         for rect, slot_type in ui.equip_slot_rects():
@@ -640,6 +727,7 @@ class Game:
         if has_item:
             self.drag_from = slot
             self.drag_start_pos = pos
+            self._drag_state = self.state
             self._ui_click_active = True
             self.pending_socket = None  # a fresh drag cancels an unconfirmed socket request
 
@@ -660,6 +748,8 @@ class Game:
     def _inventory_mouse_up(self, pos):
         origin = self.drag_from
         self.drag_from = None
+        if origin is None or self.player is None or self.drag_start_pos is None:
+            return
         dest = self._slot_at(pos)
         dropped_far = math.hypot(pos[0] - self.drag_start_pos[0], pos[1] - self.drag_start_pos[1]) > 6
         if origin[0] == "bag":
@@ -773,10 +863,8 @@ class Game:
             i = origin[1]
             if i < len(p.backpack):
                 it = p.backpack[i]
-                if p.feed_pet(i):
-                    self.push_feed(f"Fed {it.display_name} to your pet", (170, 220, 255))
-                else:
-                    self.push_feed("Can't feed that to your pet", (220, 150, 90))
+                p.feed_pet(i)
+                self._show_pet_msg()
         elif origin[0] == "backpack" and dest[0] == "bag":
             # deposit INTO the currently-open container - only a BazaarChest accepts
             # this (a regular loot Bag stays take-only, see withdraw_from_bag's own
@@ -932,7 +1020,7 @@ class Game:
         matching RotMG's own "drag onto a full slot to swap" convention."""
         origin = self.drag_from
         self.drag_from = None
-        if origin is None:
+        if origin is None or self.player is None or self.drag_start_pos is None:
             return
         dest = self._slot_at(pos)
         dropped_far = math.hypot(pos[0] - self.drag_start_pos[0], pos[1] - self.drag_start_pos[1]) > 6
@@ -1032,7 +1120,10 @@ class Game:
             on_fountain = self.nexus_map.tile_at(self.player.pos.x, self.player.pos.y) == world.NEXUS_FOUNTAIN
             near_bot = self.player.pos.distance_to(self.nexus_bot.pos) <= self.BOT_TRADE_RADIUS
             if not on_fountain and not near_bot:
-                self.push_feed("Stand in the fountain to wish, or approach the Guide to trade", (170, 170, 185))
+                self.push_feed("Stand in the fountain to wish, or walk up to Father Given to talk", (170, 170, 185))
+                return
+            if near_bot:  # talking wins - Father Given starts out standing in the fountain plaza
+                self._talk_to_given()
                 return
             from game.items import wish_fountain
             old, new, err = wish_fountain(self.player)
@@ -1059,6 +1150,20 @@ class Game:
         item, _msg = sim.fish_action(self.player)
         if item:
             audio.play_pickup()
+
+    def _talk_to_given(self):
+        """F next to Father Given: he says the current act's hint (and the act intro the
+        first time), counts as the Prologue's "talk" objective, and in the Finale opens
+        the Forge."""
+        progress = self.player.story
+        self._story_event("talk")
+        line = story.given_line(progress, self._given_heard)
+        self.nexus_bot.speech = line
+        self.nexus_bot.speech_age = 0.0
+        self.chat_log.append({"name": self.nexus_bot.name, "text": line, "age": 0.0})
+        self.chat_log = self.chat_log[-ui.CHAT_LOG_STORE_CAP:]
+        if progress.current() is story.ACTS[-1]:
+            self.enter_forge()
 
     def _handle_chat_key(self, event):
         ctrl = event.mod & pygame.KMOD_CTRL
@@ -1196,8 +1301,11 @@ class Game:
         elif it.slot == "egg":
             from game.items import PET_KINDS
             pet_name = PET_KINDS.get(it.pet_kind, {}).get("name", it.name)
+            had_pet = p.pet is not None
             p.use_potion(idx)
-            self.push_feed(f"{pet_name} hatched!", (170, 220, 255))
+            verb = "is back out" if it.pet_state else "hatched"
+            self.push_feed(f"{pet_name} {verb}!" + (" (your old pet went into a carrier)" if had_pet else ""),
+                           (170, 220, 255))
         elif it.slot == "shard":
             if self.state != STATE_REALM:
                 self.push_feed("You can only open a Dungeon Shard out in the Realm.", (220, 120, 120))
@@ -1224,7 +1332,21 @@ class Game:
         STATE_VAULT: "vault", STATE_REALM: "realm", STATE_BONUS: "dungeon",
     }
 
+    def _cancel_drag(self):
+        self.drag_from = None
+        self.drag_start_pos = None
+        self.pending_socket = None
+        self._ui_click_active = False
+
+    def _sync_drag_state(self):
+        """A drag can never outlive the screen it started on - any state change
+        (portal, Nexus, death, Vault open/close) drops it. Hardening for the old
+        "dragging an item while entering a portal crashed" report."""
+        if self.drag_from is not None and self.state != self._drag_state:
+            self._cancel_drag()
+
     def update(self, dt):
+        self._sync_drag_state()
         if self.state == STATE_INTRO:
             self.intro_timer += dt
             if self.intro_timer >= INTRO_DURATION:
@@ -1248,6 +1370,14 @@ class Game:
             zone = self._THEME_ZONE_FOR_STATE.get(self.state)
             if zone is not None:
                 audio.play_theme(zone)
+        if self.story_banner is not None:
+            self.story_banner[1] -= dt
+            if self.story_banner[1] <= 0:
+                self.story_banner = None
+        if self.credits_t is not None:
+            self.credits_t += dt
+            if ui.credits_finished(self.credits_t):
+                self.credits_t = None
         for m in self.feed:
             m[2] -= dt
         self.feed = [m for m in self.feed if m[2] > 0]
@@ -1265,7 +1395,7 @@ class Game:
         # is how Player.update()/​_handle_firing achieve the same thing locally.
         if self.state in (STATE_CLASS_SELECT, STATE_DEAD):
             pass
-        elif not self.chat_open and not self.help_open:
+        elif not self.chat_open and not self.help_open and not self.quit_confirm_open:
             keys = pygame.key.get_pressed()
             if keys[pygame.K_q]:
                 self.cam.rotate(-self.ROTATE_SPEED_DEG * dt)
@@ -1281,7 +1411,7 @@ class Game:
             # open too, same "typing in chat suppresses movement" pattern just
             # above - otherwise WASD leaks through the menu and moves the player
             # by accident while browsing it.
-            keys = None if (self.chat_open or self.help_open or self.echo_shop_open) else pygame.key.get_pressed()
+            keys = None if (self.chat_open or self.help_open or self.echo_shop_open or self.quit_confirm_open) else pygame.key.get_pressed()
             self.player.update(dt, keys, tmap.bounds(), tmap.is_solid, tmap.speed_multiplier,
                                 cam_angle=self.cam.angle)
             self.cam.follow(self.player.pos)
@@ -1313,7 +1443,7 @@ class Game:
             weather_kind = world.weather_for_tile(sim.realm_map.tile_at(p.pos.x, p.pos.y))
             mm.reveal(p.pos, radius=weather.reveal_radius_for(weather_kind, minimap.REVEAL_RADIUS_TILES))
             return
-        keys = None if (self.chat_open or self.help_open) else pygame.key.get_pressed()
+        keys = None if (self.chat_open or self.help_open or self.quit_confirm_open) else pygame.key.get_pressed()
         prev_pos = pygame.Vector2(p.pos)
         p.update(dt, keys, sim.realm_map.bounds(), sim.is_solid_at, sim.realm_map.speed_multiplier,
                  cam_angle=self.cam.angle)
@@ -1345,6 +1475,7 @@ class Game:
         sim.update(dt, {p.pid: p})
         for pid, msg, color in sim.events:
             self.push_feed(msg, color)
+        self._drain_story_completions()
         vfx.dispatch(sim.vfx_events)
         for kind, family, sx, sy in sim.sound_events:
             # a continent-sized realm can have combat/idle-barks happening anywhere -
@@ -1398,7 +1529,7 @@ class Game:
         sim.begin_tick()
 
     def _handle_firing(self, p, sim, dt):
-        if self.chat_open or self.help_open:
+        if self.chat_open or self.help_open or self.quit_confirm_open:
             self._fire_buffer = 0.0
             return  # typing, or browsing the options menu, shouldn't also fire your weapon
         wants_fire = (self.auto_fire_enabled or pygame.mouse.get_pressed()[0]) and not self._ui_click_active
@@ -1468,6 +1599,12 @@ class Game:
             self.echo_shop_selected %= len(items)
             ui.draw_echo_shop_overlay(s, accounts.get_echoes(self.player_name), menu_items=items,
                                        selected_idx=self.echo_shop_selected, mouse_pos=pygame.mouse.get_pos())
+        if self.story_banner is not None and self.state not in (STATE_DEAD, STATE_VAULT):
+            ui.draw_story_banner(s, self.story_banner[0], self.story_banner[1])
+        if self.credits_t is not None:
+            ui.draw_credits(s, self.credits_t)
+        if self.quit_confirm_open:
+            ui.draw_quit_confirm(s, pygame.mouse.get_pos())
 
     def _draw_right_switch_panel(self, s, mp):
         """Tab key (see handle_events) switches this dock slot between the
@@ -1475,12 +1612,11 @@ class Game:
         a small tab-label strip above it so the key is discoverable. Falls
         back to inventory if there's no pet to show, so Tab can never leave
         the player looking at a blank panel."""
-        mode = self.right_panel_mode
-        if mode == "pet" and getattr(self.player, "pet", None) is None:
-            mode = "inventory"
-        ui.draw_panel_tabs(s, mode)
+        mode = self._dock_mode()
+        dragging = self.drag_from is not None
+        ui.draw_panel_tabs(s, mode, feed_drop_hint=dragging and getattr(self.player, "pet", None) is not None)
         if mode == "pet":
-            ui.draw_pet_panel(s, self.player, dragging=self.drag_from is not None)
+            ui.draw_pet_panel(s, self.player, dragging=dragging, mouse_pos=mp)
         else:
             ui.draw_inventory(s, self.player, mp, dragging_from=self.drag_from)
 
@@ -1514,7 +1650,9 @@ class Game:
                 banner = ui._FONT_S.render(f"Live event: {event_label}", True, (255, 220, 120))
                 s.blit(banner, (C.SCREEN_W // 2 - banner.get_width() // 2, 104))
         ui.draw_hud(s, name, 0, False)
-        ui.draw_fps_counter(s, self.clock.get_fps())
+        ui.draw_story_log(s, self.player.story.quest_log(), self.quest_log_expanded)
+        if settings.get("show_fps"):
+            ui.draw_fps_counter(s, self.clock.get_fps())
         mp = pygame.mouse.get_pos()
         ui.draw_player_panel(s, self.player, auto_fire=False)
         self._draw_right_switch_panel(s, mp)
@@ -1528,6 +1666,7 @@ class Game:
         open_bag = self._current_bag()
         if open_bag is not None:
             ui.draw_bag_window(s, self.cam(open_bag.pos), open_bag.items, mp, dragging_from=self.drag_from)
+        ui.draw_item_feed(s, self.feed, y=128)  # below the hub's portal hint + live-event banner
         minimap.draw_corner(s, tmap, mm, self.player.pos)
         ui.draw_chat_log(s, self.chat_log, scroll=self.chat_scroll)
         if self.chat_open:
@@ -1578,10 +1717,13 @@ class Game:
             ui.draw_day_night_clock(s, sim.light_level, sim.blood_moon_active)
         self.weather_fx.draw(s)
         ui.draw_hud(s, name, sim.kill_count, sim.boss is not None)
-        ui.draw_fps_counter(s, self.clock.get_fps())
+        if settings.get("show_fps"):
+            ui.draw_fps_counter(s, self.clock.get_fps())
         if self._portal_prompt is not None:
             ui.draw_portal_prompt(s)
-        if sim.is_bonus_room:
+        if not sim.is_bonus_room or sim.theme_key == "forge":
+            ui.draw_story_log(s, self.player.story.quest_log(), self.quest_log_expanded)
+        else:
             ui.draw_quest_panel(s, sim.secret_quest, sim.secret_quest_progress, sim._quest_timer,
                                  secret_quest_target=sim._secret_quest_target,
                                  phase2_quest=sim.phase2_quest, phase2_progress=sim.phase2_quest_progress,

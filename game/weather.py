@@ -17,6 +17,13 @@ import pygame
 from game import constants as C
 
 MAX_PARTICLES = 35  # halved from 70 - user asked to cut down weather VFX load
+_WEATHER_CAP = {"off": 0, "low": 14, "high": MAX_PARTICLES}
+_particle_cap = MAX_PARTICLES  # options-menu particle level (game/settings.py)
+
+
+def set_particle_level(level):
+    global _particle_cap
+    _particle_cap = _WEATHER_CAP.get(level, MAX_PARTICLES)
 
 
 class WeatherFX:
@@ -34,7 +41,9 @@ class WeatherFX:
         if self.kind is None:
             self.particles = []
             return
-        while len(self.particles) < MAX_PARTICLES:
+        if len(self.particles) > _particle_cap:
+            del self.particles[_particle_cap:]
+        while len(self.particles) < _particle_cap:
             self.particles.append(self._spawn())
         for p in self.particles:
             self._advance(p, dt)
