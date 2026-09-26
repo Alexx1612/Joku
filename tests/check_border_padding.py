@@ -59,16 +59,9 @@ def check_draw_hud_text_clear_of_edges():
     """The zone-name/kill-count text (top-right) and the centered bottom
     hint text (draw_hud) - measured from their real rendered surfaces, not
     guessed sizes, since font metrics vary by string content."""
-    pad = 12
-    zone_surf = ui._FONT_M.render("The Realm", True, C.COL_WHITE)
-    zone_rect = pygame.Rect(C.SCREEN_W - zone_surf.get_width() - pad, pad,
-                             zone_surf.get_width(), zone_surf.get_height())
-    _assert_clear_of_edges("zone name text", zone_rect)
-
-    kc_surf = ui._FONT_S.render("kills: 999  [BOSS ACTIVE]", True, (220, 180, 80))
-    kc_rect = pygame.Rect(C.SCREEN_W - kc_surf.get_width() - pad, pad + 24,
-                           kc_surf.get_width(), kc_surf.get_height())
-    _assert_clear_of_edges("kill counter text", kc_rect)
+    # zone name / kill counter now live in the dock's column beside the minimap
+    _assert_clear_of_edges("zone info column", ui.zone_info_rect())
+    _assert_clear_of_edges("right dock frame", ui.dock_frame_rect())
 
     hint_surf = ui._FONT_S.render("WASD move | mouse aim+click fire | Space ability | Enter chat", True, (150, 150, 160))
     hint_rect = pygame.Rect(C.SCREEN_W // 2 - hint_surf.get_width() // 2, C.SCREEN_H - 26,

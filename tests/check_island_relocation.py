@@ -93,7 +93,7 @@ def check_coastline_radius_extraction_matches_make_realm():
     v1 = world.coastline_radius(0.0)
     v2 = world.coastline_radius(math.pi)
     assert v1 != v2, "the coastline should genuinely vary by angle, not be a constant"
-    max_r = min(world.REALM_W, world.REALM_H) / 2 - 3
+    max_r = world.CONTINENT_R  # the continent's radius (the map itself is ocean-padded since Batch 15)
     assert max_r * 0.35 <= v1 <= max_r * 1.15
     print("check_coastline_radius_extraction_matches_make_realm: PASSED")
 

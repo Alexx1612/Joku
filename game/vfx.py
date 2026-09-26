@@ -20,6 +20,9 @@ import pygame
 
 _particles = []  # each: dict(pos, vel, life, max_life, color, radius)
 _rings = []       # each: dict(pos, life, max_life, color, max_radius)
+_shapes = []      # each: dict(kind, pos, life, max_life, color, ...) - bolts/shards/pillars/domes/crescents/
+#                   waves/clouds for the per-ability spell looks (see ABILITY_STYLES / spawn_ability_style)
+MAX_SHAPES = 60
 _shake_mag = 0.0
 _shake_time = 0.0
 _shake_total = 1.0
@@ -44,6 +47,7 @@ def configure(shake=True, hitstop=True, particles="high"):
     if _particle_scale <= 0:
         _particles.clear()
         _rings.clear()
+        _shapes.clear()
 
 
 def _scaled(count):
@@ -216,6 +220,10 @@ def update(dt):
         r["life"] -= dt
         if r["life"] <= 0:
             _rings.remove(r)
+    for sh in _shapes[:]:
+        sh["life"] -= dt
+        if sh["life"] <= 0:
+            _shapes.remove(sh)
 
 
 def draw(surf, cam):
@@ -235,6 +243,8 @@ def draw(surf, cam):
         pygame.draw.circle(layer, (*ring["color"], int(230 * t)), (d // 2, d // 2), radius, width=3)
         px, py = cam(ring["pos"])
         surf.blit(layer, (px - d // 2, py - d // 2))
+    for sh in _shapes:
+        _draw_shape(surf, cam, sh)
 
 
 # ------------------------------------------------------------- dispatch --
@@ -245,10 +255,220 @@ def draw(surf, cam):
 _ABILITY_RING_RADIUS = {"nova": 90, "freeze": 90, "drain": 90, "chain": 40, "heal": 60, "haste": 50, "mana": 55}
 
 
+def _add_shape(kind, pos, color, life, **kw):
+    if _particle_scale <= 0 or len(_shapes) >= MAX_SHAPES:
+        return
+    _shapes.append(dict(kind=kind, pos=pygame.Vector2(pos), color=color, life=life, max_life=life, **kw))
+
+
+def _jagged(a, b, segments=7, jitter=10):
+    """A lightning-style polyline from a to b (fixed at spawn so it doesn't boil)."""
+    a, b = pygame.Vector2(a), pygame.Vector2(b)
+    d = b - a
+    n = pygame.Vector2(-d.y, d.x)
+    if n.length_squared() > 0:
+        n = n.normalize()
+    pts = [a]
+    for i in range(1, segments):
+        pts.append(a + d * (i / segments) + n * random.uniform(-jitter, jitter))
+    pts.append(b)
+    return pts
+
+
+def _draw_shape(surf, cam, sh):
+    t = max(0.0, sh["life"] / sh["max_life"])
+    a = int(255 * t)
+    col = sh["color"]
+    kind = sh["kind"]
+    if kind == "bolt":  # world-space jagged line (lightning / chain arc)
+        pts = [cam(p) for p in sh["points"]]
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        x0, y0 = int(min(xs)) - 4, int(min(ys)) - 4
+        layer = pygame.Surface((int(max(xs)) - x0 + 8, int(max(ys)) - y0 + 8), pygame.SRCALPHA)
+        local = [(p[0] - x0, p[1] - y0) for p in pts]
+        pygame.draw.lines(layer, (*col, a // 2), False, local, 6)
+        pygame.draw.lines(layer, (255, 255, 255, a), False, local, 2)
+        surf.blit(layer, (x0, y0))
+        return
+    if kind == "shard":  # a spinning crystal splinter flying outward
+        c = sh["pos"] + sh["vel"] * (sh["max_life"] - sh["life"])
+        px, py = cam(c)
+        ang = sh["ang"] + (1 - t) * 8
+        L = sh["r"]
+        pts = [(px + math.cos(ang) * L, py + math.sin(ang) * L),
+               (px + math.cos(ang + 2.6) * L * 0.4, py + math.sin(ang + 2.6) * L * 0.4),
+               (px - math.cos(ang) * L * 0.5, py - math.sin(ang) * L * 0.5),
+               (px + math.cos(ang - 2.6) * L * 0.4, py + math.sin(ang - 2.6) * L * 0.4)]
+        x0, y0 = min(p[0] for p in pts) - 2, min(p[1] for p in pts) - 2
+        layer = pygame.Surface((L * 3 + 6, L * 3 + 6), pygame.SRCALPHA)
+        local = [(p[0] - x0, p[1] - y0) for p in pts]
+        pygame.draw.polygon(layer, (*col, a), local)
+        pygame.draw.polygon(layer, (255, 255, 255, a), local, 1)
+        surf.blit(layer, (x0, y0))
+        return
+    px, py = cam(sh["pos"])
+    grow = min(1.0, (1 - t) * 4)
+    if kind == "pillar":  # a column of light rising out of the ground
+        w, h = sh["w"], max(4, int(sh["h"] * (0.4 + 0.6 * min(1.0, (1 - t) * 3))))
+        layer = pygame.Surface((w, h), pygame.SRCALPHA)
+        for i in range(w // 2):
+            f = i / max(1, w // 2)
+            c = (*col, int(a * 0.6 * f))
+            pygame.draw.line(layer, c, (i, 0), (i, h))
+            pygame.draw.line(layer, c, (w - 1 - i, 0), (w - 1 - i, h))
+        pygame.draw.line(layer, (255, 255, 240, a), (w // 2, 0), (w // 2, h), 2)
+        surf.blit(layer, (px - w // 2, py - h))
+    elif kind == "dome":  # a translucent bubble
+        r = max(4, int(sh["r"] * (0.6 + 0.4 * grow)))
+        layer = pygame.Surface((r * 2 + 4, r * 2 + 4), pygame.SRCALPHA)
+        pygame.draw.circle(layer, (*col, int(a * 0.25)), (r + 2, r + 2), r)
+        pygame.draw.circle(layer, (*col, a), (r + 2, r + 2), r, 2)
+        pygame.draw.arc(layer, (255, 255, 255, a), (r // 2, r // 3, r, r), 0.6, 2.2, 2)
+        surf.blit(layer, (px - r - 2, py - r - 2))
+    elif kind == "crescent":  # a sweeping scythe arc
+        r = sh["r"]
+        start = sh["ang"] + (1 - t) * 2.4
+        layer = pygame.Surface((r * 2 + 8, r * 2 + 8), pygame.SRCALPHA)
+        rect = (4, 4, r * 2, r * 2)
+        pygame.draw.arc(layer, (*col, a // 2), rect, start, start + 1.6, 8)
+        pygame.draw.arc(layer, (240, 240, 255, a), rect, start, start + 1.6, 3)
+        surf.blit(layer, (px - r - 4, py - r - 4))
+    elif kind == "wave":  # sound-wave arcs rippling outward (horns)
+        r = int(10 + sh["r"] * (1 - t))
+        layer = pygame.Surface((r * 2 + 6, r * 2 + 6), pygame.SRCALPHA)
+        for k in range(3):
+            base = sh["ang"] + k * (math.tau / 3)
+            pygame.draw.arc(layer, (*col, a), (3, 3, r * 2, r * 2), base - 0.5, base + 0.5, 3)
+        surf.blit(layer, (px - r - 3, py - r - 3))
+    elif kind == "cloud":  # a soft, lingering blob (poison / smoke / rot)
+        r = max(3, int(sh["r"] * (0.7 + 0.3 * (1 - t))))
+        layer = pygame.Surface((r * 2 + 2, r * 2 + 2), pygame.SRCALPHA)
+        pygame.draw.circle(layer, (*col, int(a * 0.35)), (r + 1, r + 1), r)
+        pygame.draw.circle(layer, (*col, int(a * 0.5)), (r + 1, r + 1), int(r * 0.6))
+        surf.blit(layer, (px - r - 1, py - r - 1))
+
+
+# ability NAME -> visual style (each spell looks like what it's called)
+ABILITY_STYLES = {
+    "Orb of Shatter": "shatter", "Orb of Ruin": "ruin", "Orb of the Void": "void",
+    "Skull of Blight": "blight", "Skull of Corruption": "corruption", "Skull of the Reaper": "reaper",
+    "Quiver of Thunder": "thunder", "Quiver of Storms": "storms", "Quiver of the Gale": "gale",
+    "Tome of Mending": "mending", "Tome of Restoration": "restoration", "Tome of Rebirth": "rebirth",
+    "Aegis of Faith": "aegis", "Aegis of Devotion": "aegis", "Aegis of the Ward": "ward",
+    "Rally Horn": "horn", "War Horn": "horn", "Horn of the Vanguard": "horn",
+    "Smoke Draught": "smoke", "Shadow Draught": "smoke", "Draught of the Void": "smoke",
+    "Cloak of Shadows": "shadow", "Veil of Night": "shadow", "Veil of the Abyss": "shadow",
+}
+
+
+def _around(pos, r):
+    ang = random.uniform(0, math.tau)
+    d = random.uniform(0, r)
+    return pygame.Vector2(pos) + pygame.Vector2(math.cos(ang) * d, math.sin(ang) * d)
+
+
+def spawn_ability_style(style, pos, color, extra=()):
+    """The impact/cast look for one ability style. `extra` optionally carries a
+    second world point (chain-hop source / drain caster)."""
+    pos = pygame.Vector2(pos)
+    R = _ABILITY_RING_RADIUS["nova"]
+    other = pygame.Vector2(extra[0], extra[1]) if len(extra) >= 2 else None
+    if style == "shatter":  # crystal splinters flying out of a cracked orb
+        for i in range(12):
+            ang = i * math.tau / 12 + random.uniform(-0.2, 0.2)
+            _add_shape("shard", pos, (200, 170, 255), random.uniform(0.4, 0.6), r=random.randint(10, 15),
+                       ang=ang, vel=pygame.Vector2(math.cos(ang), math.sin(ang)) * random.uniform(160, 260))
+        spawn_ring(pos, (230, 210, 255), max_radius=R * 0.8, life=0.3)
+        trigger_shake(0.2, 5)
+    elif style == "ruin":  # a dark implosion that then cracks outward
+        spawn_converge(pos, (70, 30, 90), count=22, radius=R, life=(0.25, 0.4), pradius=(3, 5))
+        _add_shape("dome", pos, (60, 20, 70), 0.45, r=int(R * 0.7))
+        spawn_burst(pos, (170, 90, 255), count=24, speed=(160, 300), life=(0.25, 0.45), radius=(2, 5))
+        spawn_ring(pos, (120, 60, 180), max_radius=R, life=0.45)
+        trigger_shake(0.3, 8)
+    elif style == "void":  # purple chain lightning between hops
+        if other is not None:
+            _add_shape("bolt", pos, (190, 110, 255), 0.35, points=_jagged(other, pos, 8, 12))
+        spawn_burst(pos, (200, 150, 255), count=10, speed=(40, 120), life=(0.2, 0.4), radius=(1, 3))
+    elif style == "blight":  # a green poison cloud that lingers
+        for _ in range(6):
+            _add_shape("cloud", _around(pos, R * 0.55), (110, 200, 70), random.uniform(0.8, 1.2),
+                       r=random.randint(18, 30))
+        spawn_rise(pos, (150, 230, 90), count=10, life=(0.6, 1.0), spread=R * 0.5)
+    elif style == "corruption":  # rot spreading out in dark rings with drips
+        for k in range(3):
+            spawn_ring(pos, (70, 110, 40), max_radius=R * (0.5 + 0.25 * k), life=0.5 + 0.2 * k)
+        for _ in range(8):
+            _add_shape("cloud", _around(pos, R * 0.7), (60, 90, 30), random.uniform(0.9, 1.3),
+                       r=random.randint(12, 22))
+        spawn_burst(pos, (120, 160, 60), count=14, speed=(30, 90), life=(0.5, 0.9), radius=(2, 4))
+    elif style == "reaper":  # a scythe sweep + souls streaming back to the caster
+        _add_shape("crescent", pos, (200, 40, 60), 0.4, r=int(R * 0.8), ang=random.uniform(0, math.tau))
+        _add_shape("crescent", pos, (150, 20, 40), 0.5, r=int(R * 0.55), ang=random.uniform(0, math.tau))
+        if other is not None:
+            spawn_stream(pos, other, (230, 90, 110), count=12, life=0.5)
+        spawn_converge(pos, (170, 40, 60), count=10, radius=R * 0.8, life=(0.3, 0.5))
+    elif style in ("thunder", "storms"):  # lightning strikes from the sky
+        n = 3 if style == "thunder" else 6
+        for _ in range(n):
+            ground = _around(pos, R * 0.8)
+            top = ground + pygame.Vector2(random.uniform(-20, 20), -260)
+            _add_shape("bolt", ground, (255, 240, 140), random.uniform(0.2, 0.35), points=_jagged(top, ground, 7, 14))
+            spawn_burst(ground, (255, 240, 160), count=5, speed=(60, 140), life=(0.15, 0.3), radius=(1, 3))
+        if style == "storms":
+            spawn_ring(pos, (180, 200, 255), max_radius=R, life=0.4)
+        trigger_shake(0.25, 6 if style == "thunder" else 9)
+    elif style == "gale":  # a howling wind spiral that frosts over
+        for i in range(18):
+            ang = i * 0.7
+            d = 10 + i * (R / 18)
+            p = pos + pygame.Vector2(math.cos(ang) * d, math.sin(ang) * d)
+            spawn_burst(p, (200, 240, 255), count=1, speed=(20, 50), life=(0.4, 0.7), radius=(2, 3),
+                        angle_range=(ang + 1.3, ang + 1.8))
+        spawn_burst(pos, (150, 220, 255), count=20, speed=(20, 70), life=(0.6, 1.0), radius=(2, 4))
+        spawn_ring(pos, (170, 230, 255), max_radius=R, life=0.7)
+    elif style in ("mending", "restoration", "rebirth"):  # holy light pillars, escalating
+        n = {"mending": 1, "restoration": 3, "rebirth": 6}[style]
+        for i in range(n):
+            p = pos if i == 0 else _around(pos, 45)
+            _add_shape("pillar", p, (255, 240, 170), 0.6 + 0.1 * n, w=18 + 4 * n, h=90 + 15 * n)
+        spawn_rise(pos, (255, 245, 190), count=6 + 3 * n, life=(0.6, 1.1), spread=20 + 6 * n)
+        if style == "rebirth":
+            spawn_ring(pos, (255, 240, 170), max_radius=90, life=0.7)
+    elif style == "aegis":  # a golden dome of blessing
+        _add_shape("dome", pos, (255, 210, 90), 0.6, r=46)
+        spawn_rise(pos, (255, 230, 140), count=8, life=(0.5, 0.9))
+    elif style == "ward":  # a shimmering shield bubble
+        _add_shape("dome", pos, (120, 180, 255), 0.8, r=52)
+        _add_shape("dome", pos, (200, 230, 255), 0.5, r=40)
+        spawn_ring(pos, (140, 190, 255), max_radius=55, life=0.5)
+    elif style == "horn":  # sound waves blasting outward
+        for k in range(3):
+            _add_shape("wave", pos, (255, 220, 120), 0.35 + 0.12 * k, r=50 + 22 * k, ang=random.uniform(0, math.tau))
+    elif style == "smoke":  # a puff of drinker's smoke
+        for _ in range(9):
+            _add_shape("cloud", _around(pos, 34), (170, 170, 180), random.uniform(0.7, 1.1), r=random.randint(14, 24))
+        spawn_rise(pos, (210, 210, 220), count=12, life=(0.6, 1.0), spread=20)
+    elif style == "shadow":  # darkness wrapping the caster
+        # a violet-edged cloak of darkness folding in around the caster
+        spawn_converge(pos, (150, 110, 220), count=22, radius=60, life=(0.35, 0.6), pradius=(2, 4))
+        _add_shape("cloud", pos, (60, 30, 100), 0.7, r=38)
+        _add_shape("crescent", pos, (170, 130, 240), 0.45, r=30, ang=random.uniform(0, math.tau))
+        _add_shape("crescent", pos, (120, 80, 200), 0.55, r=40, ang=random.uniform(0, math.tau))
+        spawn_ring(pos, (140, 100, 210), max_radius=44, life=0.45)
+
+
+
+
 def dispatch(vfx_events):
-    for kind, x, y, color in vfx_events:
+    for ev in vfx_events:
+        kind, x, y, color = ev[0], ev[1], ev[2], tuple(ev[3])
         pos = (x, y)
-        if kind == "death":
+        if kind.startswith("ab_"):
+            # a per-ability spell look: ("ab_<style>", x, y, color[, x2, y2])
+            spawn_ability_style(kind[3:], pos, color, tuple(ev[4:]))
+        elif kind == "death":
             # bigger/brighter punch pass - was a plain burst with no ring at all
             spawn_burst(pos, color, count=36, speed=(70, 260), life=(0.35, 0.75), radius=(2, 5))
             spawn_ring(pos, color, max_radius=55, life=0.4)

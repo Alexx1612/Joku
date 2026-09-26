@@ -30,6 +30,7 @@ DEFAULTS = {
     "show_fps": True,
     "auto_fire": False,
     "fullscreen": False,
+    "panel_offsets": {},  # dragged chat / quest-log positions, see ui.PANEL_OFFSETS
 }
 
 current = dict(DEFAULTS)
@@ -51,6 +52,11 @@ def _clean(data):
             out[key] = val if val in PARTICLE_LEVELS else default
         elif key == "fps_cap":
             out[key] = val if val in FPS_CAPS and not isinstance(val, bool) else default
+        elif key == "panel_offsets":
+            out[key] = {k: [int(v[0]), int(v[1])] for k, v in val.items()
+                        if isinstance(v, (list, tuple)) and len(v) == 2
+                        and all(isinstance(n, (int, float)) and not isinstance(n, bool) for n in v)
+                        } if isinstance(val, dict) else {}
     return out
 
 
@@ -100,6 +106,13 @@ def apply():
     vfx.configure(shake=current["screen_shake"], hitstop=current["hit_stop"],
                   particles=current["particles"])
     weather.set_particle_level(current["particles"])
+    try:
+        from game import ui
+        ui.PANEL_OFFSETS.clear()
+        for name, off in current["panel_offsets"].items():
+            ui.set_panel_offset(name, off)
+    except Exception:
+        pass  # ui needs pygame fonts - only matters for the real clients
 
 
 def fps_cap():

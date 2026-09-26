@@ -96,10 +96,13 @@ def export_all():
         _write_wav(f"mob_death_{family}", _capture(audio.play_mob_death, family))
         _write_wav(f"mob_bark_{family}", _capture(audio.play_mob_bark, family))
 
-    print("Per-zone theme music (may take a moment - these are full tracks):")
-    for zone in audio._THEME_BUILDERS:
-        audio._current_theme_zone = None  # force play_theme() to actually rebuild, not short-circuit
-        _write_wav(f"theme_{zone}", _capture(audio.play_theme, zone))
+    print("Per-zone theme music (game/music.py - ~60s seamless loops):")
+    from game import music
+    for zone in music.TRACKS:
+        path = os.path.join(OUT_DIR, f"theme_{zone}.wav")
+        with open(path, "wb") as f:
+            f.write(music.wav_bytes(music.compose_and_render(music.TRACKS[zone])))
+        print(f"  wrote {path}")
 
     print(f"\nDone - exported to {os.path.abspath(OUT_DIR)}")
 

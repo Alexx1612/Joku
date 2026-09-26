@@ -184,15 +184,67 @@ def draw_fps_counter(surf, fps):
     surf.blit(txt, fps_counter_rect().topleft)
 
 
+DOCK_FRAME_PAD = 8
+
+
+def dock_frame_rect(player=None):
+    """The one bordered backdrop that holds the whole right dock (clock, zone
+    info, minimap, player panel, Tab strip, inventory/pet) so it reads as a
+    single framed HUD instead of loose floating boxes."""
+    left = _panel_block_x0() - 6 - DOCK_FRAME_PAD
+    bottom = _dock_top_y() + (SLOT_SIZE + SLOT_GAP) * 3 + 14  # equip row + 2 backpack rows
+    if player is not None:
+        bottom = max([bottom] + [r.bottom for r in backpack_slot_rects(player)])
+        if getattr(player, "pet", None) is not None:
+            bottom = max(bottom, pet_panel_rect(player).bottom)
+    bottom = min(bottom + DOCK_FRAME_PAD, C.SCREEN_H - SCREEN_EDGE_MARGIN)
+    return pygame.Rect(left, SCREEN_EDGE_MARGIN, C.SCREEN_W - SCREEN_EDGE_MARGIN - left,
+                       bottom - SCREEN_EDGE_MARGIN)
+
+
+def draw_dock_frame(surf, player=None):
+    """Drawn first, under every other dock element (and after the night overlay,
+    so the frame never gets darkened)."""
+    rect = dock_frame_rect(player)
+    panel, _ = _ornate_panel(rect.w, rect.h)
+    # a faint divider under the clock/zone header row, echoing the RotMG side panel
+    y = day_night_clock_rect().bottom + 2 - rect.y
+    pygame.draw.line(panel, (*CHROME_GOLD, 70), (10, y), (rect.w - 10, y), 1)
+    surf.blit(panel, rect.topleft)
+
+
+def zone_info_rect():
+    """The top strip of the dock's full-width header (the day/night clock panel):
+    zone name on the left, kill counter on the right."""
+    r = day_night_clock_rect()
+    return pygame.Rect(r.x + 10, r.y + 6, r.w - 20, 22)
+
+
+_HEADER_PANEL_DRAWN = [False]  # set by the clock / dungeon header, consumed by draw_hud
+
+
 def draw_hud(surf, zone_name, kill_count, boss_alive):
-    """Top-of-screen zone banner - HP/MP/stats live in the right-docked player
-    panel now (see draw_player_panel), matching the "everything on the right"
-    layout, so this is just the zone name/kill counter above the minimap."""
-    pad = 12
-    zone_surf = _FONT_M.render(zone_name, True, C.COL_WHITE)
-    surf.blit(zone_surf, (C.SCREEN_W - zone_surf.get_width() - pad, pad))
-    kc = _FONT_S.render(f"kills: {kill_count}" + ("  [BOSS ACTIVE]" if boss_alive else ""), True, (220, 180, 80) if boss_alive else (190, 190, 200))
-    surf.blit(kc, (C.SCREEN_W - kc.get_width() - pad, pad + 24))
+    """Zone name + kill counter in the header strip above the day/night track (see
+    zone_info_rect) - HP/MP/stats live in the player panel below. In a hub (no clock
+    or dungeon header this frame) it draws the header panel itself."""
+    if not _HEADER_PANEL_DRAWN[0]:
+        hr = day_night_clock_rect()
+        panel, _ = _ornate_panel(hr.w, hr.h)
+        sub = _FONT_S.render("Safe zone - no monsters here", True, (160, 200, 170))
+        panel.blit(sub, (hr.w // 2 - sub.get_width() // 2, hr.h - sub.get_height() - 14))
+        surf.blit(panel, hr.topleft)
+    _HEADER_PANEL_DRAWN[0] = False
+    rect = zone_info_rect()
+    kc = _FONT_S.render("" if kill_count is None else f"kills: {kill_count}" + ("  BOSS!" if boss_alive else ""),
+                        True, (230, 150, 70) if boss_alive else (190, 190, 200))
+    room = rect.w - kc.get_width() - 10
+    font = _FONT_M if _FONT_M.size(zone_name)[0] <= room else _FONT_S
+    name = zone_name
+    while font.size(name)[0] > room and len(name) > 4:
+        name = name[:-2].rstrip() + "."
+    t = font.render(name, True, (240, 228, 200))
+    surf.blit(t, (rect.x, rect.centery - t.get_height() // 2))
+    surf.blit(kc, (rect.right - kc.get_width(), rect.centery - kc.get_height() // 2))
     hint = _FONT_S.render("WASD move | mouse aim+click fire | Space ability | Enter chat", True, (150, 150, 160))
     surf.blit(hint, (C.SCREEN_W // 2 - hint.get_width() // 2, C.SCREEN_H - 26))
 
@@ -217,7 +269,7 @@ def _panel_block_x0():
 
 def _player_panel_top_y():
     from game import minimap
-    return 74 + minimap.corner_block_height() + 14
+    return minimap.corner_origin()[1] + minimap.corner_block_height() + 14
 
 
 def draw_player_panel(surf, player, auto_fire=False):
@@ -441,7 +493,7 @@ def equip_slot_rects():
     return rects
 
 
-def draw_inventory(surf, player, mouse_pos, dragging_from=None, highlighted=()):
+def draw_inventory(surf, player, mouse_pos, dragging_from=None, highlighted=(), socket_pair=None):
     """dragging_from: the (kind, index_or_slot) currently being dragged, if any - so its
     origin slot can be dimmed instead of showing the item twice (once in-place, once
     following the cursor). highlighted: backpack indices to mark (items offered in an
@@ -477,6 +529,8 @@ def draw_inventory(surf, player, mouse_pos, dragging_from=None, highlighted=()):
                 hovered = it
         if i in highlighted:  # offered in the open trade
             pygame.draw.rect(surf, (235, 200, 80), rect, width=2, border_radius=3)
+        if socket_pair and i in socket_pair:  # (proc source, target weapon) awaiting ENTER to socket
+            pygame.draw.rect(surf, (200, 150, 255), rect.inflate(4, 4), width=3, border_radius=4)
     if hovered and dragging_from is None:
         _tooltip(surf, mouse_pos, hovered)
 
@@ -556,7 +610,8 @@ def _tooltip(surf, pos, item):
         lines.append(f"+{v} {k.upper()}")
         stat_line_count += 1
     if item.effect:
-        lines.append(f"{item.effect.title()}: {item.magnitude} dmg/hp, {item.mp_cost} MP")
+        from game.items import ability_power
+        lines.append(f"{item.effect.title()}: {ability_power(item)} dmg/hp, {item.mp_cost} MP")
         stat_line_count += 1
     if item.proc:
         lines.append(item.proc)
@@ -821,7 +876,7 @@ def draw_day_night_overlay(surf, light_level, blood_moon=False, torch_screen_pos
     surf.blit(overlay, (0, 0))
 
 
-DAY_NIGHT_CLOCK_W, DAY_NIGHT_CLOCK_H = 200, 60
+DAY_NIGHT_CLOCK_W, DAY_NIGHT_CLOCK_H = 272, 74  # full dock width; zone/kills strip + day track
 
 # One real, shared screen-edge margin - previously every top-level HUD
 # element picked its own local `pad` (6/8/12/14/16, serving inconsistent
@@ -841,11 +896,10 @@ def day_night_clock_rect():
     at (12, 12), sized to stay clear of the pet panel that WAS below it
     there - now moved, this rect no longer needs any relationship to
     wherever the pet panel currently docks."""
-    from game import minimap as _mm
-    mm_x, _mm_y = _mm.corner_origin()
-    right_edge = mm_x + _mm.CORNER_SIZE
-    x = right_edge - DAY_NIGHT_CLOCK_W
-    return pygame.Rect(x, SCREEN_EDGE_MARGIN, DAY_NIGHT_CLOCK_W, DAY_NIGHT_CLOCK_H)
+    # same x/width as the player-stats panel (draw_player_panel draws at x0-6, w+12),
+    # inset below the dock frame's top border (see draw_dock_frame)
+    x = _panel_block_x0() - 6
+    return pygame.Rect(x, SCREEN_EDGE_MARGIN + 6, DAY_NIGHT_CLOCK_W, DAY_NIGHT_CLOCK_H)
 
 
 def draw_day_night_clock(surf, light_level, blood_moon=False):
@@ -859,7 +913,7 @@ def draw_day_night_clock(surf, light_level, blood_moon=False):
     value for the overlay anyway. Recolors red during a Blood Moon."""
     rect = day_night_clock_rect()
     panel, _ = _ornate_panel(rect.w, rect.h, border=CHROME_GOLD if not blood_moon else (170, 50, 50))
-    track_y = rect.h // 2 + 4
+    track_y = 44  # below the zone-name/kills strip (draw_hud)
     track_x0, track_x1 = 30, rect.w - 30
     pygame.draw.line(panel, (90, 90, 105), (track_x0, track_y), (track_x1, track_y), 2)
 
@@ -885,9 +939,22 @@ def draw_day_night_clock(surf, light_level, blood_moon=False):
     label = "Blood Moon" if blood_moon else ("Night" if light_level < 0.35 else "Day")
     label_color = (255, 140, 140) if blood_moon else (200, 200, 215)
     txt = _FONT_S.render(label, True, label_color)
-    panel.blit(txt, (rect.w // 2 - txt.get_width() // 2, rect.h - 20))
+    panel.blit(txt, (rect.w // 2 - txt.get_width() // 2, rect.h - 18))
     surf.blit(panel, (rect.x, rect.y))
+    _HEADER_PANEL_DRAWN[0] = True
 
+
+
+def draw_dungeon_header(surf, hint="R or portal: leave"):
+    """Dungeons have no day/night clock - their exit hint takes that slot at the
+    top of the dock frame instead of floating over the top-centre item feed."""
+    rect = day_night_clock_rect()
+    panel, _ = _ornate_panel(rect.w, rect.h, border=(150, 100, 200))
+    # the top strip is the zone name/kills (draw_hud); the exit hint sits below it
+    t = _FONT_S.render(hint, True, (200, 170, 230))
+    panel.blit(t, (rect.w // 2 - t.get_width() // 2, rect.h - t.get_height() - 12))
+    surf.blit(panel, rect.topleft)
+    _HEADER_PANEL_DRAWN[0] = True
 
 DAMAGE_POPUP_LIFETIME = 0.7
 
@@ -1131,7 +1198,7 @@ def draw_quit_confirm(surf, mouse_pos=(-1, -1), message="Quit the game?"):
     panel, content_y0 = _ornate_panel(w, h, title="Leaving so soon?")
     msg = _FONT_M.render(message, True, (235, 225, 200))
     panel.blit(msg, (w // 2 - msg.get_width() // 2, content_y0 + 10))
-    hint = _FONT_S.render("Enter / Y = quit    Esc / N = stay", True, (150, 150, 165))
+    hint = _FONT_S.render("Esc / Enter / Y = quit    N = stay", True, (150, 150, 165))
     panel.blit(hint, (w // 2 - hint.get_width() // 2, content_y0 + 36))
     for rect, text, base in zip(quit_confirm_button_rects(), ("Quit", "Stay"), ((130, 60, 60), (60, 90, 130))):
         local = rect.move(-x, -y)
@@ -1339,39 +1406,81 @@ def draw_bag_window(surf, bag_screen_pos, items, mouse_pos, dragging_from=None):
 CHAT_BOX_MAX_VISIBLE = 40
 
 
-def draw_chat_box(surf, buffer, selected=False):
-    """The Enter-to-type chat input pop-up - a small, self-contained box near the
-    bottom of the screen rather than a full-width bar, so it stays out of the way
-    of the play area above it. `selected`: Ctrl+A was pressed - the whole buffer is
-    "selected" (this input has no partial-selection model), shown the same way a
-    real text field would: an inverted highlight bar behind the text, so Ctrl+C/X
-    or typing-to-replace has a visible "yes, this is what's selected" cue."""
-    w, h = 340, 34
-    x = C.SCREEN_W // 2 - w // 2
-    y = C.SCREEN_H - h - 46
+CHAT_BOX_W, CHAT_BOX_H = 460, 34
+
+
+def chat_box_rect():
+    return pygame.Rect(C.SCREEN_W // 2 - CHAT_BOX_W // 2, C.SCREEN_H - CHAT_BOX_H - 46, CHAT_BOX_W, CHAT_BOX_H)
+
+
+def _chat_box_view(text, cursor, max_w):
+    """First character index shown, so the cursor always stays inside the box."""
+    first = 0
+    while first < cursor and _FONT_M.size(text[first:cursor])[0] > max_w:
+        first += 1
+    return first
+
+
+def chat_box_text_origin(text="", cursor=0):
+    """(screen x of the first shown char, first shown index) - for mouse hit-testing."""
+    r = chat_box_rect()
+    prefix_w = _FONT_M.size("> ")[0]
+    return r.x + 10 + prefix_w, _chat_box_view(text, cursor, r.w - 30 - prefix_w)
+
+
+def draw_chat_box(surf, buffer, selected=False, chat_input=None, recent=()):
+    """The Enter-to-type chat input line. With `chat_input` (game/chat_input.py) it
+    shows a real cursor and a partial selection highlight; `recent` are the last few
+    chat entries, shown just above the line while you type."""
+    r = chat_box_rect()
+    w, h = r.w, r.h
+    x, y = r.topleft
+    if recent:
+        lines = list(recent)[-4:]
+        lh = 17
+        bg = pygame.Surface((w, lh * len(lines) + 8), pygame.SRCALPHA)
+        bg.fill((12, 12, 18, 170))
+        pygame.draw.rect(bg, (*CHROME_GOLD, 90), bg.get_rect(), width=1, border_radius=5)
+        for i, m in enumerate(lines):
+            nm = _FONT_S.render(f"{m['name']}:", True, (150, 200, 255))
+            bg.blit(nm, (8, 4 + i * lh))
+            room = w - 20 - nm.get_width()
+            txt = m["text"]
+            while _FONT_S.size(txt)[0] > room and len(txt) > 3:
+                txt = txt[:-4] + "..."
+            bg.blit(_FONT_S.render(txt, True, (215, 215, 225)), (14 + nm.get_width(), 4 + i * lh))
+        surf.blit(bg, (x, y - bg.get_height() - 4))
     box, _ = _ornate_panel(w, h)
-    shown = buffer[-CHAT_BOX_MAX_VISIBLE:]
-    cursor = "_" if (pygame.time.get_ticks() // 400) % 2 == 0 else ""
     prefix = _FONT_M.render("> ", True, (235, 235, 245))
     text_x = 10 + prefix.get_width()
     text_y = h // 2 - prefix.get_height() // 2
     box.blit(prefix, (10, text_y))
-    if selected and shown:
-        body = _FONT_M.render(shown, True, (20, 20, 28))
-        highlight = pygame.Rect(text_x - 2, text_y - 1, body.get_width() + 4, body.get_height() + 2)
-        pygame.draw.rect(box, (180, 200, 255, 255), highlight, border_radius=2)
-        box.blit(body, (text_x, text_y))
-        cursor_x = text_x + body.get_width()
-    else:
-        body = _FONT_M.render(shown, True, (235, 235, 245))
-        box.blit(body, (text_x, text_y))
-        cursor_x = text_x + body.get_width()
-    if cursor:
-        box.blit(_FONT_M.render(cursor, True, (235, 235, 245)), (cursor_x, text_y))
+    text = buffer if chat_input is None else chat_input.text
+    cursor = len(text) if chat_input is None else chat_input.cursor
+    sel = None
+    if chat_input is not None:
+        sel = chat_input.selection()
+    elif selected and text:
+        sel = (0, len(text))
+    first = _chat_box_view(text, cursor, w - 30 - prefix.get_width())
+    shown = text[first:]
+    while shown and _FONT_M.size(shown)[0] > w - 20 - prefix.get_width():
+        shown = shown[:-1]
+    if sel:
+        a, b = max(sel[0], first) - first, max(0, min(sel[1] - first, len(shown)))
+        if b > a:
+            hx = text_x + _FONT_M.size(shown[:a])[0]
+            hw = _FONT_M.size(shown[a:b])[0]
+            pygame.draw.rect(box, (120, 150, 230), (hx - 1, text_y - 1, hw + 2, prefix.get_height() + 2),
+                             border_radius=2)
+    box.blit(_FONT_M.render(shown, True, (235, 235, 245)), (text_x, text_y))
+    if (pygame.time.get_ticks() // 400) % 2 == 0:
+        cx = text_x + _FONT_M.size(shown[:max(0, cursor - first)])[0]
+        pygame.draw.line(box, (235, 235, 245), (cx, text_y + 1), (cx, text_y + prefix.get_height() - 2), 2)
     surf.blit(box, (x, y))
-    hint_text = ("Selected - Ctrl+C copy, Ctrl+X cut, or type to replace" if selected else
-                 "Enter to send  |  /nexus /realm /vault /bazaar /trade  |  Esc to cancel")
-    hint = _FONT_S.render(hint_text, True, (200, 210, 255) if selected else (160, 160, 175))
+    hint_text = ("Ctrl+C copy  Ctrl+X cut  Ctrl+V paste  (type to replace)" if sel else
+                 "Enter send | Up/Down history | /msg <name> <text> | /nexus /realm /vault | Esc cancel")
+    hint = _FONT_S.render(hint_text, True, (200, 210, 255) if sel else (160, 160, 175))
     surf.blit(hint, (C.SCREEN_W // 2 - hint.get_width() // 2, y + h + 4))
 
 
@@ -1402,6 +1511,24 @@ def chat_log_max_scroll(messages):
     return max(0, len(_chat_log_flatten(messages)) - CHAT_LOG_VISIBLE_LINES)
 
 
+# Mouse-dragged offsets for movable panels ("chat", "quest" = the story log and
+# the dungeon quest panel that shares its slot) - see game/panel_drag.py; loaded
+# from / saved to settings.json via game/settings.py. Clamped on-screen when used.
+PANEL_OFFSETS = {}
+
+
+def set_panel_offset(name, offset):
+    PANEL_OFFSETS[name] = (max(-C.SCREEN_W, min(C.SCREEN_W, int(offset[0]))),
+                           max(-C.SCREEN_H, min(C.SCREEN_H, int(offset[1]))))
+
+
+def _offset_rect(name, rect):
+    dx, dy = PANEL_OFFSETS.get(name, (0, 0))
+    r = rect.move(dx, dy)
+    m = SCREEN_EDGE_MARGIN
+    return r.clamp(pygame.Rect(m, m, C.SCREEN_W - 2 * m, C.SCREEN_H - 2 * m))
+
+
 def chat_log_rect(messages):
     """Screen rect of the chat log panel, for click-to-open/scroll hit-testing -
     mirrors draw_chat_log's own geometry exactly, including a minimal clickable
@@ -1412,11 +1539,43 @@ def chat_log_rect(messages):
     n = min(len(_chat_log_flatten(messages)), CHAT_LOG_VISIBLE_LINES) if messages else 1
     h = pad * 2 + max(1, n) * line_h
     w = CHAT_LOG_WRAP_WIDTH + pad * 2 + CHAT_LOG_SCROLLBAR_W
-    x, y = 12, C.SCREEN_H // 2 - h // 2
-    return pygame.Rect(x, y, w, h)
+    return _offset_rect("chat", pygame.Rect(12, C.SCREEN_H // 2 - h // 2, w, h))
 
 
-def draw_chat_log(surf, messages, scroll=0):
+CHAT_LOG_HANDLE_H = 10  # the log's top strip moves the panel; everywhere else selects text
+
+
+def chat_log_handle_rect(messages):
+    r = chat_log_rect(messages)
+    return pygame.Rect(r.x, r.y - 4, r.w, CHAT_LOG_HANDLE_H + 4)
+
+
+def chat_log_line_at(messages, scroll, pos):
+    """(flat_line_idx, msg_idx, name_rect_or_None) under `pos` in the chat log, or None.
+    name_rect is set when that line starts a message (so a right-click can hit the name)."""
+    if not messages:
+        return None
+    pad, line_h = 8, 18
+    flat = _chat_log_flatten(messages)
+    total = len(flat)
+    max_scroll = max(0, total - CHAT_LOG_VISIBLE_LINES)
+    scroll = max(0, min(scroll, max_scroll))
+    visible_n = min(total, CHAT_LOG_VISIBLE_LINES)
+    start = total - visible_n - scroll
+    r = chat_log_rect(messages)
+    if not r.collidepoint(pos):
+        return None
+    row = int((pos[1] - r.y - pad) // line_h)
+    row = max(0, min(visible_n - 1, row))
+    idx = start + row
+    name_surf, _line, msg_idx = flat[idx]
+    name_rect = None
+    if name_surf is not None:
+        name_rect = pygame.Rect(r.x + pad, r.y + pad + row * line_h, name_surf.get_width(), line_h)
+    return idx, msg_idx, name_rect
+
+
+def draw_chat_log(surf, messages, scroll=0, selection=None):
     """Persistent left-side chat history, separate from the top-of-screen item feed
     (which is pickups/equips/errors, not chat) and from in-world speech bubbles
     (which are ephemeral and per-speaker). Time-based expiry (CHAT_LOG_LIFETIME,
@@ -1439,7 +1598,7 @@ def draw_chat_log(surf, messages, scroll=0):
 
     h = pad * 2 + visible_n * line_h
     w = CHAT_LOG_WRAP_WIDTH + pad * 2 + CHAT_LOG_SCROLLBAR_W
-    x, y = 12, C.SCREEN_H // 2 - h // 2
+    x, y = _offset_rect("chat", pygame.Rect(12, C.SCREEN_H // 2 - h // 2, w, h)).topleft
     panel = pygame.Surface((w, h), pygame.SRCALPHA)
     panel.fill((12, 12, 18, 140))
     pygame.draw.rect(panel, (*CHROME_GOLD, 140), (0, 0, w, h), width=1, border_radius=6)
@@ -1447,6 +1606,10 @@ def draw_chat_log(surf, messages, scroll=0):
 
     newest_idx = len(messages) - 1
     cy = pad
+    if selection is not None:  # highlight the selected wrapped lines (see chat_input.LogSelection)
+        for row in range(visible_n):
+            if selection[0] <= start + row <= selection[1]:
+                pygame.draw.rect(panel, (70, 90, 150, 170), (2, pad + row * line_h - 1, w - 4, line_h))
     for name_surf, line, msg_idx in window:
         alpha = 235
         if msg_idx == newest_idx and scroll == 0:
@@ -1941,10 +2104,13 @@ def draw_quest_panel(surf, secret_quest, progress, timer, secret_quest_target=0,
         return
 
     pad, bar_h, row_gap = 10, 7, 8
-    w = 230
+    # wide enough that a long quest title never runs into its own progress text
+    # (it grows leftward, away from the dock frame it's anchored beside)
+    w = max([230] + [_FONT_S.size(t)[0] + _FONT_S.size(pt)[0] + pad * 3 for t, pt, _f, _c in entries])
     row_h = _FONT_S.get_height() + 4 + bar_h
-    h = 8 + len(entries) * row_h + (len(entries) - 1) * row_gap + 8
+    h = 6 + len(entries) * row_h + (len(entries) - 1) * row_gap + 10
     panel, content_y0 = _ornate_panel(w, h, border=(150, 100, 200))
+    content_y0 += 2
     y = content_y0
     for title, prog_text, frac, color in entries:
         title_s = _FONT_S.render(title, True, (225, 215, 235))
@@ -1954,9 +2120,10 @@ def draw_quest_panel(surf, secret_quest, progress, timer, secret_quest_target=0,
         _bar(panel, pad, y + title_s.get_height() + 4, w - pad * 2, bar_h, frac, color, (28, 24, 34))
         y += row_h + row_gap
 
-    mm_x, mm_y = _mm.corner_origin()
-    x = mm_x - w - 10
-    surf.blit(panel, (x, mm_y))
+    # left of the framed dock, beside the player panel - the same slot the story
+    # quest log uses outside dungeons (never drawn at the same time), and clear
+    # of the top-centre item feed that the old minimap-level slot ran into
+    _blit_quest_slot(surf, panel)
 
 
 def _vault_backpack_slot_rects(player):
@@ -2009,7 +2176,114 @@ VAULT_CHEST_SKINS = [
     (60, 60, 66),     # 7 onyx
     (210, 205, 190),  # 8 pearl
     (190, 110, 60),   # 9 copper
+    (70, 170, 170),   # 10 teal
+    (225, 120, 160),  # 11 rose
 ]
+
+
+def _vault_room_chest_surface(skin_color, fill_frac, highlighted):
+    """A 32x32 world-size chest in its own skin - the vault room's 12 permanent chests."""
+    s = pygame.Surface((C.TILE, C.TILE), pygame.SRCALPHA)
+    body = skin_color if fill_frac > 0 else tuple(max(0, c - 40) for c in skin_color)
+    lid = tuple(min(255, c + 60) for c in skin_color)
+    lock = tuple(min(255, c + 110) for c in skin_color)
+    outline = (255, 230, 150) if highlighted else (25, 20, 18)
+    pygame.draw.rect(s, body, (4, 13, 24, 15), border_radius=3)
+    pygame.draw.rect(s, outline, (4, 13, 24, 15), width=2, border_radius=3)
+    pygame.draw.rect(s, lid, (4, 6, 24, 9), border_radius=4)
+    pygame.draw.rect(s, outline, (4, 6, 24, 9), width=2, border_radius=4)
+    pygame.draw.line(s, tuple(max(0, c - 60) for c in skin_color), (5, 20), (26, 20), 1)
+    pygame.draw.rect(s, lock, (13, 11, 6, 7), border_radius=1)
+    return s
+
+
+def draw_vault_room_chests(surf, cam, chest_positions, vault_items, near_idx=None, open_idx=None):
+    """Each vault-room chest in its own skin with its fill count, plus an "[F] Open"
+    prompt over the one you're standing next to."""
+    from game.items import VAULT_CHEST_SIZE
+    for i, wpos in enumerate(chest_positions):
+        lo = i * VAULT_CHEST_SIZE
+        items = (vault_items or [])[lo:lo + VAULT_CHEST_SIZE]
+        filled = sum(1 for it in items if it is not None)
+        sx, sy = cam(wpos)
+        chest = _vault_room_chest_surface(VAULT_CHEST_SKINS[i % len(VAULT_CHEST_SKINS)], filled / VAULT_CHEST_SIZE,
+                                          i in (near_idx, open_idx))
+        surf.blit(chest, (sx - C.TILE // 2, sy - C.TILE // 2))
+        if vault_items:
+            t = _FONT_S.render(f"{filled}/{VAULT_CHEST_SIZE}", True, (230, 220, 190))
+            surf.blit(t, (sx - t.get_width() // 2, sy + C.TILE // 2 - 2))
+        if i == near_idx and open_idx is None:
+            tag = _FONT_S.render("[F] Open", True, (255, 235, 170))
+            bg = pygame.Surface((tag.get_width() + 8, tag.get_height() + 2), pygame.SRCALPHA)
+            bg.fill((20, 16, 12, 190))
+            surf.blit(bg, (sx - bg.get_width() // 2, sy - C.TILE // 2 - bg.get_height() - 2))
+            surf.blit(tag, (sx - tag.get_width() // 2, sy - C.TILE // 2 - tag.get_height() - 1))
+
+
+def vault_chest_window_anchor(chest_screen_pos):
+    """Where to anchor an open vault chest's window: next to its chest, but nudged
+    left/up so it never slides under the right dock or off the bottom of the screen."""
+    x, y = chest_screen_pos
+    rects = bag_slot_rects((x, y))
+    limit = dock_frame_rect().x - 8
+    right = rects[-1].right + BAG_WINDOW_PAD
+    if right > limit:
+        x -= right - limit
+    bottom = rects[-1].bottom + BAG_WINDOW_PAD
+    if bottom > C.SCREEN_H - 40:
+        y -= bottom - (C.SCREEN_H - 40)
+    top = rects[0].y - BAG_WINDOW_PAD - 26
+    if top < SCREEN_EDGE_MARGIN:
+        y += SCREEN_EDGE_MARGIN - top
+    return (x, y)
+
+
+def vault_chest_slot_rects(chest_screen_pos):
+    """The open vault chest's 8 slots - same floating-window geometry as a ground bag."""
+    return bag_slot_rects(chest_screen_pos)
+
+
+def vault_chest_close_button_rect(chest_screen_pos):
+    return bag_window_close_button_rect(chest_screen_pos)
+
+
+def draw_vault_chest_window(surf, chest_screen_pos, chest_idx, vault_items, mouse_pos, dragging_from=None):
+    """The one open vault chest as a bag-style window (8 slots, its own skin colour)."""
+    from game.items import VAULT_CHEST_SIZE
+    lo = chest_idx * VAULT_CHEST_SIZE
+    slots = list((vault_items or [])[lo:lo + VAULT_CHEST_SIZE]) + [None] * VAULT_CHEST_SIZE
+    slots = slots[:VAULT_CHEST_SIZE]
+    rects = vault_chest_slot_rects(chest_screen_pos)
+    rows = (VAULT_CHEST_SIZE + BAG_WINDOW_COLS - 1) // BAG_WINDOW_COLS
+    w = BAG_WINDOW_COLS * (SLOT_SIZE + SLOT_GAP) - SLOT_GAP + BAG_WINDOW_PAD * 2
+    h = rows * (SLOT_SIZE + SLOT_GAP) - SLOT_GAP + BAG_WINDOW_PAD * 2 + 26
+    x0, y0 = rects[0].x - BAG_WINDOW_PAD, rects[0].y - BAG_WINDOW_PAD - 26
+    skin = VAULT_CHEST_SKINS[chest_idx % len(VAULT_CHEST_SKINS)]
+    panel, _ = _ornate_panel(w, h, border=tuple(min(255, c + 60) for c in skin))
+    used = sum(1 for it in slots if it is not None)
+    label = _FONT_S.render(f"Vault chest {chest_idx + 1} - {used}/{VAULT_CHEST_SIZE}", True, (230, 215, 170))
+    panel.blit(label, (BAG_WINDOW_PAD, 6))
+    close = pygame.Rect(w - 22, 4, 18, 18)
+    hovered_close = close.collidepoint(mouse_pos[0] - x0, mouse_pos[1] - y0)
+    pygame.draw.rect(panel, (170, 70, 70) if hovered_close else (110, 55, 60), close, border_radius=3)
+    pygame.draw.rect(panel, (230, 200, 200), close, width=1, border_radius=3)
+    m = 4
+    pygame.draw.line(panel, (255, 235, 235), (close.x + m, close.y + m), (close.right - m, close.bottom - m), 2)
+    pygame.draw.line(panel, (255, 235, 235), (close.right - m, close.y + m), (close.x + m, close.bottom - m), 2)
+    surf.blit(panel, (x0, y0))
+    hovered = None
+    for i, rect in enumerate(rects[:VAULT_CHEST_SIZE]):
+        it = slots[i]
+        show = it is not None and dragging_from != ("vault", lo + i)
+        _slot_frame(surf, rect, filled=show, hovered=rect.collidepoint(mouse_pos), border=False)
+        if show:
+            icon = sprites.item_icon(it.color, it.shape)
+            surf.blit(pygame.transform.smoothscale(icon, (SLOT_SIZE - 6, SLOT_SIZE - 6)), (rect.x + 3, rect.y + 3))
+            _tier_badge(surf, rect, it)
+            if rect.collidepoint(mouse_pos):
+                hovered = it
+    if hovered is not None:
+        _tooltip(surf, mouse_pos, hovered)
 
 
 def _draw_chest_icon(surf, rect, filled_frac, skin_color=None):
@@ -2101,7 +2375,7 @@ def context_menu_rects(pos, labels):
             for i in range(len(labels))]
 
 
-def draw_context_menu(surf, pos, title, labels, mouse_pos):
+def draw_context_menu(surf, pos, title, labels, mouse_pos, disabled=()):
     rects = context_menu_rects(pos, labels)
     if not rects:
         return
@@ -2114,10 +2388,11 @@ def draw_context_menu(surf, pos, title, labels, mouse_pos):
         panel.blit(t, (8, 3))
     surf.blit(panel, (x, y))
     for rect, label in zip(rects, labels):
-        hovered = rect.collidepoint(mouse_pos)
+        off = label in disabled  # e.g. Trade/Teleport for a player who isn't in your zone
+        hovered = rect.collidepoint(mouse_pos) and not off
         pygame.draw.rect(surf, (55, 55, 70) if hovered else (32, 32, 42), rect)
         pygame.draw.rect(surf, (90, 90, 110), rect, width=1)
-        txt = _FONT_S.render(label, True, (230, 230, 235))
+        txt = _FONT_S.render(label, True, (110, 110, 120) if off else (230, 230, 235))
         surf.blit(txt, (rect.x + 8, rect.centery - txt.get_height() // 2))
 
 
@@ -2222,12 +2497,17 @@ def draw_friends_panel(surf, friends_status, mouse_pos):
 STORY_LOG_W = 250
 
 
-def draw_story_log(surf, log, expanded=True):
+SIDE_LOG_MAX = 4  # side quests listed in the small HUD log (the full list is Phase 1B's quest log)
+
+
+def draw_story_log(surf, log, expanded=True, side=None):
     """The story quest log (game/story.StoryProgress.quest_log()) - docked left of
     the player panel (see story_log_origin); bonus rooms show their own quest panel
-    instead. Collapsed = just the act title."""
+    instead. Collapsed = just the act title (+ a side-quest count). `side` = active
+    side quests (game/sidequests.SideQuestProgress.log())."""
     if not log:
         return
+    side = side or []
     pad, bar_h, w = 10, 6, STORY_LOG_W
     inner = w - pad * 2
     title_lines = _wrap_text(log["title"], _FONT_S, inner)
@@ -2242,6 +2522,17 @@ def draw_story_log(surf, log, expanded=True):
         h += len(hint_lines) * lh + 6
         for lines, _have, _need in rows:
             h += len(lines) * lh + bar_h + 8
+    side_rows = []
+    if expanded:
+        for e in side[:SIDE_LOG_MAX]:
+            label = e["title"] + (" - hand in!" if e["ready"] and e["turn_in"] else "")
+            side_rows.append((_wrap_text(label, _FONT_S, inner - 44), e["have"], e["need"], e["ready"]))
+        if side_rows:
+            h += lh + 4
+            for lines, *_rest in side_rows:
+                h += len(lines) * lh + 2
+    elif side:
+        h += lh
     h += 6 + lh  # footer: key hint
     panel, y = _ornate_panel(w, h)
     y += 2
@@ -2266,15 +2557,48 @@ def draw_story_log(surf, log, expanded=True):
             _bar(panel, pad, y + 1, inner, bar_h, have / max(1, need),
                  (120, 200, 120) if done else (230, 190, 90), (28, 24, 34))
             y += bar_h + 8
+        if side_rows:
+            panel.blit(_FONT_S.render("Side quests", True, (200, 175, 255)), (pad, y))
+            y += lh + 4
+            for lines, have, need, ready in side_rows:
+                col = (140, 225, 150) if ready else (205, 200, 225)
+                for i, line in enumerate(lines):
+                    panel.blit(_FONT_S.render(("- " if i == 0 else "  ") + line, True, col), (pad, y))
+                    y += lh
+                prog = _FONT_S.render(f"{have}/{need}", True, (180, 175, 200))
+                panel.blit(prog, (w - pad - prog.get_width(), y - lh))
+                y += 2
+    elif side:
+        panel.blit(_FONT_S.render(f"+ {len(side)} side quest{'s' if len(side) != 1 else ''}", True,
+                                  (200, 175, 255)), (pad, y))
+        y += lh
     foot = _FONT_S.render("J: " + ("hide details" if expanded else "quest details"), True, (120, 120, 135))
     panel.blit(foot, (w - pad - foot.get_width(), y + 2))
-    surf.blit(panel, story_log_origin())
+    _blit_quest_slot(surf, panel)
+
+
+_quest_slot_drawn = [None, -1]  # [rect, ticks] of the last-drawn story log / dungeon quest panel
+
+
+def _blit_quest_slot(surf, panel):
+    x, y = story_log_origin()
+    rect = _offset_rect("quest", pygame.Rect(x + STORY_LOG_W - panel.get_width(), y,
+                                             panel.get_width(), panel.get_height()))
+    surf.blit(panel, rect.topleft)
+    _quest_slot_drawn[:] = [rect, pygame.time.get_ticks()]
+
+
+def quest_slot_rect():
+    """Rect of the story log / dungeon quest panel if it was drawn in the last
+    frame or so (drag hit-testing), else None."""
+    rect, t = _quest_slot_drawn
+    return rect if rect is not None and pygame.time.get_ticks() - t <= 250 else None
 
 
 def story_log_origin():
     """Left of the right dock's player panel, top-aligned with it - clear of the
     minimap/clock above, the dock itself, and the top-centre item feed."""
-    return _panel_block_x0() - 6 - STORY_LOG_W - 8, _player_panel_top_y() - 4
+    return dock_frame_rect().x - STORY_LOG_W - 6, _player_panel_top_y() - 4
 
 
 def draw_story_banner(surf, text, time_left, duration=5.0):
@@ -2291,6 +2615,41 @@ def draw_story_banner(surf, text, time_left, duration=5.0):
     panel.set_alpha(alpha)
     surf.blit(panel, (C.SCREEN_W // 2 - w // 2, int(C.SCREEN_H * 0.22)))
 
+
+
+ZONE_BANNER_Y = 10
+
+
+def zone_banner_rect(title="The Realm", subtitle="Realm"):
+    """Top-centre title card - above the hub hint (y 82) / item feed (y 90) and left
+    of the dock frame; the act-complete story banner sits lower (22% height)."""
+    tw = max(_FONT_L.size(title)[0], _FONT_S.size(subtitle)[0])
+    w = min(max(260, tw + 80), dock_frame_rect().x - 24)
+    h = _FONT_L.get_height() + _FONT_S.get_height() + 20
+    x = min(C.SCREEN_W // 2 - w // 2, dock_frame_rect().x - 12 - w)
+    return pygame.Rect(max(12, x), ZONE_BANNER_Y, w, h)
+
+
+def draw_zone_banners(surf, cards):
+    """cards: [(title, subtitle, alpha 0..1)] from zone_banner.ZoneTracker.visible()
+    - drawn in order, so a newer card cross-fades in over an older fading one."""
+    for title, subtitle, a in cards:
+        rect = zone_banner_rect(title, subtitle)
+        panel = pygame.Surface(rect.size, pygame.SRCALPHA)
+        panel.fill((14, 12, 22, 170))
+        pygame.draw.line(panel, CHROME_GOLD, (18, 2), (rect.w - 18, 2), 1)
+        pygame.draw.line(panel, CHROME_GOLD, (18, rect.h - 3), (rect.w - 18, rect.h - 3), 1)
+        for cx in (10, rect.w - 10):   # small diamond end-caps
+            pygame.draw.polygon(panel, CHROME_GOLD, [(cx, rect.h // 2 - 5), (cx + 4, rect.h // 2),
+                                                     (cx, rect.h // 2 + 5), (cx - 4, rect.h // 2)])
+        t = _FONT_L.render(title, True, (255, 222, 140))
+        sh = _FONT_L.render(title, True, (40, 26, 8))
+        st = _FONT_S.render(subtitle.upper(), True, (205, 200, 225))
+        panel.blit(sh, (rect.w // 2 - t.get_width() // 2 + 2, 8 + 2))
+        panel.blit(t, (rect.w // 2 - t.get_width() // 2, 8))
+        panel.blit(st, (rect.w // 2 - st.get_width() // 2, 10 + t.get_height()))
+        panel.set_alpha(int(255 * max(0.0, min(1.0, a))))
+        surf.blit(panel, rect.topleft)
 
 CREDITS_SCROLL_SPEED = 38  # px/sec
 
@@ -2317,3 +2676,148 @@ def draw_credits(surf, t):
         surf.blit(txt, (C.SCREEN_W // 2 - txt.get_width() // 2, int(y)))
     skip = _FONT_S.render("Enter / Esc to skip", True, (140, 140, 155))
     surf.blit(skip, (C.SCREEN_W - skip.get_width() - 16, C.SCREEN_H - skip.get_height() - 12))
+
+
+# --------------------------------------------------------------- dialogue --
+DIALOGUE_W = 640
+DIALOGUE_PORTRAIT = 84
+DIALOGUE_OPT_H = 28
+
+
+def _dialogue_layout(view):
+    """(panel rect, text lines, [option rects]) - shared by drawing and hit-testing."""
+    pad = 14
+    text_w = DIALOGUE_W - DIALOGUE_PORTRAIT - pad * 3
+    lines = _wrap_text(view["text"], _FONT_S, text_w)
+    lh = _FONT_S.get_height() + 2
+    text_h = max(DIALOGUE_PORTRAIT - 26, len(lines) * lh)
+    n = len(view["options"])
+    h = pad + 24 + text_h + 12 + n * (DIALOGUE_OPT_H + 4) + pad + 14
+    play_w = dock_frame_rect().x
+    x = max(SCREEN_EDGE_MARGIN, play_w // 2 - DIALOGUE_W // 2)
+    y = C.SCREEN_H - h - 44
+    rect = pygame.Rect(x, y, DIALOGUE_W, h)
+    oy = y + pad + 24 + text_h + 12
+    opts = [pygame.Rect(x + pad, oy + i * (DIALOGUE_OPT_H + 4), DIALOGUE_W - pad * 2, DIALOGUE_OPT_H)
+            for i in range(n)]
+    return rect, lines, opts
+
+
+def dialogue_option_rects(view):
+    return _dialogue_layout(view)[2] if view else []
+
+
+def _portrait_surface(portrait, size):
+    from game import sprites
+    src, key = portrait.get("src"), portrait.get("key")
+    try:
+        img = sprites.player_sprite(key) if src == "player" else sprites.enemy_sprite(key)
+    except KeyError:
+        return None
+    img = pygame.transform.smoothscale(img, (size, size))
+    if portrait.get("tint"):
+        img = img.copy()
+        img.fill((*portrait["tint"], 255), special_flags=pygame.BLEND_RGBA_MULT)
+    return img
+
+
+def draw_dialogue(surf, view, mouse_pos=(-1, -1)):
+    """A dialogue-game conversation box: portrait + name + text, then numbered answer
+    buttons (click, or press 1-5; Esc = the last option, "Bye.")."""
+    if not view:
+        return
+    rect, lines, opts = _dialogue_layout(view)
+    pad = 14
+    panel, _ = _ornate_panel(rect.w, rect.h)
+    portrait = _portrait_surface(view.get("portrait") or {}, DIALOGUE_PORTRAIT - 8)
+    frame = pygame.Rect(pad, pad, DIALOGUE_PORTRAIT, DIALOGUE_PORTRAIT)
+    pygame.draw.rect(panel, (22, 20, 30), frame, border_radius=6)
+    pygame.draw.rect(panel, CHROME_GOLD, frame, width=1, border_radius=6)
+    if portrait is not None:
+        panel.blit(portrait, (frame.x + 4, frame.y + 4))
+    tx = pad * 2 + DIALOGUE_PORTRAIT
+    panel.blit(_FONT_M.render(view["name"], True, (245, 215, 130)), (tx, pad))
+    lh = _FONT_S.get_height() + 2
+    for i, line in enumerate(lines):
+        panel.blit(_FONT_S.render(line, True, (230, 228, 238)), (tx, pad + 26 + i * lh))
+    local_mouse = (mouse_pos[0] - rect.x, mouse_pos[1] - rect.y)
+    for i, (label, orect) in enumerate(zip(view["options"], opts)):
+        r = orect.move(-rect.x, -rect.y)
+        hovered = r.collidepoint(local_mouse)
+        is_bye = i == len(opts) - 1
+        _bevel_button(panel, r, (70, 45, 45) if is_bye else (48, 46, 70), hovered=hovered)
+        t = _FONT_S.render(f"{i + 1}. {label}", True, (255, 240, 200) if hovered else (225, 222, 235))
+        panel.blit(t, (r.x + 10, r.centery - t.get_height() // 2))
+    hint = _FONT_S.render("Click an answer or press its number - Esc: Bye", True, (130, 128, 145))
+    panel.blit(hint, (rect.w - pad - hint.get_width(), rect.h - pad - 4))
+    surf.blit(panel, rect.topleft)
+
+
+_DIALOGUE_KEYS = ((pygame.K_1, pygame.K_KP1), (pygame.K_2, pygame.K_KP2), (pygame.K_3, pygame.K_KP3),
+                  (pygame.K_4, pygame.K_KP4), (pygame.K_5, pygame.K_KP5), (pygame.K_6, pygame.K_KP6))
+
+
+def dialogue_choice_for_event(event, view):
+    """Maps an input event to a dialogue answer index (0-based), or None. Esc picks
+    the last option ("Bye.")."""
+    if not view:
+        return None
+    n = len(view["options"])
+    if event.type == pygame.KEYDOWN:
+        if event.key == pygame.K_ESCAPE:
+            return n - 1
+        for i, keys in enumerate(_DIALOGUE_KEYS):
+            if event.key in keys and i < n:
+                return i
+    elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+        for i, r in enumerate(dialogue_option_rects(view)):
+            if r.collidepoint(event.pos):
+                return i
+    return None
+
+
+def draw_npc_labels(surf, cam, npcs, player_pos=None, talk_radius=72):
+    """Name tags over friendly NPCs (gold = person, green = creature), a speech
+    bubble for their barks, and a "[F] Talk" hint on the one you're close enough to."""
+    from game.npcs import NPCS
+    near = None
+    if player_pos is not None:
+        best = talk_radius
+        for n in npcs:
+            d = n.pos.distance_to(player_pos)
+            if d <= best:
+                near, best = n, d
+    for n in npcs:
+        d = NPCS.get(n.npc_id, {})
+        sx, sy = cam(n.pos)
+        col = (255, 215, 120) if d.get("kind") == "person" else (150, 235, 160)
+        tag = _FONT_S.render(n.name, True, col)
+        shadow = _FONT_S.render(n.name, True, (10, 10, 14))
+        ty = sy - 44
+        surf.blit(shadow, (sx - tag.get_width() // 2 + 1, ty + 1))
+        surf.blit(tag, (sx - tag.get_width() // 2, ty))
+        if n is near:
+            hint = _FONT_S.render("[F] Talk", True, (255, 255, 255))
+            box = pygame.Rect(0, 0, hint.get_width() + 10, hint.get_height() + 4)
+            box.midtop = (sx, ty + tag.get_height() + 2)
+            pygame.draw.rect(surf, (30, 28, 40), box, border_radius=4)
+            pygame.draw.rect(surf, col, box, width=1, border_radius=4)
+            surf.blit(hint, (box.x + 5, box.y + 2))
+        if n.speech and n.speech_age < n.SPEECH_LIFETIME:
+            draw_speech_bubble(surf, cam, (n.pos.x, n.pos.y - 26), n.speech, n.speech_age)
+
+
+def draw_island_chests(surf, cam, chests):
+    """Island treasure chests: [(pos, skin_idx, opened_for_me)] - an opened one shows
+    empty until the island's next event refills it."""
+    from game import sprites
+    for pos, skin, opened in chests:
+        sx, sy = cam(pos)
+        img = sprites.chest_sprite(skin, filled=not opened)
+        if opened:
+            img = img.copy()
+            img.set_alpha(140)
+        surf.blit(img, (sx - img.get_width() // 2, sy - img.get_height() // 2))
+        if not opened:
+            t = _FONT_S.render("[F] Open", True, (255, 225, 140))
+            surf.blit(t, (sx - t.get_width() // 2, sy - img.get_height() // 2 - 16))

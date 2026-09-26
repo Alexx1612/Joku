@@ -27,9 +27,15 @@ from game import world
 from game import accounts
 from game import characters
 from game import story
+from game import vault
+from game import dialogue
+from game import npcs
+from game import live_events
+from game import codex
+from game import sidequests
 from game.entities import (Player, Bag, Portal, NexusBot, find_nearby_bag, bag_by_id,
                             withdraw_from_bag, BazaarChest, deposit_to_bag, spawn_bazaar_chests)
-from game.realm_sim import RealmSim, DUNGEON_THEMES, BONUS_DIFFICULTIES, FORGE_DIFFICULTY
+from game.realm_sim import RealmSim, DUNGEON_THEMES, BONUS_DIFFICULTIES, FORGE_DIFFICULTY, audible_mob_speech
 from game.items import (load_vault, save_vault, VAULT_SLOTS, VAULT_CHEST_SIZE, VAULT_CHEST_COUNT,
                          wish_fountain, apply_socket, PET_KINDS)
 from game.netmsg import send_msg, MessageReader
@@ -72,6 +78,8 @@ class Session:
         self.sent_map_id = None  # id() of the last RealmSim whose map we've already sent this session
         self.alive_conn = True
         self.trade_id = None  # key into ServerState.trades, or None
+        self.conversation = None  # dialogue.Conversation while talking to an NPC, else None
+        self.conversation_zone = None
         self.bonus_sim_id = None  # key into ServerState.bonus_sims - which of possibly SEVERAL
         # concurrently-active co-op dungeon instances this session is currently in, or None if not
         # in ZONE_BONUS. Multiple instances exist so two players opening differently-themed (or even
@@ -87,7 +95,7 @@ class Session:
 # swap itself (offers are references to backpack Items), so a cancel, a disconnect
 # or a mid-trade pickup can never lose anything.
 TRADE_RANGE = 110
-BOT_TRADE_RADIUS = 55  # matches main.py's Game.BOT_TRADE_RADIUS
+BOT_TALK_RADIUS = 55  # matches main.py's Game.BOT_TALK_RADIUS
 TRADE_CONFIRM_SECONDS = 3.0
 TRADE_IDLE_TIMEOUT = 90.0
 TRADE_MAX_ITEMS = 8
@@ -148,6 +156,7 @@ class ServerState:
         self.trade_invites = {}  # target pid -> {"from": requester pid, "t": seconds left}
         self._next_trade_id = 1
         self.nexus_bot = NexusBot(self.nexus_map.center_world_pos())
+        self.nexus_npcs = npcs.spawn_nexus_npcs(self.nexus_map)  # Batch 15 friendly NPCs
         self.autosave_cd = AUTOSAVE_INTERVAL  # see step()'s periodic character-progress save
 
 
@@ -393,6 +402,10 @@ def step(state, dt):
         if s.zone == ZONE_DEAD:
             continue
         move = pygame.Vector2(s.last_input.get("move", [0, 0]))
+        if s.zone in (ZONE_NEXUS, ZONE_BAZAAR, ZONE_VAULT_ROOM) and s.player.pet is not None:
+            # hubs have no RealmSim.tick_pets - without this the pet stayed frozen where the
+            # player left the Realm (usually off-screen); no enemies, so only follow + heal/mana
+            s.player.pet.update(dt, s.player, [], [])
         if s.zone == ZONE_NEXUS:
             s.player.net_update(dt, move, state.nexus_map.bounds(), state.nexus_map.is_solid,
                                  state.nexus_map.speed_multiplier)
@@ -483,10 +496,55 @@ def step(state, dt):
     # 6) trade windows - confirmation countdown, idle/out-of-range/death auto-cancel
     _tick_trades(state, dt)
 
+    # 6b) Batch 15: Nexus NPCs, side-quest lines raised on the Player, stale conversations
+    for n in state.nexus_npcs:
+        n.update(dt, state.nexus_map.is_solid)
+    for s in state.sessions.values():
+        if s.player.quest_msgs:
+            s.story_feed.extend(s.player.quest_msgs)
+            s.player.quest_msgs = []
+        if s.conversation is not None and s.zone != s.conversation_zone:
+            s.conversation = None
+
     # 7) the wandering Nexus NPC - ticks even with nobody there, cheap and simple
     nexus_players = [s.player for s in state.sessions.values() if s.zone == ZONE_NEXUS]
     nearest = min((p.pos.distance_to(state.nexus_bot.pos) for p in nexus_players), default=None)
     state.nexus_bot.update(dt, state.nexus_map, nearest)
+
+
+def _send_dialogue(s):
+    conv = s.conversation
+    view = conv.view() if conv is not None else None
+    if conv is not None:
+        s.story_feed.extend(conv.msgs)
+        conv.msgs = []
+        if view is None:
+            s.conversation = None
+    send_msg(s.sock, {"type": "dialogue", "view": view})
+
+
+def _npcs_for_session(state, s):
+    if s.zone == ZONE_NEXUS:
+        return state.nexus_npcs
+    if s.zone == ZONE_REALM:
+        return state.realm_sim.npcs
+    return []
+
+
+def _try_talk(state, s):
+    """F next to a friendly NPC / ambient wildlife: opens a conversation (True)."""
+    p = s.player
+    npc = npcs.nearest_npc(_npcs_for_session(state, s), p.pos)
+    wild = None
+    if npc is None and s.zone in (ZONE_REALM, ZONE_BONUS):
+        sim = state.realm_sim if s.zone == ZONE_REALM else state.bonus_sims.get(s.bonus_sim_id)
+        wild = npcs.nearest_wildlife(sim.enemies, p.pos) if sim is not None else None
+    if npc is None and wild is None:
+        return False
+    s.conversation = dialogue.start_conversation(p, npc=npc, wildlife=wild)
+    s.conversation_zone = s.zone
+    _send_dialogue(s)
+    return True
 
 
 def _maybe_fire(state, sim, s, dt):
@@ -495,7 +553,9 @@ def _maybe_fire(state, sim, s, dt):
         s.fire_buffer = FIRE_BUFFER_WINDOW
     elif s.fire_buffer > 0:
         s.fire_buffer = max(0.0, s.fire_buffer - dt)
-    if s.fire_buffer > 0 and s.player.can_fire():
+    # no weapon equipped (dragged onto the ground) - RealmSim.player_fire would
+    # dereference None and take the whole co-op server down with it
+    if s.fire_buffer > 0 and s.player.can_fire() and s.player.weapon is not None:
         s.fire_buffer = 0.0
         aim = pygame.Vector2(s.last_input.get("aim", [0, 1]))
         if aim.length_squared() < 1e-6:
@@ -627,12 +687,18 @@ def _apply_action(state, s, action):
         if state.nexus_map.tile_at(p.pos.x, p.pos.y) == world.VAULT_TILE:
             s.zone = ZONE_VAULT_ROOM
             p.pos = _vault_room_spawn_pos(state)
+            # fill counts for the 12 chests (chest=None: nothing opens yet)
+            s.vault_items = load_vault(p.name)
+            send_msg(s.sock, {"type": "vault_state", "chest": None,
+                               "items": [(it.to_json() if it is not None else None) for it in s.vault_items]})
     elif kind == "leave_bonus" and s.zone == ZONE_BONUS:
         s.zone = ZONE_REALM
         p.pos = s.pre_bonus_pos or state.realm_sim.spawn_point()
     elif kind == "open_vault" and s.zone == ZONE_VAULT_ROOM:
-        if state.vault_room_map.tile_at(p.pos.x, p.pos.y) == world.CHEST:
-            chest_idx = _vault_room_chest_index(state, p.pos)
+        # F/Enter next to one of the 12 vault-room chests opens THAT chest (game/vault.py)
+        near = vault.nearest_chest(state.vault_room_map, p.pos)
+        if near is not None:
+            chest_idx = near[0]
             s.vault_items = load_vault(p.name)
             s.vault_chest = chest_idx
             send_msg(s.sock, {"type": "vault_state",
@@ -801,19 +867,42 @@ def _apply_action(state, s, action):
             p.pos = pygame.Vector2(target.player.pos) + offset
             state.chat_queue.append((None, s.zone, f"[{p.name} teleported to {target.player.name}]"))
     elif kind == "whisper":
+        # /msg or /w: by pid, or by NAME across every session in every zone (Realm,
+        # dungeons, Vault...) - a whisper isn't limited to who's on your screen
         target = state.sessions.get(action.get("pid"))
+        wanted = str(action.get("name", "")).strip().lower()
+        if target is None and wanted:
+            target = next((o for o in state.sessions.values() if o.player.name.lower() == wanted), None)
         text = str(action.get("text", ""))[:1000].strip()
-        if target is not None and text:
+        if target is None and wanted:
+            send_msg(s.sock, {"type": "whisper", "error": f"No player named '{action.get('name')}' is online"})
+        elif target is s:
+            send_msg(s.sock, {"type": "whisper", "error": "Talking to yourself? Bold."})
+        elif target is not None and text:
             send_msg(target.sock, {"type": "whisper", "from": p.name, "text": text})
             send_msg(s.sock, {"type": "whisper", "from": p.name, "text": text,
                                "to": target.player.name, "echo": True})
+    elif kind == "dialogue_choice":
+        if s.conversation is not None:
+            s.conversation.choose(int(action.get("idx", -1)))
+            _send_dialogue(s)
+    elif kind == "dialogue_close":
+        if s.conversation is not None:
+            s.conversation.bye()
+            _send_dialogue(s)
     elif kind == "fish" and s.zone in (ZONE_REALM, ZONE_BONUS):
         sim = state.realm_sim if s.zone == ZONE_REALM else state.bonus_sims.get(s.bonus_sim_id)
-        if sim is not None:
+        if _try_talk(state, s):
+            pass
+        elif sim is not None and sim.open_island_chest(p):
+            pass
+        elif sim is not None:
             sim.fish_action(p)  # feed messages ride the normal sim.events -> snapshot feed pipeline
+    elif kind == "wish" and s.zone == ZONE_NEXUS and _try_talk(state, s):
+        pass
     elif kind == "wish" and s.zone == ZONE_NEXUS:
         on_fountain = state.nexus_map.tile_at(p.pos.x, p.pos.y) == world.NEXUS_FOUNTAIN
-        near_bot = p.pos.distance_to(state.nexus_bot.pos) <= BOT_TRADE_RADIUS
+        near_bot = p.pos.distance_to(state.nexus_bot.pos) <= BOT_TALK_RADIUS
         if not on_fountain and not near_bot:
             send_msg(s.sock, {"type": "wish_result",
                                "error": "Stand in the fountain to wish, or walk up to Father Given to talk"})
@@ -830,13 +919,22 @@ def _apply_action(state, s, action):
             if err:
                 send_msg(s.sock, {"type": "wish_result", "error": err})
             else:
-                via_bot = near_bot and not on_fountain
                 send_msg(s.sock, {"type": "wish_result", "old_name": old.name, "new_name": new.display_name,
-                                   "new_color": list(new.color), "is_ut": new.is_ut, "via_bot": via_bot,
+                                   "new_color": list(new.color), "is_ut": new.is_ut,
                                    "upgrade": new.tier > (old.tier or 0), "same_tier": new.tier == (old.tier or 0)})
-                if via_bot:
-                    state.nexus_bot.speech = f"Here, take this {new.name}."
-                    state.nexus_bot.speech_age = 0.0
+    elif kind in ("echo_shop_open", "echo_buy") and s.zone == ZONE_NEXUS:
+        # the Echo Keeper (co-op): server-authoritative, same account functions as main.py
+        on_keeper = state.nexus_map.tile_at(p.pos.x, p.pos.y) == world.ECHO_KEEPER_TILE
+        msg, ok = None, True
+        if kind == "echo_buy" and on_keeper:
+            if action.get("item") == "backpack_slot":
+                ok, msg = accounts.buy_backpack_slot(p.name)
+                if ok:
+                    p.backpack_size += 1
+            elif action.get("item") == "starting_xp":
+                ok, msg = accounts.buy_starting_xp_boost(p.name)
+        send_msg(s.sock, {"type": "echo_shop_state", "echoes": accounts.get_echoes(p.name),
+                           "unlocks": accounts.get_unlocks(p.name), "message": msg, "ok": ok})
     elif kind == "respawn" and s.zone == ZONE_DEAD:
         s.player = Player(action.get("cls", "wizard"), name=p.name, pid=s.pid)
         s.player.story = _fresh_story(p.name)
@@ -883,9 +981,13 @@ def _trade_invite_for(state, s):
 
 def _snapshot_for(state, s):
     snap = _snapshot_core(state, s)
+    snap["live_event"] = live_events.current_event()  # clients show the HOST's event, not their own
     if s.zone != ZONE_DEAD:
         # story: every zone carries the quest log; feed lines/banners ride exactly one snapshot
         snap["quest_log"] = s.player.story.quest_log()
+        snap["sidequests"] = s.player.sidequests.log(s.player)
+        snap["sidequests_done"] = [sidequests.QUESTS[q]["title"] for q in s.player.sidequests.done
+                                   if q in sidequests.QUESTS]
         snap["story_feed"] = [[msg, list(color)] for msg, color in s.story_feed]
         snap["story_banners"] = list(s.story_banners)
         s.story_feed, s.story_banners = [], []
@@ -906,6 +1008,7 @@ def _snapshot_core(state, s):
             payload["ground_items"] = [g.net_state() for g in state.bazaar_ground_items]
         elif s.zone == ZONE_NEXUS:
             payload["bot"] = state.nexus_bot.net_state()
+            payload["npcs"] = [n.net_state() for n in state.nexus_npcs]
         return payload
     sim = state.realm_sim if s.zone == ZONE_REALM else state.bonus_sims.get(s.bonus_sim_id)
     # for ZONE_BONUS, peers must be scoped to the SAME dungeon instance - with several
@@ -958,9 +1061,16 @@ def _snapshot_core(state, s):
     return {
         "type": "snapshot", "zone": s.zone, "you": s.player.full_state(), "players": peers,
         "map": map_payload,
+        # the quest map / dictionary's area info (game/codex.realm_areas) rides with the map, once
+        "areas": codex.realm_areas(sim) if map_payload is not None and not sim.is_bonus_room else None,
         "enemies": enemy_payloads,
         "bullets": [b.net_state() for b in _nearby(sim.bullets, p_pos)],
-        "ground_items": [g.net_state() for g in _nearby(sim.ground_items, p_pos)],
+        # personal loot (Batch 15): a player only ever sees shared bags and their OWN
+        "ground_items": [g.net_state() for g in _nearby(sim.ground_items, p_pos)
+                         if getattr(g, "owner_pid", None) in (None, s.pid)],
+        "npcs": [n.net_state() for n in _nearby(sim.npcs, p_pos)],
+        "island_chests": [{"x": ch["pos"].x, "y": ch["pos"].y, "skin": ch["skin"], "opened": s.pid in ch["opened"]}
+                          for ch in sim.island_chests if ch["pos"].distance_to(p_pos) <= INTEREST_RADIUS],
         "portals": [pt.net_state() for pt in sim.portals],
         "obstacles": [ob.net_state() for ob in sim.obstacles],
         "portal_prompt": s.portal_prompt is not None,
@@ -968,7 +1078,7 @@ def _snapshot_core(state, s):
         "popups": [list(p) for p in sim.damage_popups],
         "vfx": [list(v) for v in sim.vfx_events],
         "sound": [list(sd) for sd in sim.sound_events],
-        "mob_speech": [list(sp) for sp in sim.mob_speech_events],
+        "mob_speech": [list(sp) for sp in audible_mob_speech(sim.mob_speech_events, p_pos)],
         "difficulty": sim.difficulty["name"] if sim.difficulty else None,
         "theme_name": sim.theme_name if s.zone == ZONE_BONUS else None,
         "secret_quest": sim.secret_quest if s.zone == ZONE_BONUS else None,

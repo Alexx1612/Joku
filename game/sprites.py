@@ -829,6 +829,108 @@ _DESERT_LIZARD_PAL = {"g": (130, 150, 60), "b": (170, 190, 100), "B": (205, 220,
 _MARSH_HERON_PAL = {"h": (150, 165, 160), "n": (170, 185, 180), "b": (200, 205, 195),
                      "B": (225, 230, 220), "k": (90, 70, 40), "l": (100, 115, 108)}
 
+# --- Batch 15 friendly creatures (talkable NPC herds + extra ambient wildlife) -
+# same shared-chassis approach as the Q3 quadrupeds above: a distinct head/topper
+# (or a fully bespoke small grid for the upright ones) over _QUAD_BODY_LEGS_4/6 or
+# _LIZARD_BODY_LEGS, each with its own original palette.
+_ELK = [
+    "a a a    a a a",
+    " aaa      aaa ",
+    "  a  a  a  a  ",
+    "   aa.  .aa   ",
+    "  bbbbbbbbbb  ",
+] + _QUAD_BODY_LEGS_4 + ["      tt      "]
+_ELK_PAL = {"a": (215, 195, 150), "b": (105, 70, 45), "B": (140, 95, 60), "e": (20, 15, 10),
+            "l": (80, 55, 35), "k": (45, 30, 20), "t": (235, 225, 205)}
+_MOUNTAIN_GOAT = [
+    "  hh      hh  ",
+    " h  h    h  h ",
+    "  hh      hh  ",
+    "  bbbbbbbbbb  ",
+] + _QUAD_BODY_LEGS_4 + ["     tttt     "]
+_MOUNTAIN_GOAT_PAL = {"h": (120, 110, 95), "b": (200, 198, 190), "B": (228, 226, 220), "e": (30, 30, 35),
+                      "l": (150, 148, 140), "k": (70, 68, 64), "t": (240, 240, 236)}
+_SNOW_FOX = [
+    "  r        r  ",
+    " rrr      rrr ",
+    "  bbbbbbbbbb  ",
+] + _QUAD_BODY_LEGS_4 + ["  tttttt      ", " tt           "]
+_SNOW_FOX_PAL = {"r": (240, 170, 110), "b": (235, 238, 242), "B": (250, 252, 255), "e": (25, 30, 45),
+                 "l": (205, 210, 220), "k": (140, 145, 160), "t": (250, 250, 252)}
+_SCRAP_RAT = [
+    " rr        rr ",
+    " rr        rr ",
+    "  bbbbbbbbbb  ",
+] + _QUAD_BODY_LEGS_6 + ["tttt          "]
+_SCRAP_RAT_PAL = {"r": (170, 120, 110), "b": (120, 112, 104), "B": (150, 142, 132), "e": (200, 60, 40),
+                  "l": (95, 88, 80), "k": (60, 55, 50), "t": (175, 125, 115)}
+_TORTOISE = [
+    "    ssssss    ",
+    "  ssSSssSSss  ",
+    " sSSssSSssSSs ",
+    " ssssssssssss ",
+] + _LIZARD_BODY_LEGS
+_TORTOISE_PAL = {"s": (110, 90, 50), "S": (150, 125, 70), "b": (120, 150, 85), "B": (150, 180, 110),
+                 "e": (25, 20, 10), "l": (100, 130, 70), "k": (70, 90, 45), "t": (120, 150, 85)}
+_TREE_FROG = [
+    " ee        ee ",
+    "eWWe      eWWe",
+    " eebbbbbbbbee ",
+] + _LIZARD_BODY_LEGS
+_TREE_FROG_PAL = {"e": (240, 130, 30), "W": (25, 20, 15), "b": (60, 190, 80), "B": (120, 230, 120),
+                  "l": (240, 130, 30), "k": (200, 90, 20), "t": (60, 190, 80)}
+_FIRE_BEETLE = [
+    "      hh      ",
+    "     h  h     ",
+    "  ssssssssss  ",
+    " sSSSSssSSSSs ",
+] + _QUAD_BODY_LEGS_6
+_FIRE_BEETLE_PAL = {"h": (255, 200, 90), "s": (150, 30, 20), "S": (230, 70, 30), "b": (60, 25, 20),
+                    "B": (110, 40, 25), "e": (255, 220, 120), "l": (50, 20, 15), "k": (30, 12, 10)}
+_FLAMINGO = [
+    "      pppk      ",
+    "     p   pk     ",
+    "     p          ",
+    "      p         ",
+    "       p        ",
+    "      pPPP      ",
+    "     pPPPPPP    ",
+    "     pPPPPPPp   ",
+    "      pPPPPp    ",
+    "        ll      ",
+    "        l       ",
+    "        l       ",
+    "        l       ",
+    "        k       ",
+]
+_FLAMINGO_PAL = {"p": (240, 120, 150), "P": (255, 160, 185), "k": (40, 30, 30), "l": (230, 110, 130)}
+_ICE_PENGUIN = [
+    "     kkkk     ",
+    "    kkkkkk    ",
+    "   kkwekwek   ",
+    "   kkwwoowk   ",
+    "  kkwwwwwwkk  ",
+    "  kkwwwwwwkk  ",
+    "  kkwwwwwwkk  ",
+    "   kkwwwwkk   ",
+    "    oo  oo    ",
+]
+_ICE_PENGUIN_PAL = {"k": (30, 34, 48), "w": (240, 244, 250), "e": (10, 10, 12), "o": (250, 160, 40)}
+_MUSHROOM_FOLK = [
+    "    rrrrrr    ",
+    "  rrwrrrrwrr  ",
+    " rrrrrwwrrrrr ",
+    " rwrrrrrrrrwr ",
+    "   cccccccc   ",
+    "    ffffff    ",
+    "    fekkef    ",
+    "    ffffff    ",
+    "    ffffff    ",
+    "    ff  ff    ",
+]
+_MUSHROOM_FOLK_PAL = {"r": (200, 50, 50), "w": (250, 245, 235), "c": (225, 205, 175), "f": (238, 225, 200),
+                      "e": (30, 25, 20), "k": (140, 90, 80)}
+
 # "The Reforging" storyline - island flare/song guardian palettes (see
 # entities.ENEMY_KINDS). Each reuses an existing base grid with a new
 # palette, the established minor-mob convention - shard pool in a warm
@@ -1359,6 +1461,12 @@ ENEMY_GRIDS = {"bat": (_BAT, _BAT_PAL), "ghost": (_GHOST, _GHOST_PAL),
                "songbird": (_SONGBIRD, _SONGBIRD_PAL), "deer": (_DEER, _DEER_PAL),
                "desert_lizard": (_DESERT_LIZARD, _DESERT_LIZARD_PAL), "marsh_heron": (_MARSH_HERON, _MARSH_HERON_PAL),
                "totem": (_TOTEM, _TOTEM_PAL),
+               # Batch 15 friendly creatures (see _ELK etc.)
+               "elk": (_ELK, _ELK_PAL), "mountain_goat": (_MOUNTAIN_GOAT, _MOUNTAIN_GOAT_PAL),
+               "snow_fox": (_SNOW_FOX, _SNOW_FOX_PAL), "scrap_rat": (_SCRAP_RAT, _SCRAP_RAT_PAL),
+               "tortoise": (_TORTOISE, _TORTOISE_PAL), "tree_frog": (_TREE_FROG, _TREE_FROG_PAL),
+               "fire_beetle": (_FIRE_BEETLE, _FIRE_BEETLE_PAL), "flamingo": (_FLAMINGO, _FLAMINGO_PAL),
+               "ice_penguin": (_ICE_PENGUIN, _ICE_PENGUIN_PAL), "mushroom_folk": (_MUSHROOM_FOLK, _MUSHROOM_FOLK_PAL),
                # "The Reforging" island guardians - shard pool (warm ember/rubble)
                "ember_wisp": (_EMBER_WISP, _EMBER_WISP_PAL), "fury_shard": (_FURY_SHARD, _FURY_SHARD_PAL),
                "rubble_crawler": (_RUBBLE_CRAWLER, _RUBBLE_CRAWLER_PAL), "spite_spirit": (_SPITE_SPIRIT, _SPITE_SPIRIT_PAL),
@@ -1429,7 +1537,16 @@ BOSS_KINDS = {"boss", "frost_monarch", "ash_behemoth", "void_reaper", "thorn_war
               "driftbell_matriarch", "abyssal_choirmaster", "mad_god", "mad_god_phase2"}
 
 
-def enemy_sprite(kind: str) -> pygame.Surface:
+def enemy_sprite(kind: str, scale: float = 1.0) -> pygame.Surface:
+    """scale != 1 (Batch 15 E4 - big bosses/guardians): the normal sprite smoothscaled
+    by that factor, cached separately per (kind, scale)."""
+    if scale and abs(scale - 1.0) > 1e-3:
+        skey = ("enemy", kind, round(scale, 2))
+        if skey not in _cache:
+            base = enemy_sprite(kind)
+            _cache[skey] = pygame.transform.smoothscale(
+                base, (max(1, round(base.get_width() * scale)), max(1, round(base.get_height() * scale))))
+        return _cache[skey]
     key = ("enemy", kind)
     if key not in _cache:
         grid, pal = ENEMY_GRIDS[kind]
@@ -1946,5 +2063,12 @@ def item_icon(tier_color, shape="sword") -> pygame.Surface:
         for bx in (10, 13, 16, 19):
             pygame.draw.line(surf, (150, 140, 130), (bx, 11), (bx, 21), 1)
         pygame.draw.rect(surf, OUTLINE, (5, 7, 20, 18), width=1, border_radius=3)
+    elif shape == "quest":
+        # a rolled parchment with a gold "!" - quest items (see game/sidequests.QUEST_ITEMS)
+        pygame.draw.rect(surf, (225, 205, 160), (7, 6, 14, 16), border_radius=2)
+        pygame.draw.rect(surf, (170, 140, 90), (5, 5, 18, 4), border_radius=2)
+        pygame.draw.rect(surf, (170, 140, 90), (5, 19, 18, 4), border_radius=2)
+        pygame.draw.line(surf, (230, 170, 40), (14, 9), (14, 15), 3)
+        pygame.draw.circle(surf, (230, 170, 40), (14, 18), 1)
     _cache[key] = surf
     return surf

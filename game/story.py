@@ -36,6 +36,15 @@ def landmark_name(biome):
     return _LANDMARK_NAME.get(biome, "a landmark")
 
 
+# pacing knobs, measured with a headless bot playthrough (16 runs, 4 classes): at 5
+# islands / 3 inner guardians the median full run was ~50 min with Act II only ~9.5 min;
+# 7 / 4 (+ 3 dungeons fed by guaranteed Guardian shards) adds content without adding waiting (all 10
+# islands start armed and each re-arms independently, so 7 distinct ones never queue)
+ISLANDS_NEEDED = 7
+INNER_GUARDIANS_NEEDED = 4
+DUNGEONS_NEEDED = 3  # each inner Landmark Guardian drops a guaranteed Dungeon Shard (RealmSim._reward)
+
+
 def _obj(obj_id, text, kind, need=1, keys=None):
     """keys=None -> any key of that kind counts; each distinct key counts once."""
     return {"id": obj_id, "text": text, "kind": kind, "need": need, "keys": keys}
@@ -60,18 +69,19 @@ ACTS = [
      ]},
     {"title": "Act II: Last Call",
      "intro": "The islands are having a very loud party and the neighbours - that's everyone - are complaining.",
-     "hint": "Calm 5 of the 10 islands. Use the island portals in the beach plaza, beat each wave and its mini-boss.",
+     "hint": f"Calm {ISLANDS_NEEDED} of the 10 islands. Use the island portals in the beach plaza, beat each wave and its mini-boss.",
      "done": "Last call has been called. The islands are sleeping it off.",
      "objectives": [
-         _obj("islands", "Calm any 5 islands", "island", need=5),
+         _obj("islands", f"Calm any {ISLANDS_NEEDED} islands", "island", need=ISLANDS_NEEDED),
      ]},
     {"title": "Act III: The Deep End",
      "intro": "The inland biomes are where the real trouble brews. Bring snacks. And a will.",
-     "hint": "Beat 3 inner-biome Landmark Guardians, then clear 2 dungeons - use Dungeon Shards that elites drop.",
+     "hint": f"Beat {INNER_GUARDIANS_NEEDED} inner-biome Landmark Guardians, then clear {DUNGEONS_NEEDED} dungeons - every inner Guardian drops a Dungeon Shard (elites drop them too).",
      "done": "You went off the deep end and came back. Nobody does that.",
      "objectives": [
-         _obj("inner_guardians", "Defeat 3 inner-biome Landmark Guardians", "guardian", need=3, keys=INNER_BIOMES),
-         _obj("dungeons", "Clear 2 dungeons (beat the boss)", "dungeon", need=2),
+         _obj("inner_guardians", f"Defeat {INNER_GUARDIANS_NEEDED} inner-biome Landmark Guardians", "guardian",
+              need=INNER_GUARDIANS_NEEDED, keys=INNER_BIOMES),
+         _obj("dungeons", f"Clear {DUNGEONS_NEEDED} dungeons (beat the boss)", "dungeon", need=DUNGEONS_NEEDED),
      ]},
     {"title": "Finale: Closing Time",
      "intro": "Right. The Mad God. He's been reforging this place like a bad remix. Time to unplug him.",
@@ -192,7 +202,8 @@ class StoryProgress:
         if act is None:
             return {"act": self.act, "title": FREE_PLAY_TITLE, "hint": FREE_PLAY_HINT, "objectives": []}
         return {"act": self.act, "title": act["title"], "hint": act["hint"],
-                "objectives": [{"text": o["text"], "have": self._count(o), "need": o["need"]}
+                "objectives": [{"text": o["text"], "have": self._count(o), "need": o["need"],
+                                "target": objective_target(o)}
                                for o in act["objectives"]]}
 
     def to_json(self):
@@ -208,6 +219,27 @@ class StoryProgress:
         if act < account_act:
             return StoryProgress(account_act)
         return StoryProgress(act, done)
+
+
+def objective_target(o):
+    """The Quest Log / Dictionary / Quest Map target for a story objective
+    (same {kind, key, label} shape as sidequests' targets)."""
+    kind, keys = o["kind"], o.get("keys")
+    if kind == "talk":
+        return {"kind": "npc", "key": "father_given", "label": "Father Given"}
+    if kind == "zone":
+        return {"kind": "area", "key": "realm", "label": "the Realm portal"}
+    if kind == "guardian":
+        if keys and len(keys) == 1:
+            return {"kind": "area", "key": f"landmark:{keys[0]}", "label": landmark_name(keys[0])}
+        return {"kind": "boss", "key": "guardians", "label": "Landmark Guardians"}
+    if kind == "island":
+        return {"kind": "area", "key": "islands", "label": "the islands"}
+    if kind == "dungeon":
+        return {"kind": "area", "key": "dungeons", "label": "dungeons"}
+    if kind == "mad_god":
+        return {"kind": "boss", "key": "mad_god", "label": "the Mad God"}
+    return None
 
 
 def given_line(progress, heard):

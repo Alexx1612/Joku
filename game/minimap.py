@@ -15,7 +15,12 @@ from game import world
 REVEAL_RADIUS_TILES = 10
 REBUILD_INTERVAL = 0.4  # seconds between fog-of-war re-renders (cheap enough, avoids per-frame full-grid scans)
 
-CORNER_SIZE = 148
+# The corner minimap spans the full right-dock width (Batch 15: same width as the
+# player-stats panel below it) - a wide radar, not a small square. CORNER_SIZE is
+# kept as a legacy alias of the width.
+CORNER_W, CORNER_H = 266, 148
+CORNER_SIZE = CORNER_W
+CORNER_TOP_Y = 94  # below the dock's full-width clock/zone header (see ui.day_night_clock_rect)
 MIN_ZOOM, MAX_ZOOM, ZOOM_STEP = 0.5, 8.0, 0.25
 DEFAULT_ZOOM = 1.2
 
@@ -121,14 +126,15 @@ def _visible_enemy_blips(enemies, explored):
 
 
 def corner_origin():
-    return C.SCREEN_W - CORNER_SIZE - 14, 74
+    # right-aligned so the map's 3px frame lines up with the player panel's edges
+    return C.SCREEN_W - CORNER_W - 11, CORNER_TOP_Y
 
 
 def corner_block_height():
     """Total vertical footprint of the corner minimap block (map + zoom buttons +
     hint text), so other UI (e.g. the right-docked player panel) can anchor itself
     below it without the exact button/text layout leaking into ui.py."""
-    return CORNER_SIZE + 6 + ZOOM_BTN_SIZE + 4 + 16
+    return CORNER_H + 6 + ZOOM_BTN_SIZE + 4 + 16
 
 
 def corner_zoom_button_rects():
@@ -137,10 +143,10 @@ def corner_zoom_button_rects():
     minimap's own horizontal footprint (not stuck out to the side) so they can never
     end up off-screen regardless of C.SCREEN_W."""
     x, y = corner_origin()
-    row_y = y + CORNER_SIZE + 6
+    row_y = y + CORNER_H + 6
     return [
         (pygame.Rect(x, row_y, ZOOM_BTN_SIZE, ZOOM_BTN_SIZE), -CORNER_ZOOM_STEP),
-        (pygame.Rect(x + CORNER_SIZE - ZOOM_BTN_SIZE, row_y, ZOOM_BTN_SIZE, ZOOM_BTN_SIZE), CORNER_ZOOM_STEP),
+        (pygame.Rect(x + CORNER_W - ZOOM_BTN_SIZE, row_y, ZOOM_BTN_SIZE, ZOOM_BTN_SIZE), CORNER_ZOOM_STEP),
     ]
 
 
@@ -149,35 +155,38 @@ def draw_corner(surf, tilemap, mm, player_pos, peers=(), portals=(), enemies=())
     without blocking the view of the play area. corner_zoom > 1 crops a region
     centered on the player instead of showing the whole map, like a radar."""
     base = mm._base_surface(tilemap)
-    size = CORNER_SIZE
+    W, H = CORNER_W, CORNER_H
     x, y = corner_origin()
 
-    if mm.corner_zoom <= CORNER_MIN_ZOOM:
-        view = base
-        view_w_tiles = tilemap.w
-        origin_tx, origin_ty = 0, 0
-    else:
-        span = max(4, int(min(tilemap.w, tilemap.h) / mm.corner_zoom))
-        ptx, pty = int(player_pos.x // C.TILE), int(player_pos.y // C.TILE)
-        origin_tx = max(0, min(tilemap.w - span, ptx - span // 2))
-        origin_ty = max(0, min(tilemap.h - span, pty - span // 2))
-        view = base.subsurface((origin_tx, origin_ty, span, span))
-        view_w_tiles = span
+    # a wide (non-square) window onto the map with square pixels: at zoom 1 the whole
+    # map WIDTH fits, cropped vertically around the player; zooming in crops both ways
+    span_x = max(4, min(tilemap.w, int(tilemap.w / max(CORNER_MIN_ZOOM, mm.corner_zoom))))
+    span_y = max(3, min(tilemap.h, int(round(span_x * H / W))))
+    ptx, pty = int(player_pos.x // C.TILE), int(player_pos.y // C.TILE)
+    origin_tx = max(0, min(tilemap.w - span_x, ptx - span_x // 2))
+    origin_ty = max(0, min(tilemap.h - span_y, pty - span_y // 2))
+    view = base.subsurface((origin_tx, origin_ty, span_x, span_y))
+    view_w_tiles = span_x
 
-    scaled = pygame.transform.scale(view, (size, size))
+    scaled = pygame.transform.scale(view, (W, int(round(span_y * W / span_x))))
     gold = (196, 162, 94)
-    panel = pygame.Surface((size + 6, size + 6), pygame.SRCALPHA)
+    panel = pygame.Surface((W + 6, H + 6), pygame.SRCALPHA)
     panel.fill((10, 10, 14, 205))
-    pygame.draw.rect(panel, (*gold, 90), (0, 0, size + 6, size + 6), width=1, border_radius=5)
+    pygame.draw.rect(panel, (*gold, 90), (0, 0, W + 6, H + 6), width=1, border_radius=5)
     surf.blit(panel, (x - 3, y - 3))
-    surf.blit(scaled, (x, y))
-    pygame.draw.rect(surf, gold, (x - 3, y - 3, size + 6, size + 6), width=2, border_radius=4)
+    old_clip0 = surf.get_clip()
+    surf.set_clip(pygame.Rect(x, y, W, H))
+    surf.blit(scaled, (x, y + (H - scaled.get_height()) // 2 if scaled.get_height() < H else y))
+    surf.set_clip(old_clip0)
+    pygame.draw.rect(surf, gold, (x - 3, y - 3, W + 6, H + 6), width=2, border_radius=4)
     tick = 4
-    for cx, cy, dx, dy in ((x - 3, y - 3, 1, 1), (x - 3 + size + 6, y - 3, -1, 1),
-                            (x - 3, y - 3 + size + 6, 1, -1), (x - 3 + size + 6, y - 3 + size + 6, -1, -1)):
+    for cx, cy, dx, dy in ((x - 3, y - 3, 1, 1), (x - 3 + W + 6, y - 3, -1, 1),
+                            (x - 3, y - 3 + H + 6, 1, -1), (x - 3 + W + 6, y - 3 + H + 6, -1, -1)):
         pygame.draw.line(surf, gold, (cx, cy), (cx + dx * tick, cy), 2)
         pygame.draw.line(surf, gold, (cx, cy), (cx, cy + dy * tick), 2)
-    px_per_tile = size / view_w_tiles
+    px_per_tile = W / view_w_tiles
+    if scaled.get_height() < H:  # a map shorter than the window is centred in it
+        y = y + (H - scaled.get_height()) // 2
 
     def local(wx, wy):
         return wx - origin_tx * C.TILE, wy - origin_ty * C.TILE
@@ -192,7 +201,7 @@ def draw_corner(surf, tilemap, mm, player_pos, peers=(), portals=(), enemies=())
     # whatever clip the caller had (normally none) before drawing the
     # zoom buttons/hint text below, which must NOT be clipped.
     old_clip = surf.get_clip()
-    surf.set_clip(pygame.Rect(x, y, size, size))
+    surf.set_clip(pygame.Rect(corner_origin()[0], corner_origin()[1], W, H))
     for pt in portals:
         lx, ly = local(pt.pos.x, pt.pos.y)
         _world_dot(surf, x, y, px_per_tile, lx, ly, (220, 120, 255), 3)
@@ -215,7 +224,8 @@ def draw_corner(surf, tilemap, mm, player_pos, peers=(), portals=(), enemies=())
         label = font_s.render("+" if delta > 0 else "-", True, (230, 220, 195))
         surf.blit(label, (rect.centerx - label.get_width() // 2, rect.centery - label.get_height() // 2))
     hint = font_s.render(f"M: full map ({mm.corner_zoom:.1f}x)", True, (170, 170, 185))
-    surf.blit(hint, (x, y + size + 6 + ZOOM_BTN_SIZE + 4))
+    ox, oy = corner_origin()
+    surf.blit(hint, (ox + W // 2 - hint.get_width() // 2, oy + H + 6 + (ZOOM_BTN_SIZE - hint.get_height()) // 2))
 
 
 def draw_full_map(surf, tilemap, mm, player_pos, peers=(), portals=(), zone_name="", enemies=()):

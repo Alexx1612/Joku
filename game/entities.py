@@ -15,6 +15,7 @@ from game import constants as C
 from game import sprites
 from game import achievements
 from game.story import StoryProgress
+from game.sidequests import SideQuestProgress
 from game.audio import sound_family  # pure classification lookup, no pygame.mixer side effects
 from game.items import (make_starter_weapon, make_starter_ability, Item, SLOT_WEAPON, SLOT_ARMOR,
                          SLOT_RING, SLOT_ABILITY, SLOT_EGG, SLOT_SHARD, SLOT_TEMP_POTION,
@@ -60,7 +61,9 @@ CLASS_BASE = {
     "warrior": dict(hp=130, mp=50, att=15, deF=25, spd=20, dex=15, vit=25, wis=5,
                      growth=["deF", "vit", "att", "deF", "spd"]),
     "priest": dict(hp=100, mp=120, att=5, deF=10, spd=25, dex=10, vit=15, wis=35,
-                    growth=["wis", "vit", "wis", "deF", "dex"]),
+                    # was "deF" in place of "spd": a robe caster out-growing every non-heavy
+                    # class's defense (~49 at lvl 20 vs Wizard ~15) - Paladin is the tanky support
+                    growth=["wis", "vit", "wis", "spd", "dex"]),
     "rogue": dict(hp=85, mp=60, att=12, deF=8, spd=40, dex=30, vit=12, wis=8,
                    growth=["dex", "spd", "att", "dex", "vit"]),
     "necromancer": dict(hp=95, mp=110, att=8, deF=6, spd=22, dex=12, vit=12, wis=32,
@@ -153,6 +156,10 @@ class Player:
         # level-based guess.
         self._echo_xp_progress = 0
         self._echoes_this_life = 0
+        self.sidequests = SideQuestProgress()  # Batch 15 side quests (game/sidequests.py)
+        self.sidequests.ensure_board()
+        self.quest_msgs = []  # side-quest feed lines raised on the Player itself (feed_pet, dialogue),
+        # drained into the feed by main.py/server.py each tick
         self.story = StoryProgress()  # critical-path progress (game/story.py) - the owner raises
         # it to the account's act checkpoint right after construction/load
         # e.g. "the Bloodied" - NOT loaded from disk here (this constructor runs on every
@@ -328,6 +335,9 @@ class Player:
                 return self._fuse_pet(index)
             self.pet_msg = ("Eggs hatch, they don't get eaten - use it instead", (220, 150, 90))
             return False
+        if it.slot == "quest":
+            self.pet_msg = ("That's a quest item - someone's waiting for it!", (220, 150, 90))
+            return False
         total_xp = max(1, it.tier or 1) * PET_FEED_XP_PER_TIER
         per_ability = total_xp / len(PET_ABILITY_KEYS)
         self.pet.bond += total_xp  # bond counts every feed in full, even once capped
@@ -344,6 +354,7 @@ class Player:
         self.backpack.pop(index)
         self.pet_msg = (f"Fed {it.display_name} to your pet (bond {pet_bond_level(self.pet.bond)})",
                         (170, 220, 255))
+        self.quest_msgs.extend(self.sidequests.on_event("feed_pet", player=self))
         return True
 
     def _fuse_pet(self, index):
@@ -543,7 +554,7 @@ class Player:
     def take_damage(self, dmg, pierce_armor=False):
         if self._dash_iframes > 0.0:
             return 0
-        real = dmg if pierce_armor else C.apply_defense(dmg, self.total_stat("deF"))
+        real = dmg if pierce_armor else C.player_defense(dmg, self.total_stat("deF"))
         if self.shield_hp > 0:
             absorbed = min(self.shield_hp, real)
             self.shield_hp -= absorbed
@@ -655,6 +666,7 @@ class Player:
             echo_xp_progress=self._echo_xp_progress,
             echoes_this_life=self._echoes_this_life,
             story=self.story.to_json(),
+            sidequests=self.sidequests.to_json(),
         )
 
     @staticmethod
@@ -685,6 +697,7 @@ class Player:
         p._echo_xp_progress = d.get("echo_xp_progress", 0)
         p._echoes_this_life = d.get("echoes_this_life", 0)
         p.story = StoryProgress.from_json(d.get("story"))
+        p.sidequests = SideQuestProgress.from_json(d.get("sidequests"))
         return p
 
     @staticmethod
@@ -824,6 +837,28 @@ ENEMY_KINDS = {
                            radius=8, aggro_range=0, leash_range=0, neutral=True, unshootable=True),
     "marsh_heron": dict(kind="marsh_heron", rank="trash", hp=22, speed=95, pattern="aimed", dmg=(0, 0),
                          radius=10, aggro_range=0, leash_range=0, neutral=True, unshootable=True),
+    # Batch 15 extra ambient wildlife (one more per biome, see realm_sim.BIOME_LAIR_KIND_SETS) -
+    # same neutral/unshootable contract as the six above, and all of them can be talked to (F)
+    "elk": dict(kind="elk", rank="trash", hp=40, speed=105, pattern="aimed", dmg=(0, 0),
+                radius=14, aggro_range=0, leash_range=0, neutral=True, unshootable=True),
+    "mountain_goat": dict(kind="mountain_goat", rank="trash", hp=30, speed=100, pattern="aimed", dmg=(0, 0),
+                radius=12, aggro_range=0, leash_range=0, neutral=True, unshootable=True),
+    "snow_fox": dict(kind="snow_fox", rank="trash", hp=20, speed=120, pattern="aimed", dmg=(0, 0),
+                radius=10, aggro_range=0, leash_range=0, neutral=True, unshootable=True),
+    "scrap_rat": dict(kind="scrap_rat", rank="trash", hp=14, speed=110, pattern="aimed", dmg=(0, 0),
+                radius=8, aggro_range=0, leash_range=0, neutral=True, unshootable=True),
+    "tortoise": dict(kind="tortoise", rank="trash", hp=45, speed=25, pattern="aimed", dmg=(0, 0),
+                radius=11, aggro_range=0, leash_range=0, neutral=True, unshootable=True),
+    "tree_frog": dict(kind="tree_frog", rank="trash", hp=12, speed=90, pattern="aimed", dmg=(0, 0),
+                radius=8, aggro_range=0, leash_range=0, neutral=True, unshootable=True),
+    "fire_beetle": dict(kind="fire_beetle", rank="trash", hp=18, speed=70, pattern="aimed", dmg=(0, 0),
+                radius=9, aggro_range=0, leash_range=0, neutral=True, unshootable=True),
+    "flamingo": dict(kind="flamingo", rank="trash", hp=22, speed=85, pattern="aimed", dmg=(0, 0),
+                radius=11, aggro_range=0, leash_range=0, neutral=True, unshootable=True),
+    "ice_penguin": dict(kind="ice_penguin", rank="trash", hp=24, speed=55, pattern="aimed", dmg=(0, 0),
+                radius=10, aggro_range=0, leash_range=0, neutral=True, unshootable=True),
+    "mushroom_folk": dict(kind="mushroom_folk", rank="trash", hp=20, speed=40, pattern="aimed", dmg=(0, 0),
+                radius=10, aggro_range=0, leash_range=0, neutral=True, unshootable=True),
     # "The Reforging" storyline - island flare/song guardians (see
     # realm_sim.ISLAND_THEMES/_tick_island_events). Deliberately NOT added to
     # any BIOME_LAIR_KIND_SETS roster - these only ever spawn via an island
@@ -907,8 +942,10 @@ ENEMY_KINDS = {
     # spinning-ring "boss" pattern; its phase 2 ("mad_god_phase2", built below the
     # BOSS_KINDS phase-2 loop) spawns the moment phase 1 dies, see RealmSim._reward
     # own "mad_god" pattern (see Enemy._shoot) - the shared "boss" spinning ring
-    # alone barely ever reached a player, measured ~9 hp/s on a still lvl-20 Wizard
-    "mad_god": dict(kind="mad_god", rank="boss", hp=2200, speed=46, pattern="mad_god", dmg=(7, 14), radius=30,
+    # alone barely ever reached a player, measured ~9 hp/s on a still lvl-20 Wizard.
+    # dmg re-tuned to (5, 10) with constants.player_defense: ~41-48 hp/s phase 1 /
+    # ~63 hp/s phase 2 vs a still lvl-20 Warrior or Wizard
+    "mad_god": dict(kind="mad_god", rank="boss", hp=2200, speed=46, pattern="mad_god", dmg=(5, 10), radius=30,
                     aggro_range=99999, leash_range=99999),
     # a stationary, damageable dungeon decoration - see realm_sim.SECRET_QUEST_KINDS'
     # "kill_totems" quest. speed=0 is safe (movement code is pure multiplication,
@@ -971,6 +1008,24 @@ ENEMY_KINDS["mad_god_phase2"] = dict(
     # "mad_god" pattern already roughly doubles its bullets on top of the faster fire rate
     dmg=(int(_mg_lo * 1.15), int(_mg_hi * 1.15)), fire_rate_mult=PHASE2_FIRE_RATE_MULT,
     deF=round(ENEMY_KINDS["mad_god"].get("deF", 0) * PHASE2_HP_MULT))
+
+# Batch 15 (E4): bosses read as BIG. An optional per-kind "scale" multiplies both the
+# drawn sprite (sprites.enemy_sprite(kind, scale)) and the bullet hitbox radius; terrain
+# movement keeps a capped radius (ENEMY_MOVE_RADIUS_CAP) so a huge boss can still use
+# the same corridors/doorways it always could.
+BOSS_SCALE = 2.0
+MINI_BOSS_SCALE = 1.8
+GUARDIAN_SCALE = 1.5
+ISLAND_MINI_BOSS_KINDS = ("cinder_colossus", "choir_sovereign", "rubble_warlord", "coral_leviathan",
+                          "ashreach_revenant", "tideglass_warden", "thornrock_colossus", "driftbell_matriarch",
+                          "ashenreach_devourer", "abyssal_choirmaster")
+ENEMY_MOVE_RADIUS_CAP = 26
+for _bk in BOSS_KINDS + [f"{k}_phase2" for k in BOSS_KINDS] + ["mad_god", "mad_god_phase2"]:
+    ENEMY_KINDS[_bk]["scale"] = BOSS_SCALE
+for _bk in ISLAND_MINI_BOSS_KINDS:
+    if _bk in ENEMY_KINDS:
+        ENEMY_KINDS[_bk]["scale"] = MINI_BOSS_SCALE
+
 
 # Random flavor lines shown as a speech bubble above an aggro'd mob (same mechanism
 # as NexusBot's speech/speech_age) - a small pool per sound family (see game.audio.
@@ -1078,10 +1133,12 @@ class Enemy:
         self.dmg = d["dmg"]
         self.deF = d.get("deF", 0)
         self._last_hit_damage = 0  # real post-mitigation amount from the most recent take_damage() call
-        self.radius = d["radius"]
+        self.scale = d.get("scale", 1.0)
+        self.radius = int(round(d["radius"] * self.scale))
         self.aggro_range = d["aggro_range"]
         self.leash_range = d["leash_range"]
         self.neutral = d.get("neutral", False)  # always-passive ambient wildlife - see update()
+        self.contributors = {}  # pid -> damage dealt (co-op: everyone who hit it gets credit + loot)
         self.fire_rate_mult = d.get("fire_rate_mult", 1.0)  # <1.0 fires faster - see PHASE2_FIRE_RATE_MULT
         self.aggro = self.rank == "boss"  # bosses are always aggro, everything else starts idle
         self._t = random.uniform(0, 10)
@@ -1165,11 +1222,12 @@ class Enemy:
         # each axis checks the enemy's real collision circle (see
         # _circle_clear), not just its bare center point - same fix as
         # Player.net_update, same reasoning
+        move_r = min(self.radius, ENEMY_MOVE_RADIUS_CAP)  # big bosses still fit corridors
         new_x = self.pos.x + delta.x
-        if _circle_clear(tile_map.is_solid, new_x, self.pos.y, self.radius):
+        if _circle_clear(tile_map.is_solid, new_x, self.pos.y, move_r):
             self.pos.x = new_x
         new_y = self.pos.y + delta.y
-        if _circle_clear(tile_map.is_solid, self.pos.x, new_y, self.radius):
+        if _circle_clear(tile_map.is_solid, self.pos.x, new_y, move_r):
             self.pos.y = new_y
 
     def update(self, dt, player_pos, bullets_out, tile_map=None):
@@ -1459,9 +1517,8 @@ class Enemy:
             # the story finale: the shared boss ring, PLUS an aimed 3-way volley every
             # other shot (the ring alone can simply be stood beside), PLUS a periodic
             # 16-bullet nova. Phase 2 adds a counter-rotating ring on top. The aimed volley
-            # and red nova are armor-piercing: defense is a flat subtraction (constants.apply_defense)
-            # and a lvl-20 Warrior/Priest sits at ~55-60 deF, which otherwise shrugs
-            # off every hit that doesn't one-shot a ~15-deF Wizard.
+            # and red nova are armor-piercing (skip constants.player_defense) so
+            # standing in the aimed line is deadly for every class, tank or not.
             self._phase_cd -= self._pattern_interval()
             self._mg_shot = getattr(self, "_mg_shot", 0) + 1
             spin = (self._t * 90) % 360
@@ -1533,7 +1590,10 @@ class Enemy:
         self._speech_pending = True
 
     def draw(self, surf, cam):
-        img = sprites.enemy_sprite(self.kind)
+        # co-op GhostEnemy has no .scale attribute unless the snapshot sent one - fall
+        # back to the kind's own scale so every boss is drawn big on every client
+        scale = getattr(self, "scale", None) or ENEMY_KINDS.get(self.kind, {}).get("scale", 1.0)
+        img = sprites.enemy_sprite(self.kind, scale)
 
         # --- draw-only idle/walk animation (Batch 13, Track P) ---
         # getattr(..., default) throughout: a co-op GhostEnemy reuses this exact
@@ -1602,7 +1662,7 @@ class Enemy:
             frost.fill((150, 210, 255, 130), special_flags=pygame.BLEND_RGBA_MULT)
             surf.blit(frost, r)
         if self.hp < self.hp_max:
-            w = 26 if self.rank != "boss" else 60
+            w = 26 if self.rank != "boss" else max(60, int(r.width * 0.8))
             x, y = r.centerx - w // 2, r.top - 8
             pygame.draw.rect(surf, C.COL_HP_BG, (x, y, w, 4))
             pygame.draw.rect(surf, C.COL_HP, (x, y, int(w * self.hp / self.hp_max), 4))
@@ -1612,7 +1672,7 @@ class Enemy:
                     hp=self.hp, hp_max=self.hp_max, rank=self.rank, aggro=self.aggro,
                     frozen=self.frozen_time > 0, moonlit=self.moonlit, invulnerable=self.invulnerable,
                     speech=self.speech, speech_age=round(self.speech_age, 2), neutral=self.neutral,
-                    pretelegraph=self._pretelegraph)
+                    pretelegraph=self._pretelegraph, scale=self.scale)
 
 
 def _mk_bullet(pos, direction, speed, dmg, color, owner="enemy", pierce=0, radius=5, lifetime=2.4,
@@ -1753,8 +1813,11 @@ class Bag:
 
     _RARITY_RANK = {"brown": 0, "purple": 1, "white": 2}
 
-    def __init__(self, items, pos, dropped_by=None, rarity_key=None):
+    def __init__(self, items, pos, dropped_by=None, rarity_key=None, owner_pid=None):
         self.id = next(_id_counter)
+        # Batch 15 co-op fairness: a kill's loot is PERSONAL - one bag per player who
+        # damaged the mob, only visible to / openable by that player (None = anyone's)
+        self.owner_pid = owner_pid
         self.items = list(items)
         self.pos = pygame.Vector2(pos)
         self.life = BAG_LIFETIME
@@ -1796,7 +1859,12 @@ class Bag:
         return self.life > 0 and len(self.items) > 0
 
     def can_be_taken_by(self, pid):
+        if self.owner_pid is not None and pid != self.owner_pid:
+            return False
         return not (self.self_pickup_immune > 0 and pid == self.dropped_by)
+
+    def visible_to(self, pid):
+        return self.owner_pid is None or pid == self.owner_pid
 
     def draw(self, surf, cam):
         p = cam(self.pos)
@@ -2265,6 +2333,8 @@ class Pet:
         if attack_st["cd"] <= 0:
             nearest, best = None, PET_ATTACK_RANGE
             for e in enemies:
+                if getattr(e, "neutral", False) or getattr(e, "unshootable", False) or not getattr(e, "alive", True):
+                    continue  # never waste a shot on (or spook) friendly wildlife
                 dist = e.pos.distance_to(owner.pos)
                 if dist < best:
                     nearest, best = e, dist

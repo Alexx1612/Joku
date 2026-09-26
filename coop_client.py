@@ -29,16 +29,23 @@ from game import ui
 from game import sprites
 from game import audio
 from game import minimap
+from game import vault
 from game import weather
 from game import vfx
 from game import clipboard
 from game import friends
 from game import crews
 from game import live_events
+from game import zone_banner
+from game import accounts
 from game import settings
 from game import options_menu
+from game.panel_drag import PanelDrag
+from game.chat_input import ChatInput, LogSelection
 from game import story
-from game.entities import Player, Enemy, Bullet, Bag, Portal, Obstacle, NexusBot
+from game import journal
+from game.npcs import NPC
+from game.entities import Player, Enemy, Bullet, Bag, Portal, Obstacle, NexusBot, BAG_CAPACITY, CHEST_SKIN_NAMES
 from game.netmsg import send_msg, MessageReader
 from game.items import VAULT_SLOTS, VAULT_CHEST_SIZE, identify_proc_kind, SLOT_WEAPON
 from game.realm_sim import auto_aim_direction, AUTO_AIM_CONE_DEG, DUNGEON_THEMES
@@ -69,6 +76,7 @@ class GhostEnemy:
         self.speech = d.get("speech", "")
         self.speech_age = d.get("speech_age", 999.0)
         self.neutral = d.get("neutral", False)
+        self.scale = d.get("scale")  # per-instance sprite/hitbox scale (e.g. landmark guardians)
         self.visible = d.get("visible", True)  # server-computed real LOS - see server.py::_snapshot_for
 
 
@@ -83,7 +91,13 @@ class GhostBullet:
 
 
 class GhostBag:
-    draw = Bag.draw
+    # a ghost carries only an item COUNT (the items themselves ride bag_state when
+    # opened) - borrowing Bag.draw crashed on len(self.items) the first time a loot
+    # bag came into view (fuzz-found), so mirror it with the count instead
+    def draw(self, surf, cam):
+        p = cam(self.pos)
+        img = sprites.bag_sprite(self.count / BAG_CAPACITY > 0.5, self.bag_color)
+        surf.blit(img, (p[0] - img.get_width() // 2, p[1] - img.get_height() // 2 + 3))
 
     def __init__(self, d):
         self.id = d["id"]
@@ -103,6 +117,11 @@ class GhostChest:
         self.pos = pygame.Vector2(d["x"], d["y"])
         self.skin_idx = d.get("skin_idx", 0)
         self.count = d.get("count", 0)
+        # what a real BazaarChest (a "brown" Bag subclass) exposes to the Bazaar's
+        # nearby-loot panel / hover tooltip - missing bag_color crashed the client
+        # the moment you walked near a chest (fuzz-found)
+        self.bag_color = C.BAG_COLORS["brown"]
+        self.name = f"{CHEST_SKIN_NAMES[self.skin_idx % len(CHEST_SKIN_NAMES)].title()} chest"
 
     def draw(self, surf, cam):
         p = cam(self.pos)
@@ -121,10 +140,12 @@ class GhostBot:
         self.SPEECH_LIFETIME = NexusBot.SPEECH_LIFETIME
 
 
-class GhostPortal:
-    draw = Portal.draw
+class GhostPortal(Portal):
+    # subclass (not just `draw = Portal.draw`): draw() also needs Portal's class-level
+    # KIND_COLORS/ARCH_STONE and its _draw_* helpers - copying draw alone crashed the
+    # client with AttributeError the first time a portal came into view (fuzz-found)
 
-    def __init__(self, d, t=0.0):
+    def __init__(self, d, t=0.0):  # deliberately skips Portal.__init__ (no life/id/sim state)
         self.pos = pygame.Vector2(d["x"], d["y"])
         self.t = t
         self.kind = d.get("kind", "ambient")
@@ -141,6 +162,17 @@ class GhostObstacle:
         self.kind = d.get("kind", "crate")
 
 
+
+def _split_msg_target(rest):
+    """'/msg "Two Words" hi there' or '/msg Bob hi' -> (name, message)."""
+    rest = rest.strip()
+    if rest.startswith('"'):
+        end = rest.find('"', 1)
+        if end > 0:
+            return rest[1:end].strip(), rest[end + 1:].strip()
+    name, _, msg = rest.partition(" ")
+    return name.strip('"'), msg.strip()
+
 class NetLink:
     """Background thread that keeps the latest server messages ready for the render loop."""
 
@@ -150,6 +182,7 @@ class NetLink:
         self.lock = threading.Lock()
         self.latest_snapshot = None
         self.pending_map = None
+        self.pending_areas = None
         self.vault_items = None
         self.vault_chest_hint = None
         self.bag_state = None  # {"id": bag_id, "items": [json, ...]} - the last opened/withdrawn-from bag
@@ -157,9 +190,11 @@ class NetLink:
         self.wish_result = None
         self.socket_result = None
         self.trade_notices = []  # server "trade_notice" texts (request sent/declined/expired, ...)
+        self.echo_shop_states = []  # server "echo_shop_state" dicts (Echo Keeper shop, see server.py)
         self.pet_results = []  # server "pet_result" dicts (feed/pack/fuse/hatch outcome, see server._pet_result)
         self.story_feed = []  # story lines/banners ride ONE snapshot each - collected here as each
         self.story_banners = []  # snapshot is seen, same reason as pending_map below
+        self.dialogue_msgs = []  # server "dialogue" messages ({"view": dict | None}), in order
         self.welcome_pid = None
         self.error = None
         self._stop = False
@@ -186,6 +221,7 @@ class NetLink:
                             # the moment it's SEEN (not the moment it's consumed) fixes that.
                             if msg.get("map") is not None:
                                 self.pending_map = msg["map"]
+                                self.pending_areas = msg.get("areas")
                             self.story_feed.extend(msg.get("story_feed", ()))
                             self.story_banners.extend(msg.get("story_banners", ()))
                     elif t == "vault_state":
@@ -210,6 +246,12 @@ class NetLink:
                     elif t == "pet_result":
                         with self.lock:
                             self.pet_results.append(msg)
+                    elif t == "echo_shop_state":
+                        with self.lock:
+                            self.echo_shop_states.append(msg)
+                    elif t == "dialogue":
+                        with self.lock:
+                            self.dialogue_msgs.append(msg)
                     elif t == "welcome":
                         self.welcome_pid = msg["pid"]
         except (ConnectionError, OSError) as e:
@@ -224,6 +266,11 @@ class NetLink:
     def get_snapshot(self):
         with self.lock:
             return self.latest_snapshot
+
+    def pop_pending_areas(self):
+        with self.lock:
+            v, self.pending_areas = self.pending_areas, None
+            return v
 
     def pop_pending_map(self):
         with self.lock:
@@ -262,6 +309,17 @@ class NetLink:
             self.story_feed, self.story_banners = [], []
             return v
 
+    def pop_dialogue(self):
+        """The newest dialogue message since the last call, or None if none arrived."""
+        with self.lock:
+            msgs, self.dialogue_msgs = self.dialogue_msgs, []
+        return msgs[-1] if msgs else None
+
+    def pop_echo_shop_states(self):
+        with self.lock:
+            v, self.echo_shop_states = self.echo_shop_states, []
+        return v
+
     def pop_pet_results(self):
         with self.lock:
             v, self.pet_results = self.pet_results, []
@@ -290,6 +348,10 @@ class CoopClient:
         self.help_open = False
         self.menu_selected = 0
         self.quit_confirm_open = False  # Esc with nothing else open asks before quitting
+        self.echo_shop_open = False  # the Echo Keeper's shop (Nexus) - see _echo_shop_items
+        self.echo_shop_selected = 0
+        self.echo_shop_data = {}  # last server "echo_shop_state": echoes + unlocks
+        self.panel_drag = PanelDrag()  # mouse-draggable chat log / quest log
         self._base_size = (C.SCREEN_W, C.SCREEN_H)
         # RESIZABLE gives the window a real title bar with a native maximize button
         # (next to minimize/close) - clicking it, or F11, or dragging an edge all land
@@ -325,6 +387,7 @@ class CoopClient:
         self.kill_count = 0
         self.difficulty = None
         self.theme_name = None
+        self.zone_tracker = zone_banner.ZoneTracker()  # zone-entry title cards + per-place music
         self.light_level = 1.0
         self.blood_moon = False
         self.weather_fx = weather.WeatherFX()
@@ -340,8 +403,8 @@ class CoopClient:
         self.bazaar_map = world.TileMap(world.make_bazaar())  # deterministic, matches server exactly
         self.vault_room_map = world.TileMap(world.make_vault_room())  # deterministic, matches server exactly
 
-        self.vault_open = False
-        self.vault_chest = 0  # which of the VAULT_CHEST_COUNT chests is currently paged in
+        self.vault_chest_open = None  # index of the vault-room chest whose bag-style window is open
+        self.vault_chest = 0  # which of the VAULT_CHEST_COUNT chests the server deposits into
         self._suppress_vault_trigger = False  # see _vault_click's close-button branch
         self.vault_items = []
         self.open_bag_id = None  # id of the ground Bag currently shown in the drag-and-drop window
@@ -375,12 +438,23 @@ class CoopClient:
         self.chat_open = False
         self.chat_buffer = ""
         self._chat_select_all = False
+        self.chat_in = ChatInput()  # the input line's cursor/selection/history
+        self.chat_log_sel = LogSelection()  # click-drag line selection in the chat log
+        self._chat_box_dragging = False
         self._speech_bubbles = []  # [{pid, text, age}]
         self.chat_log = []  # [{name, text, age}] persistent left-side log, cap ui.CHAT_LOG_STORE_CAP, scrollable via self.chat_scroll
         self.chat_scroll = 0  # wrapped-line offset from the newest line, 0 = pinned to the bottom
         self.trade = None  # the server's per-viewer trade dict, or None (see server._trade_info_for)
         self.trade_invite = None  # incoming {"from_name", "time_left"} request, or None
         self.quest_log = None  # the server's story quest log (game/story.StoryProgress.quest_log())
+        self.sidequest_log = []  # the server's side quests (game/sidequests.SideQuestProgress.log())
+        self.dialogue_view = None  # the open conversation (server-owned, see server._send_dialogue)
+        self.journal = journal.Journal()  # Quest Log / Dictionary / Quest Map windows (game/journal.py)
+        self.sidequests_done = []  # completed side-quest titles (server snapshot)
+        self.realm_grid = None  # the last open-Realm grid + its area info, kept for the journal
+        self.realm_areas = None  # even while you're back in the Nexus
+        self.npcs = []  # friendly NPCs in view (npcs.NPC rebuilt from snapshots)
+        self.island_chests = []  # [(pos, skin, opened_for_me)]
         self.quest_log_expanded = True  # J toggles it between full and title-only
         self.story_banner = None  # [text, remaining_seconds]
         self.credits_t = None  # seconds into the end credits while they're showing
@@ -465,7 +539,30 @@ class CoopClient:
             reset_camera=self.cam.reset_rotation, close=self._menu_close,
             full_map=(lambda: mm.full_map_open, self._menu_toggle_full_map) if mm is not None else None,
             leave=("Disconnect (return to Class Select)", self._menu_disconnect)
+            if self.state == STATE_PLAY else None,
+            journal=[("Quest Log", self._open_quest_log), ("Dictionary", self._open_dictionary)]
             if self.state == STATE_PLAY else None)
+
+    def _open_quest_log(self):
+        self.help_open = False
+        self.journal.open_quest_log()
+
+    def _open_dictionary(self):
+        self.help_open = False
+        self.journal.open_dictionary()
+
+    def _journal_ctx(self):
+        """What the Quest Log / Dictionary / Quest Map need (see game/journal.py)."""
+        you = self.you
+        in_realm = self.zone == "realm" and you is not None and self.realm_grid is not None
+        return {
+            "story": self.quest_log,
+            "side": self.sidequest_log or [],
+            "side_done": self.sidequests_done or [],
+            "grid": self.realm_grid,
+            "areas": self.realm_areas,
+            "player_tile": (you.pos.x / C.TILE, you.pos.y / C.TILE) if in_realm else None,
+        }
 
     def _set_auto_fire(self, enabled):
         self.auto_fire_enabled = bool(enabled)
@@ -508,6 +605,15 @@ class CoopClient:
                 if verdict:
                     return False
                 continue
+            if self.journal.is_open() and self.journal.handle_event(event, self._journal_ctx()):
+                continue
+            if self.dialogue_view is not None and event.type in (pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN):
+                choice = ui.dialogue_choice_for_event(event, self.dialogue_view)
+                if choice is not None:
+                    self.link.send({"type": "action", "action": "dialogue_choice", "idx": choice})
+                    if choice == len(self.dialogue_view["options"]) - 1:
+                        self.dialogue_view = None  # "Bye." - don't wait a round trip to close
+                continue
             if self.state == STATE_INTRO:
                 if event.type in (pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN):
                     self.state = STATE_CLASS_SELECT
@@ -523,13 +629,23 @@ class CoopClient:
                     and event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_ESCAPE)):
                 self.credits_t = None  # skip the end credits
                 continue
+            if self._chat_mouse_event(event):
+                continue
             if event.type == pygame.KEYDOWN:
                 if self.chat_open:
                     self._handle_chat_key(event)
+                elif (event.key == pygame.K_c and event.mod & pygame.KMOD_CTRL
+                      and self.chat_log_sel.span() is not None):
+                    self._copy_chat_selection()
                 elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER) and self.pending_socket is not None:
                     self._apply_pending_socket()
-                elif (event.key == pygame.K_RETURN and self.state == STATE_PLAY and not self.vault_open
-                      and self.zone in self.CHAT_ZONES and not self.help_open and not self.portal_prompt):
+                elif (event.key in (pygame.K_RETURN, pygame.K_f) and self.state == STATE_PLAY
+                      and self.zone == "vault_room" and self.vault_chest_open is None and not self.help_open
+                      and self._try_open_vault_chest()):
+                    pass
+                elif (event.key == pygame.K_RETURN and self.state == STATE_PLAY
+                      and self.zone in self.CHAT_ZONES and not self.help_open and not self.echo_shop_open
+                      and not self.portal_prompt):
                     # standing near a portal takes priority over opening chat - see _play_key
                     self.chat_open = True
                     self.chat_buffer = ""
@@ -545,6 +661,13 @@ class CoopClient:
                     new_sel = options_menu.handle_key(self._menu_items(), self.menu_selected, event.key)
                     if new_sel is not None:
                         self.menu_selected = new_sel
+                elif self.echo_shop_open and event.key in (pygame.K_UP, pygame.K_DOWN, pygame.K_w, pygame.K_s):
+                    step = -1 if event.key in (pygame.K_UP, pygame.K_w) else 1
+                    self.echo_shop_selected = (self.echo_shop_selected + step) % len(self._echo_shop_items())
+                elif self.echo_shop_open and event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                    self._echo_shop_items()[self.echo_shop_selected][1]()
+                elif self.echo_shop_open and event.key == pygame.K_ESCAPE:
+                    self.echo_shop_open = False
                 elif event.key == pygame.K_SPACE and self.zone in ("realm", "bonus"):
                     self._use_ability()
                 elif event.key in (pygame.K_LSHIFT, pygame.K_RSHIFT) and self.zone in ("realm", "bonus"):
@@ -570,9 +693,17 @@ class CoopClient:
                         self.friends_panel_open = False
                     elif self.help_open:
                         self.help_open = False
-                    elif self.vault_open:
-                        pass  # closing the Vault is click-only now (see vault_close_button_rect)
+                    elif self.trade_invite is not None:
+                        self.link.send({"type": "action", "action": "trade_invite_decline"})
+                        self.trade_invite = None
+                    elif self.trade is not None:
+                        self.link.send({"type": "action", "action": "trade_cancel"})
+                    elif self.open_bag_id is not None:
+                        self.open_bag_id = None
+                    elif self.vault_chest_open is not None:
+                        self._close_vault_chest()
                     else:
+                        # nothing left to close - Esc asks before quitting (Esc again = quit)
                         self.quit_confirm_open = True
                 elif self.state == STATE_CLASS_SELECT:
                     self._class_select_key(event.key)
@@ -590,6 +721,15 @@ class CoopClient:
                     clicked = options_menu.handle_click(self._menu_items(), event.pos)
                     if clicked is not None:
                         self.menu_selected = clicked
+                elif self.echo_shop_open and ui.echo_shop_close_button_rect(self._echo_shop_items()).collidepoint(event.pos):
+                    self.echo_shop_open = False
+                elif self.echo_shop_open:
+                    items = self._echo_shop_items()
+                    for i, rect in enumerate(ui.echo_shop_menu_item_rects(items)):
+                        if rect.collidepoint(event.pos):
+                            self.echo_shop_selected = i
+                            items[i][1]()
+                            break
                 elif self.context_menu is not None:
                     self._context_menu_click(event.pos)
                 elif self.trade_invite is not None and self._trade_invite_click(event.pos):
@@ -598,9 +738,9 @@ class CoopClient:
                     self.inspect_pid = None
                 elif self.friends_panel_open:
                     self._friends_panel_click(event.pos)
-                elif self.vault_open:
-                    if not self._vault_click_extras(event.pos):
-                        self._inventory_mouse_down(event.pos)
+                elif (self.vault_chest_open is not None and self.zone == "vault_room"
+                      and ui.vault_chest_close_button_rect(self._vault_chest_screen_pos()).collidepoint(event.pos)):
+                    self._close_vault_chest()
                 elif self.trade is not None:
                     self._trade_click(event.pos)
                 elif self._current_minimap() is not None and self._minimap_button_click(event.pos):
@@ -609,10 +749,13 @@ class CoopClient:
                       and ui.bag_window_close_button_rect(self.cam(self._current_bag().pos)).collidepoint(event.pos)):
                     self.open_bag_id = None
                     self.bag_items = []
-                elif (not self.chat_open and self.zone in self.CHAT_ZONES
+                elif ui.quest_slot_rect() is not None and ui.quest_slot_rect().collidepoint(event.pos):
+                    self.panel_drag.down("quest", event.pos)
+                elif (self.zone in self.CHAT_ZONES
                       and ui.chat_log_rect(self.chat_log).collidepoint(event.pos)):
-                    self.chat_open = True
-                    self.chat_buffer = ""
+                    # its top strip moves the panel; the rest selects lines to copy
+                    # (a plain click no longer opens chat - Enter does)
+                    self._chat_log_mouse_down(event.pos)
                 elif self._nearby_players_click(event.pos, self._last_nearby_rows):
                     pass
                 elif (self.you and self.zone in ("nexus", "bazaar", "vault_room", "realm", "bonus")
@@ -621,13 +764,21 @@ class CoopClient:
                     self.link.send({"type": "action", "action": "pack_pet"})
                 elif self.you and self.zone in ("nexus", "bazaar", "vault_room", "realm", "bonus"):
                     self._inventory_mouse_down(event.pos)
+            elif event.type == pygame.MOUSEMOTION:
+                self.panel_drag.motion(event.pos)
             elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                dragged_panel, panel_moved = self.panel_drag.up()
+                if dragged_panel == "quest" and not panel_moved and self.state == STATE_PLAY:
+                    self.journal.open_quest_log()  # a plain click on the HUD log opens the full Quest Log
                 if self.drag_from is not None and self.you is not None:
-                    if self.vault_open:
+                    if self.vault_chest_open is not None and self.zone == "vault_room":
                         self._vault_mouse_up(event.pos)
                     else:
                         self._inventory_mouse_up(event.pos)
                 self._ui_click_active = False
+            elif (event.type == pygame.MOUSEBUTTONDOWN and event.button == 3 and self.state == STATE_PLAY
+                  and self._chat_name_right_click(event.pos)):
+                pass
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 3 and self.state == STATE_PLAY:
                 slot = self._slot_at(event.pos) if self.zone in ("realm", "bonus", "bazaar") else None
                 peer = self._peer_near_mouse(event.pos) if self.you else None
@@ -649,6 +800,20 @@ class CoopClient:
                 self._base_size = self.window.get_size()
                 self._resize_canvas(*self._base_size)
         return True
+
+    # ------------------------------------------------------------ Echo Keeper --
+    def _echo_shop_items(self):
+        """Same rows as main.py's shop (accounts.echo_shop_rows), built from the last
+        server "echo_shop_state" - buying is a server action, never a local change."""
+        def buy(key):
+            return lambda: self.link.send({"type": "action", "action": "echo_buy", "item": key})
+        items = [(label, buy(key) if key else (lambda: None))
+                 for label, key in accounts.echo_shop_rows(self.echo_shop_data.get("unlocks", {}))]
+        items.append(("Close", self._close_echo_shop))
+        return items
+
+    def _close_echo_shop(self):
+        self.echo_shop_open = False
 
     def _minimap_button_click(self, pos):
         mm = self._current_minimap()
@@ -682,42 +847,68 @@ class CoopClient:
         self.link.send({"type": "action", "action": action})
 
     def _handle_chat_key(self, event):
-        ctrl = event.mod & pygame.KMOD_CTRL
-        if ctrl and event.key == pygame.K_a:
-            self._chat_select_all = True
-            return
-        if ctrl and event.key == pygame.K_c:
-            clipboard.set_text(self.chat_buffer)
-            return
-        if ctrl and event.key == pygame.K_x:
-            clipboard.set_text(self.chat_buffer)
-            self.chat_buffer = ""
-            self._chat_select_all = False
-            return
-        if ctrl and event.key == pygame.K_v:
-            if self._chat_select_all:
-                self.chat_buffer = ""
-                self._chat_select_all = False
-            self.chat_buffer = (self.chat_buffer + clipboard.get_text().replace("\n", " "))[:CHAT_MAX_LEN]
-            return
-        if event.key == pygame.K_RETURN:
+        """Keys while the chat input line is open - see game/chat_input.py (cursor,
+        partial selection, Ctrl+A/C/X/V, Up/Down history of what you sent)."""
+        ci = self.chat_in
+        ci.sync_from(self.chat_buffer)
+        result = ci.handle_key(event)
+        self.chat_buffer = ci.text
+        self._chat_select_all = ci.all_selected()
+        if result == "submit":
+            ci.remember(self.chat_buffer.strip())
             self._submit_chat()
-        elif event.key == pygame.K_ESCAPE:
+            ci.set_text("")
+        elif result == "cancel":
             self.chat_open = False
             self.chat_buffer = ""
             self._chat_select_all = False
-        elif event.key == pygame.K_BACKSPACE:
-            if self._chat_select_all:
-                self.chat_buffer = ""
-                self._chat_select_all = False
-            else:
-                self.chat_buffer = self.chat_buffer[:-1]
-        elif event.unicode and event.unicode.isprintable() and len(self.chat_buffer) < CHAT_MAX_LEN:
-            if self._chat_select_all:
-                self.chat_buffer = ""
-                self._chat_select_all = False
-            self.chat_buffer += event.unicode
+            ci.set_text("")
 
+    def _chat_log_mouse_down(self, pos):
+        """Left press on the chat log: its top strip moves the panel, anywhere else
+        starts a line selection (copy with Ctrl+C) - never opens chat mode."""
+        if ui.chat_log_handle_rect(self.chat_log).collidepoint(pos):
+            self.panel_drag.down("chat", pos)
+            return
+        hit = ui.chat_log_line_at(self.chat_log, self.chat_scroll, pos)
+        if hit is not None:
+            self.chat_log_sel.begin(hit[0])
+
+    def _chat_mouse_event(self, event):
+        """Mouse handling for the chat input line (click places the cursor, drag
+        selects) and for extending a chat-log selection. True = event consumed."""
+        if self.chat_open and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if ui.chat_box_rect().collidepoint(event.pos):
+                ci = self.chat_in
+                ci.sync_from(self.chat_buffer)
+                tx, first = ui.chat_box_text_origin(ci.text, ci.cursor)
+                ci.mouse_down(ci.index_at(ui._FONT_M, tx, event.pos[0], first))
+                self._chat_box_dragging = True
+                return True
+        if event.type == pygame.MOUSEMOTION:
+            if getattr(self, "_chat_box_dragging", False) and self.chat_open:
+                ci = self.chat_in
+                tx, first = ui.chat_box_text_origin(ci.text, ci.cursor)
+                ci.mouse_drag(ci.index_at(ui._FONT_M, tx, event.pos[0], first))
+                self._chat_select_all = ci.all_selected()
+            if self.chat_log_sel.dragging:
+                hit = ui.chat_log_line_at(self.chat_log, self.chat_scroll, event.pos)
+                if hit is not None:
+                    self.chat_log_sel.extend(hit[0])
+        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            if getattr(self, "_chat_box_dragging", False):
+                self._chat_box_dragging = False
+                return True
+            self.chat_log_sel.finish()
+        return False
+
+    def _copy_chat_selection(self):
+        if self.chat_log_sel.copy(self.chat_log):
+            self._chat_notice("Copied chat to the clipboard")
+
+    def _chat_notice(self, text):
+        self.feed.insert(0, [text, (190, 220, 255), 4.0])
+        self.feed = self.feed[:4]
     def _submit_chat(self):
         text = self.chat_buffer.strip()
         self.chat_open = False
@@ -748,15 +939,16 @@ class CoopClient:
             self.link.send({"type": "action", "action": "trade_invite_accept"})
         elif cmd == "decline":
             self.link.send({"type": "action", "action": "trade_invite_decline"})
-        elif cmd == "w":
-            rest = parts[1] if len(parts) > 1 else ""
-            name_part, _, message = rest.partition(" ")
-            target = next((pe for pe in self.peers if pe.name.lower() == name_part.lower()), None)
-            if target is None or not message.strip():
-                self.feed.insert(0, ["Usage: /w <name> <message> (they must be nearby you)", (220, 150, 90), 4.0])
+        elif cmd in ("w", "msg", "whisper", "tell"):
+            name_part, message = _split_msg_target(parts[1] if len(parts) > 1 else "")
+            if not name_part or not message:
+                self.feed.insert(0, ['Usage: /msg <name> <message>  (or /msg "two words" <message>)',
+                                     (220, 150, 90), 4.0])
                 self.feed = self.feed[:4]
             else:
-                self.link.send({"type": "action", "action": "whisper", "pid": target.pid, "text": message.strip()})
+                # the server looks the name up across EVERY zone, so this reaches players
+                # in the Realm, a dungeon, the Vault... not just whoever is on screen
+                self.link.send({"type": "action", "action": "whisper", "name": name_part, "text": message})
         elif cmd == "crew":
             self._handle_crew_command(parts[1] if len(parts) > 1 else "")
         elif cmd == "help":
@@ -872,6 +1064,27 @@ class CoopClient:
     def _open_context_menu_for(self, peer, screen_pos):
         self.context_menu = {"pid": peer.pid, "name": peer.name, "pos": screen_pos}
 
+    def _chat_name_right_click(self, pos):
+        """Right-click a player's name in the chat log -> the same player menu as
+        right-clicking them in the world (RotMG-style). True if a name was hit."""
+        hit = ui.chat_log_line_at(self.chat_log, self.chat_scroll, pos)
+        if hit is None or hit[2] is None or not hit[2].collidepoint(pos):
+            return False
+        entry = self.chat_log[hit[1]]
+        name = entry.get("sender")
+        if not name:
+            return False
+        peer = next((pe for pe in self.peers if pe.name == name), None)
+        self.context_menu = {"pid": peer.pid if peer else entry.get("pid"), "name": name, "pos": pos,
+                             "here": peer is not None}
+        return True
+
+    def _context_menu_disabled(self):
+        """Menu rows that need the player to be right here (same zone, on screen)."""
+        if self.context_menu is None or self.context_menu.get("here", True):
+            return ()
+        return ("Trade", "Inspect", "Teleport", "Invite to Crew")
+
     def _context_menu_labels(self):
         name = self.context_menu["name"]
         labels = ["Chat", "Trade", "Inspect", "Teleport", "Remove Friend" if name in self.friends else "Add Friend"]
@@ -882,7 +1095,9 @@ class CoopClient:
     def _context_menu_click(self, pos):
         menu = self.context_menu
         labels = self._context_menu_labels()
+        disabled = self._context_menu_disabled()
         self.context_menu = None
+        labels = [lb if lb not in disabled else None for lb in labels]
         rects = ui.context_menu_rects(menu["pos"], labels)
         for rect, label in zip(rects, labels):
             if not rect.collidepoint(pos):
@@ -950,15 +1165,11 @@ class CoopClient:
         return "inventory"
 
     def _slot_at(self, pos):
-        if self.vault_open:
-            for i, rect in enumerate(ui._vault_backpack_slot_rects(self.you)):
-                if rect.collidepoint(pos):
-                    return ("backpack", i)
-            lo = self.vault_chest * VAULT_CHEST_SIZE
-            for i, rect in enumerate(ui.vault_slot_rects()):
+        if self.vault_chest_open is not None and self.zone == "vault_room":
+            lo = self.vault_chest_open * VAULT_CHEST_SIZE
+            for i, rect in enumerate(ui.vault_chest_slot_rects(self._vault_chest_screen_pos())):
                 if rect.collidepoint(pos):
                     return ("vault", lo + i)
-            return None
         bag = self._current_bag()
         if bag is not None:
             for i, rect in enumerate(ui.bag_slot_rects(self.cam(bag.pos))):
@@ -1018,7 +1229,7 @@ class CoopClient:
     def _shift_click(self, idx):
         """Shift+click a backpack item: deposit into the open Vault / Bazaar chest, or
         offer it in the open trade. Returns True if it did something."""
-        if self.vault_open:
+        if self.vault_chest_open is not None:
             self.link.send({"type": "action", "action": "vault_deposit", "idx": idx})
         elif self.trade is not None:
             self.link.send({"type": "action", "action": "trade_offer", "idx": idx})
@@ -1047,18 +1258,24 @@ class CoopClient:
         self.pending_socket = None
         self.link.send({"type": "action", "action": "socket_proc", "idx": i, "target_idx": j})
 
-    def _vault_click_extras(self, pos):
-        """Close button and chest tabs stay click-only. Returns True if handled."""
-        if ui.vault_close_button_rect().collidepoint(pos):
-            self.vault_open = False
-            self._suppress_vault_trigger = True
-            return True
-        for i, rect in enumerate(ui.vault_chest_tab_rects()):
-            if rect.collidepoint(pos):
-                self.vault_chest = i
-                self.link.send({"type": "action", "action": "vault_select_chest", "chest": i})
-                return True
-        return False
+    def _try_open_vault_chest(self):
+        """F / Enter next to a vault-room chest asks the server to open it."""
+        if not self.you or self.zone != "vault_room":
+            return False
+        near = vault.nearest_chest(self.vault_room_map, self.you.pos)
+        if near is None:
+            return False
+        self.link.send({"type": "action", "action": "open_vault"})
+        return True
+
+    def _close_vault_chest(self):
+        self.vault_chest_open = None
+        self._cancel_drag()
+
+    def _vault_chest_screen_pos(self):
+        wpos = vault.chest_world_pos(self.vault_room_map, self.vault_chest_open or 0)
+        return ui.vault_chest_window_anchor(self.cam(wpos) if wpos is not None
+                                            else (C.SCREEN_W // 2, C.SCREEN_H // 2))
 
     def _vault_mouse_up(self, pos):
         """Vault <-> backpack drag-and-drop (or a plain click) - server stays
@@ -1069,6 +1286,10 @@ class CoopClient:
             return
         dest = self._slot_at(pos)
         dropped_far = math.hypot(pos[0] - self.drag_start_pos[0], pos[1] - self.drag_start_pos[1]) > 6
+        if origin[0] != "vault" and dropped_far and (dest is None or dest[0] != "vault"):
+            self.drag_from = origin  # an ordinary inventory move while a chest happens to be open
+            self._inventory_mouse_up(pos)
+            return
         if origin[0] == "backpack":
             idx = origin[1]
             if idx < len(self.you.backpack) and (not dropped_far or (dest is not None and dest[0] == "vault")):
@@ -1183,8 +1404,6 @@ class CoopClient:
         self._prev_boss_active = False
 
     def _play_key(self, key):
-        if self.vault_open:
-            return  # closing the Vault is click-only now (see vault_close_button_rect)
         if self.zone == "dead":
             if key == pygame.K_RETURN:
                 self._send_respawn()
@@ -1267,23 +1486,16 @@ class CoopClient:
             self.state = STATE_ERROR
             return
 
-        # vault_open is an overlay flag on top of zone "vault_room" (the chest
-        # menu never changes self.zone - see open_vault handling below), so it
-        # needs its own check here rather than a plain dict lookup on self.zone.
-        if self.vault_open:
-            audio.play_theme("vault")
-        elif self.zone == "bonus":
-            # a real distinct track per dungeon theme instead of one generic
-            # "dungeon" track for all of them - resolved from the label
-            # string already relayed over the network (self.theme_name),
-            # since the raw theme key isn't sent to co-op clients today.
-            audio.play_theme(audio.dungeon_zone_for_label(self.theme_name))
-        else:
-            theme_zone = self._THEME_ZONE_FOR_ZONE.get(self.zone)
-            if theme_zone is not None:
-                audio.play_theme(theme_zone)
+        # title card on entering a new place + that place's own ~60s track (the realm
+        # follows the biome/area/island under you, with dwell hysteresis) - see game/zone_banner.py
+        place = self._current_place()
+        if place is not None:
+            track = self.zone_tracker.observe(dt, *place)
+            if track:
+                audio.play_theme(track)
+        audio.update_music()
 
-        if not self.chat_open and not self.help_open and not self.quit_confirm_open:
+        if not self.chat_open and not self.help_open and not self.quit_confirm_open and not self.journal.is_open():
             keys = pygame.key.get_pressed()
             if keys[pygame.K_q]:
                 self.cam.rotate(-self.ROTATE_SPEED_DEG * dt)
@@ -1296,10 +1508,14 @@ class CoopClient:
             self._send_input(dt)
 
         for w in self.link.pop_whispers():
-            if w.get("echo"):
-                self.chat_log.append({"name": f"You -> {w['to']}", "text": w["text"], "age": 0.0})
+            if w.get("error"):
+                self._chat_notice(w["error"])
+            elif w.get("echo"):
+                self.chat_log.append({"name": f"You -> {w['to']}", "text": w["text"], "age": 0.0,
+                                      "sender": w["to"]})
             else:
-                self.chat_log.append({"name": f"{w['from']} (whisper)", "text": w["text"], "age": 0.0})
+                self.chat_log.append({"name": f"{w['from']} (whisper)", "text": w["text"], "age": 0.0,
+                                      "sender": w["from"]})
             self.chat_log = self.chat_log[-ui.CHAT_LOG_STORE_CAP:]
 
         vfx.update(dt)
@@ -1323,7 +1539,7 @@ class CoopClient:
                 # bonus dungeons get their ambient from the server's RealmSim (via
                 # sim.vfx_events, already dispatched below) - the open Realm's is
                 # purely client-side/cosmetic, keyed off the LOCAL player's biome
-                biome_name = world.GROUND_TO_BIOME_NAME.get(tile_here)
+                biome_name = world.TILE_TO_BIOME_NAME.get(tile_here)
                 bounds = (self.you.pos.x - 300, self.you.pos.y - 300,
                           self.you.pos.x + 300, self.you.pos.y + 300)
                 self.realm_ambience.update(dt, bounds, kinds=vfx.REALM_AMBIENT_KINDS.get(biome_name))
@@ -1341,8 +1557,7 @@ class CoopClient:
                 verdict = ("JACKPOT!" if wr["is_ut"] else
                            "Upgrade!" if wr["upgrade"] else "Sidegrade" if wr["same_tier"] else "Downgrade...")
                 color = tuple(wr["new_color"])
-                prefix = "The Guide trades your" if wr.get("via_bot") else ""
-                label = f"{prefix} {wr['old_name']} -> {wr['new_name']} ({verdict})".strip()
+                label = f"{wr['old_name']} -> {wr['new_name']} ({verdict})"
                 self.feed.insert(0, [label, color, 4.0])
                 audio.play_wish(wr["is_ut"])
             self.feed = self.feed[:4]
@@ -1350,6 +1565,12 @@ class CoopClient:
         for notice in self.link.pop_trade_notices():
             self.feed.insert(0, [notice, (230, 210, 150), 4.0])
             self.feed = self.feed[:4]
+
+        for st in self.link.pop_echo_shop_states():
+            self.echo_shop_data = st
+            if st.get("message"):
+                self.feed.insert(0, [st["message"], (150, 230, 210) if st.get("ok") else (220, 150, 90), 4.0])
+                self.feed = self.feed[:4]
 
         for pr in self.link.pop_pet_results():
             self.feed.insert(0, [pr.get("message", ""), tuple(pr.get("color", (170, 220, 255))), 4.0])
@@ -1391,7 +1612,15 @@ class CoopClient:
         self.chat_log = [m for m in self.chat_log if m["age"] < CHAT_LOG_LIFETIME]
 
     def _apply_snapshot(self, snap):
+        ev = snap.get("live_event")
+        if ev != getattr(self, "live_event", ev):
+            label = live_events.label_for(ev)
+            self.feed.insert(0, [f"Live event started: {label}" if label else "The live event has ended",
+                                 (255, 220, 120), 5.0])
+            self.feed = self.feed[:4]
+        self.live_event = ev
         if snap["zone"] != self.zone:
+            self.echo_shop_open = False
             self._cancel_drag()  # a drag must never survive a zone change (portal/death/nexus)
             self.inspect_pid = None
         self.zone = snap["zone"]
@@ -1429,22 +1658,33 @@ class CoopClient:
             self._speech_bubbles.append({"pid": pid, "text": text, "age": 0.0})
             speaker = "You" if pid == you.pid else next((pe.name for pe in self.peers if pe.pid == pid), "???")
             self.feed.insert(0, [f"{speaker}: {text}", (190, 220, 255), 4.0])
-            self.chat_log.append({"name": speaker, "text": text, "age": 0.0})
+            self.chat_log.append({"name": speaker, "text": text, "age": 0.0,
+                                  "sender": None if pid == you.pid else speaker, "pid": pid})
         self.feed = self.feed[:4]
         self.chat_log = self.chat_log[-ui.CHAT_LOG_STORE_CAP:]
         vault, chest_hint = self.link.pop_vault_items()
         if vault is not None:
             from game.items import Item
             self.vault_items = [(Item.from_json(d) if d is not None else None) for d in vault]
-            self.vault_chest = chest_hint if chest_hint is not None else 0
-            if not self.vault_open:
-                self._cancel_drag()
-            self.vault_open = True
+            if chest_hint is not None:
+                if self.vault_chest_open != chest_hint:
+                    self._cancel_drag()
+                self.vault_chest = self.vault_chest_open = chest_hint
         bag_state = self.link.pop_bag_state()
         if bag_state is not None:
             from game.items import Item
             self.open_bag_id = bag_state["id"]
             self.bag_items = [Item.from_json(d) for d in bag_state["items"]]
+        dmsg = self.link.pop_dialogue()
+        if dmsg is not None:
+            self.dialogue_view = dmsg.get("view")
+            if self.dialogue_view is not None:
+                self._cancel_drag()
+        self.sidequest_log = snap.get("sidequests") or []
+        self.sidequests_done = snap.get("sidequests_done") or []
+        self.npcs = [NPC.from_net_state(d) for d in snap.get("npcs", [])]
+        self.island_chests = [(pygame.Vector2(d["x"], d["y"]), d.get("skin", 0), d.get("opened", False))
+                              for d in snap.get("island_chests", [])]
         bot_data = snap.get("bot")
         self.nexus_bot = GhostBot(bot_data) if bot_data else None
         if self.nexus_bot is not None and self.nexus_bot.speech and self.nexus_bot.speech != self._last_bot_speech:
@@ -1461,6 +1701,8 @@ class CoopClient:
                 self.tilemap = world.TileMap(pending_map)
                 if self.zone == "realm":
                     self.realm_minimap = minimap.MinimapState()
+                    self.realm_grid = pending_map  # kept for the journal's maps
+                    self.realm_areas = self.link.pop_pending_areas()
                 else:
                     self.bonus_minimap = minimap.MinimapState()
             mm = self._current_minimap()
@@ -1543,20 +1785,29 @@ class CoopClient:
                 self.link.send({"type": "action", "action": "goto_bazaar"})
             elif tile == world.VAULT_TILE:
                 self.link.send({"type": "action", "action": "goto_vault_room"})
+            if tile != world.ECHO_KEEPER_TILE:
+                self._echo_keeper_armed = True
+            elif getattr(self, "_echo_keeper_armed", True) and not self.echo_shop_open:
+                # the Echo Keeper: open once per step onto the tile (not every frame after closing)
+                self._echo_keeper_armed = False
+                self.echo_shop_open, self.echo_shop_selected = True, 0
+                self.link.send({"type": "action", "action": "echo_shop_open"})
         elif self.zone == "bazaar":
             if self.bazaar_map.tile_at(self.you.pos.x, self.you.pos.y) == world.PORTAL:
                 self.link.send({"type": "action", "action": "goto_nexus"})
         elif self.zone == "vault_room":
             tile = self.vault_room_map.tile_at(self.you.pos.x, self.you.pos.y)
-            if tile != world.CHEST:
-                self._suppress_vault_trigger = False
             if tile == world.PORTAL:
+                self.vault_chest_open = None
                 self.link.send({"type": "action", "action": "goto_nexus"})
-            elif tile == world.CHEST and not self._suppress_vault_trigger:
-                self.link.send({"type": "action", "action": "open_vault"})
+            elif self.vault_chest_open is not None:
+                wpos = vault.chest_world_pos(self.vault_room_map, self.vault_chest_open)
+                if wpos is None or wpos.distance_to(self.you.pos) > C.TILE * 3.5:
+                    self._close_vault_chest()  # walked away from it
 
     def _send_input(self, dt):
-        if self._map_open() or self.chat_open or self.help_open or self.quit_confirm_open:
+        if (self._map_open() or self.chat_open or self.help_open or self.quit_confirm_open or self.echo_shop_open
+                or self.dialogue_view is not None or self.journal.is_open()):
             # checking the full map, typing in chat, or browsing the options menu is
             # a modal action - stop sending input while it's up (other players keep
             # moving normally; only yours freezes) so you don't drift/move by accident
@@ -1596,7 +1847,7 @@ class CoopClient:
                 cone_deg = weather.aim_cone_for(weather_kind, AUTO_AIM_CONE_DEG)
                 aim = auto_aim_direction(self.you.pos, aim, self.enemies, cone_deg=cone_deg)
         fire = ((self.auto_fire_enabled or bool(pygame.mouse.get_pressed()[0])) and self.zone in ("realm", "bonus")
-                and not self.vault_open and not self._ui_click_active)
+                and not self._ui_click_active)
         dash = self._dash_pending
         self._dash_pending = False  # one-shot per keypress, not held-key-repeat like move/fire
         self.link.send({"type": "input", "move": [move.x, move.y], "aim": [aim.x, aim.y], "fire": fire,
@@ -1630,7 +1881,17 @@ class CoopClient:
             items = self._menu_items()
             self.menu_selected %= len(items)
             ui.draw_help_overlay(s, menu_items=items, selected_idx=self.menu_selected, mouse_pos=pygame.mouse.get_pos())
+        if self.echo_shop_open and self.state == STATE_PLAY:
+            items = self._echo_shop_items()
+            self.echo_shop_selected %= len(items)
+            ui.draw_echo_shop_overlay(s, self.echo_shop_data.get("echoes", 0), menu_items=items,
+                                       selected_idx=self.echo_shop_selected, mouse_pos=pygame.mouse.get_pos())
+        if self.state == STATE_PLAY and self.zone != "dead" and self.dialogue_view is not None:
+            ui.draw_dialogue(s, self.dialogue_view, pygame.mouse.get_pos())
+        if self.state == STATE_PLAY and self.journal.is_open():
+            self.journal.draw(s, self._journal_ctx(), pygame.mouse.get_pos(), 1 / max(1, self.clock.get_fps() or 60))
         if self.state == STATE_PLAY and self.zone != "dead":
+            ui.draw_zone_banners(s, self.zone_tracker.visible())
             if self.story_banner is not None:
                 ui.draw_story_banner(s, self.story_banner[0], self.story_banner[1])
             if self.credits_t is not None:
@@ -1659,19 +1920,12 @@ class CoopClient:
                             "Drop items for others - walk onto the portal to return")
         elif self.zone == "vault_room":
             self._draw_hub(self.vault_room_map, self.vault_room_minimap, "Vault (co-op)",
-                            "Walk onto a chest to open it - the portal returns to the Nexus")
+                            "Walk up to a chest and press F to open it - the portal returns to the Nexus")
         elif self.zone in ("realm", "bonus") and self.tilemap:
             zone_label = ("The Godlands (co-op)" if self.zone == "realm"
                           else f"{self.theme_name or 'Bonus Room'} [{self.difficulty}] (co-op)")
             self._draw_sim(zone_label)
 
-        if self.vault_open:
-            mp = pygame.mouse.get_pos()
-            ui.draw_vault_screen(s, self.you, self.vault_items, VAULT_SLOTS, mp,
-                                 selected_chest=self.vault_chest, dragging_from=self.drag_from)
-            dragged = self._dragged_item()
-            if dragged:
-                ui.draw_dragged_item(s, dragged, mp)
 
         mp = pygame.mouse.get_pos()
         self._last_nearby_rows = ui.draw_nearby_players_panel(s, self._nearby_players(), mp)
@@ -1688,7 +1942,7 @@ class CoopClient:
             ui.draw_dragged_item(s, self._dragged_item(), mp)  # above the trade window
         if self.context_menu is not None:
             ui.draw_context_menu(s, self.context_menu["pos"], self.context_menu["name"],
-                                  self._context_menu_labels(), mp)
+                                  self._context_menu_labels(), mp, disabled=self._context_menu_disabled())
 
     def _draw_right_switch_panel(self, s, mp):
         """Tab key switches this dock slot between the inventory grid and pet
@@ -1702,7 +1956,26 @@ class CoopClient:
             ui.draw_pet_panel(s, self.you, dragging=dragging, mouse_pos=mp)
         else:
             ui.draw_inventory(s, self.you, mp, dragging_from=self.drag_from,
-                              highlighted=set(self.trade.get("my_offer_idx", [])) if self.trade else ())
+                              highlighted=set(self.trade.get("my_offer_idx", [])) if self.trade else (),
+                              socket_pair=self.pending_socket)
+
+    def _current_place(self):
+        """(zone_kind, key, title, subtitle, music_zone) for game.zone_banner, or None."""
+        if self.you is None or self.zone == "dead":
+            return None
+        if self.zone in ("nexus", "bazaar", "vault_room"):
+            return zone_banner.hub_place({"vault_room": "vault"}.get(self.zone, self.zone))
+        if self.zone == "bonus":
+            return zone_banner.dungeon_place(self.theme_name, self.difficulty,
+                                             audio.dungeon_zone_for_label(self.theme_name))
+        if self.zone == "realm" and self.tilemap is not None:
+            tx, ty = self.you.pos.x / C.TILE, self.you.pos.y / C.TILE
+            biome = zone_banner.biome_near(self.tilemap, self.you.pos.x, self.you.pos.y)
+            got = zone_banner.realm_place(self.realm_areas, tx, ty, biome)
+            if got is None and (self.zone_tracker.place or "").startswith(("biome:", "area:", "island:")):
+                return None   # open water / walkway far from any biome - keep the current place
+            return got or ("realm", "biome:realm", "The Realm", "Realm", "forest")
+        return None
 
     def _draw_hub(self, tmap, mm, name, hint_text):
         s = self.screen
@@ -1712,30 +1985,43 @@ class CoopClient:
         if tmap is self.nexus_map:
             tmap.draw_backdrop(s, self.cam)
         # RotMG itself works this way: Q/E turns the MAP, characters stay upright.
+        tmap.canopy_overlay = True  # trunks in the floor pass, canopies drawn over entities below
         world.render_rotated_world(s, self.cam, lambda surf, cam: tmap.draw(surf, cam, surf.get_size()))
         if tmap is self.bazaar_map:
             for g in self.bazaar_ground_items:
                 g.draw(s, self.cam)
-        elif tmap is self.nexus_map and self.nexus_bot is not None:
+        if tmap is self.nexus_map:
+            for n in self.npcs:
+                n.draw(s, self.cam)
+        if tmap is self.nexus_map and self.nexus_bot is not None:
             self.nexus_bot.draw(s, self.cam)
             if self.nexus_bot.speech and self.nexus_bot.speech_age < self.nexus_bot.SPEECH_LIFETIME:
                 ui.draw_speech_bubble(s, self.cam, self.nexus_bot.pos, self.nexus_bot.speech, self.nexus_bot.speech_age)
         for peer in self.peers:
             peer.draw(s, self.cam)
         self._draw_peer_labels(s, self.cam, self.peers)
+        if tmap is self.vault_room_map:
+            near = vault.nearest_chest(tmap, self.you.pos)
+            ui.draw_vault_room_chests(s, self.cam, [vault.chest_world_pos(tmap, i)
+                                                     for i in range(len(vault.chest_tiles(tmap)))],
+                                      self.vault_items, near[0] if near else None, self.vault_chest_open)
         self.you.draw(s, self.cam)
+        tmap.draw_canopies(s, self.cam, (self.you.pos if self.you else None))
+        ui.draw_npc_labels(s, self.cam, self.npcs, self.you.pos if self.you else None)
         self._draw_speech_bubbles(s)
         vfx.draw(s, self.cam)
         self._draw_hover_tooltip()
         hint = ui._FONT_M.render(hint_text, True, (220, 210, 230))
         s.blit(hint, (C.SCREEN_W // 2 - hint.get_width() // 2, 82))
         if tmap is self.nexus_map:
-            event_label = live_events.active_label()
+            event_label = live_events.label_for(getattr(self, "live_event", None))  # the server's event
             if event_label:
                 banner = ui._FONT_S.render(f"Live event: {event_label}", True, (255, 220, 120))
                 s.blit(banner, (C.SCREEN_W // 2 - banner.get_width() // 2, 104))
-        ui.draw_hud(s, name, 0, False)
-        ui.draw_story_log(s, self.quest_log, self.quest_log_expanded)
+        ui.draw_dock_frame(s, self.you)
+        ui.draw_hud(s, name, None, False)  # hubs: no kill counter
+        if not (self.echo_shop_open or self.help_open or self.vault_chest_open is not None):  # a modal overlay owns that space
+            ui.draw_story_log(s, self.quest_log, self.quest_log_expanded, side=self.sidequest_log)
         if settings.get("show_fps"):
             ui.draw_fps_counter(s, self.clock.get_fps())
         mp = pygame.mouse.get_pos()
@@ -1752,10 +2038,15 @@ class CoopClient:
         if open_bag is not None:
             ui.draw_bag_window(s, self.cam(open_bag.pos), self.bag_items, mp, dragging_from=self.drag_from)
         ui.draw_item_feed(s, self.feed, y=128)  # below the hub's portal hint + live-event banner
+        if tmap is self.vault_room_map and self.vault_chest_open is not None:
+            ui.draw_vault_chest_window(s, self._vault_chest_screen_pos(), self.vault_chest_open, self.vault_items,
+                                       mp, dragging_from=self.drag_from)
+            if dragged:
+                ui.draw_dragged_item(s, dragged, mp)
         minimap.draw_corner(s, tmap, mm, self.you.pos, peers=self.peers)
-        ui.draw_chat_log(s, self.chat_log, scroll=self.chat_scroll)
+        ui.draw_chat_log(s, self.chat_log, scroll=self.chat_scroll, selection=self.chat_log_sel.span())
         if self.chat_open:
-            ui.draw_chat_box(s, self.chat_buffer, selected=self._chat_select_all)
+            ui.draw_chat_box(s, self.chat_buffer, chat_input=self.chat_in, recent=self.chat_log)
         if self.trade is not None:
             ui.draw_trade_panel(s, self.trade, self.you.name, mouse_pos=mp)
 
@@ -1767,12 +2058,16 @@ class CoopClient:
                                    peers=self.peers, portals=self.portals, zone_name=name, enemies=self.enemies)
             return
         fog = mm.explored if (self.zone == "bonus" and mm is not None) else None
+        self.tilemap.canopy_overlay = True  # trunks in the floor pass, canopies drawn over entities below
         world.render_rotated_world(s, self.cam, lambda surf, cam: self.tilemap.draw(surf, cam, surf.get_size(), fog=fog))
         for g in self.ground_items:
             g.draw(s, self.cam)
         for pt in self.portals:
             pt.draw(s, self.cam)
         ui.draw_portal_labels(s, self.cam, self.portals)
+        ui.draw_island_chests(s, self.cam, self.island_chests)
+        for n in self.npcs:
+            n.draw(s, self.cam)
         for ob in self.obstacles:
             ob.draw(s, self.cam)
         for e in self.enemies:
@@ -1793,6 +2088,8 @@ class CoopClient:
         for b in self.bullets:
             b.draw(s, self.cam)
         self.you.draw(s, self.cam)
+        self.tilemap.draw_canopies(s, self.cam, (self.you.pos if self.you else None))
+        ui.draw_npc_labels(s, self.cam, self.npcs, self.you.pos if self.you else None)
         if self.you.fishing_state is not None:
             vfx.draw_fishing_bobber(s, self.cam, self.you.pos, self.you.fishing_state)
         vfx.draw(s, self.cam)
@@ -1800,9 +2097,12 @@ class CoopClient:
         torch_positions = [self.cam(pos) for pos in
                            world.nearby_torch_world_positions(self.tilemap, self.you.pos.x, self.you.pos.y)]
         ui.draw_day_night_overlay(s, self.light_level, self.blood_moon, torch_positions)
+        self.weather_fx.draw(s)
+        ui.draw_dock_frame(s, self.you)
         if self.zone != "bonus":
             ui.draw_day_night_clock(s, self.light_level, self.blood_moon)
-        self.weather_fx.draw(s)
+        else:
+            ui.draw_dungeon_header(s)
         self._draw_speech_bubbles(s)
         self._draw_hover_tooltip()
         ui.draw_hud(s, name, self.kill_count, self.boss_active)
@@ -1810,8 +2110,8 @@ class CoopClient:
             ui.draw_fps_counter(s, self.clock.get_fps())
         if self.portal_prompt:
             ui.draw_portal_prompt(s)
-        if self.zone != "bonus" or self.theme_name == DUNGEON_THEMES["forge"]["label"]:
-            ui.draw_story_log(s, self.quest_log, self.quest_log_expanded)
+        if (self.zone != "bonus" or self.theme_name == DUNGEON_THEMES["forge"]["label"]) and not self.help_open:
+            ui.draw_story_log(s, self.quest_log, self.quest_log_expanded, side=self.sidequest_log)
         else:
             ui.draw_quest_panel(s, self.secret_quest, self.secret_quest_progress, self.secret_quest_timer,
                                  secret_quest_target=self.secret_quest_target,
@@ -1835,9 +2135,9 @@ class CoopClient:
         if mm is not None:
             minimap.draw_corner(s, self.tilemap, mm, self.you.pos, peers=self.peers, portals=self.portals,
                                  enemies=self.enemies)
-        ui.draw_chat_log(s, self.chat_log, scroll=self.chat_scroll)
+        ui.draw_chat_log(s, self.chat_log, scroll=self.chat_scroll, selection=self.chat_log_sel.span())
         if self.chat_open:
-            ui.draw_chat_box(s, self.chat_buffer, selected=self._chat_select_all)
+            ui.draw_chat_box(s, self.chat_buffer, chat_input=self.chat_in, recent=self.chat_log)
         if self.trade is not None:
             ui.draw_trade_panel(s, self.trade, self.you.name, mouse_pos=mp)
 

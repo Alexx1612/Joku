@@ -14,9 +14,13 @@ import math
 import random
 
 import pygame
+from game.items import ability_power
 
 from game import world
 from game import story
+from game import sidequests
+from game import npcs as npcs_mod
+from game import areas as areas_mod
 from game import achievements
 from game import vfx
 from game import crews
@@ -26,7 +30,7 @@ from game import accounts
 ECHO_XP_PER_ECHO = 1000  # passive Echo-currency accrual rate (Batch 14) - see RealmSim._reward
 from game.entities import (Enemy, Bag, Portal, Obstacle, _mk_bullet, RANK_XP, BOSS_KINDS, BAG_MERGE_RADIUS,
                             BAG_MERGE_WINDOW, find_nearby_bag as _find_nearby_bag, bag_by_id as _bag_by_id,
-                            withdraw_from_bag as _withdraw_from_bag)
+                            withdraw_from_bag as _withdraw_from_bag, ENEMY_KINDS, GUARDIAN_SCALE)
 from game.items import (roll_loot, BAG_COLOR_FOR, _random_tiered, _random_egg, _random_ut,
                          make_dungeon_shard, UT_WEAPONS, _random_junk_catch)
 from game.constants import TIER_COLORS, TILE
@@ -190,30 +194,32 @@ LAIR_KIND_SETS = [
 BIOME_LAIR_KIND_SETS = {
     world.GRASS: [(["goblin"], [1]), (["thornling"], [1]), (["goblin", "imp"], [65, 35]),
                   (["goblin", "bat"], [60, 40]), (["thornling", "goblin"], [55, 45]),
-                  (["forest_hare"], [1]), (["songbird"], [1]), (["deer"], [1])],  # ambient wildlife
+                  (["forest_hare"], [1]), (["songbird"], [1]), (["deer"], [1]), (["elk"], [1])],  # ambient wildlife
     world.SAND: [(["scorpion"], [1]), (["dune_stalker"], [1]), (["imp"], [1]),
                  (["imp", "scorpion"], [50, 50]), (["dune_stalker", "scorpion"], [55, 45]),
-                 (["desert_lizard"], [1])],  # ambient wildlife
+                 (["desert_lizard"], [1]), (["tortoise"], [1])],  # ambient wildlife
     world.SNOW: [(["yeti"], [1]), (["frost_sprite"], [1]), (["ghost"], [1]),
                  (["ghost", "yeti"], [55, 45]), (["frost_sprite", "yeti"], [55, 45]),
-                 (["deer"], [1])],  # ambient wildlife
+                 (["deer"], [1]), (["snow_fox"], [1])],  # ambient wildlife
     world.SWAMP: [(["troll"], [1]), (["bog_crawler"], [1]), (["skeleton"], [1]),
                   (["skeleton", "troll"], [55, 45]), (["bog_crawler", "troll"], [55, 45]),
-                  (["marsh_heron"], [1])],  # ambient wildlife
+                  (["marsh_heron"], [1]), (["flamingo"], [1])],  # ambient wildlife
     world.STONE: [(["harpy"], [1]), (["cliff_strider"], [1]), (["harpy", "bat"], [60, 40]),
-                  (["cliff_strider", "harpy"], [55, 45]), (["deer"], [1])],  # ambient wildlife
+                  (["cliff_strider", "harpy"], [55, 45]), (["deer"], [1]),
+                  (["mountain_goat"], [1])],  # ambient wildlife
     world.ASH: [(["salamander"], [1]), (["cinder_wisp"], [1]), (["salamander", "imp"], [60, 40]),
-                (["cinder_wisp", "salamander"], [55, 45])],
+                (["cinder_wisp", "salamander"], [55, 45]), (["fire_beetle"], [1])],
     world.JUNGLE: [(["panther"], [1]), (["vine_serpent"], [1]), (["panther", "goblin"], [55, 45]),
-                   (["vine_serpent", "panther"], [55, 45]), (["songbird"], [1])],  # ambient wildlife
+                   (["vine_serpent", "panther"], [55, 45]), (["songbird"], [1]),
+                   (["tree_frog"], [1])],  # ambient wildlife
     world.WASTELAND: [(["ghoul"], [1]), (["husk_wanderer"], [1]), (["ghoul", "skeleton"], [55, 45]),
                        (["husk_wanderer", "ghoul"], [55, 45]),
-                       (["desert_lizard"], [1])],  # ambient wildlife
+                       (["desert_lizard"], [1]), (["scrap_rat"], [1])],  # ambient wildlife
     world.ICE: [(["frost_wraith"], [1]), (["glacier_shard"], [1]), (["frost_wraith", "yeti"], [55, 45]),
-                (["glacier_shard", "frost_wraith"], [55, 45])],
+                (["glacier_shard", "frost_wraith"], [55, 45]), (["ice_penguin"], [1])],
     world.CAVE: [(["cave_lurker"], [1]), (["deep_stalker"], [1]), (["cave_lurker", "bat"], [60, 40]),
                  (["deep_stalker", "cave_lurker"], [55, 45]),
-                 (["cave_moth"], [1])],  # ambient wildlife
+                 (["cave_moth"], [1]), (["mushroom_folk"], [1])],  # ambient wildlife
 }
 
 # "The Reforging" storyline: 10 small standalone island zones (see
@@ -250,6 +256,9 @@ ISLAND_NAMES = ["Emberball Shard", "Coral Colada Choir", "Frostquiri Shard", "Pe
                 "Driftai Cloister", "Ashioned Shard", "Abyssal Rumnal"]
 ISLAND_QUEST_INTERVAL = 300.0  # 5 minutes, per island independently
 ISLAND_WAVE_SIZE = 4           # guardians per flare/song wave, always including that theme's anchor mob
+ISLAND_WATER_GAP = 16          # Batch 15: min open water (tiles) between an island and the continent
+ISLAND_CAMP_CAP = 5            # mobs per island camp (world.ISLAND_CAMP_COUNT camps per island)
+ISLAND_CAMP_SCALE = 1.6        # island camp HP scale - islands are outer-ring, mid-difficulty content
 
 # Batch 14 Track B1/B2: island idx -> a named mini-boss kind (see
 # entities.ENEMY_DEFS, rank="boss") that leads that island's wave instead of
@@ -387,6 +396,29 @@ PHASE2_QUEST_LABEL = "Clear the way to its lair"
 WALL_OBSTACLE_HP = 30
 
 
+
+
+# mob flavor lines only reach a listener's chat log within this range (px) - a deer
+# half a map away used to show up in chat
+MOB_SPEECH_HEAR_RADIUS = 600.0
+
+
+def audible_mob_speech(events, listener_pos):
+    """(kind, text) for the mob lines a listener at listener_pos can actually hear."""
+    out = []
+    for ev in events:
+        kind, text = ev[0], ev[1]
+        if len(ev) >= 4 and (ev[2] - listener_pos[0]) ** 2 + (ev[3] - listener_pos[1]) ** 2 > MOB_SPEECH_HEAR_RADIUS ** 2:
+            continue
+        out.append((kind, text))
+    return out
+
+
+def vfx_style_for(ability_name):
+    """Ability name -> its own spell look (game/vfx.py ABILITY_STYLES)."""
+    from game.vfx import ABILITY_STYLES
+    return ABILITY_STYLES.get(ability_name)
+
 class RealmSim:
     def __init__(self, bonus=False, theme="generic", difficulty_name=None, story_act=0):
         self.is_bonus_room = bonus
@@ -418,12 +450,16 @@ class RealmSim:
                                                                               vfx.DUNGEON_AMBIENT_KINDS["generic"]))
         else:
             self.realm_map = world.TileMap(world.make_realm())
+            # this realm's own coast table / ocean mask - world.LAST_REALM_INFO is
+            # replaced by the next make_realm() anywhere in the process
+            self.realm_info = dict(world.LAST_REALM_INFO)
         self.enemies = []
         self.bullets = []
         self.ground_items = []
         self.portals = []
         self.islands = []  # [{"idx","pos","theme","label","cooldown","alive_guardians"}, ...] -
         # "The Reforging" storyline, open-Realm only (see _stamp_islands) - stays empty for bonus rooms
+        self.areas = []  # Batch 15 big named places (game/areas.py) - [{key,name,biome,rect,spots,lore}]
         self.landmarks = []  # [{"pos","biome","name","lore"}, ...] - one discoverable, non-combat POI
         # per biome (see _stamp_biome_buildings), open-Realm only, stays empty for bonus rooms
         self.biome_vignettes = []  # [{"anchor","biome","template_idx"}, ...] - Track C (Batch 14)'s
@@ -461,7 +497,7 @@ class RealmSim:
         # game/audio.py. Position is carried so the client can distance-cull before playing (a continent-wide
         # sim can easily have combat/idle-barks happening far from the player - without culling, every one of
         # those plays at full volume as if it were right next to you, which read as "random sounds").
-        self.mob_speech_events = []  # [(kind, text)] a mob just started a NEW flavor line this tick - pushed
+        self.mob_speech_events = []  # [(kind, text, x, y)] a mob just started a NEW flavor line this tick - pushed
         # into the persistent chat log (not just the in-world speech bubble) by main.py/coop_client.py
         # day/night only matters in the open Realm - a bonus dungeon has no sky
         self.day_time = random.uniform(0, DAY_LENGTH) if not bonus else 0.0
@@ -509,6 +545,19 @@ class RealmSim:
                 self._start_secret_quest()
             if self._phase2_pocket is not None:
                 self._start_phase2_quest()
+        # Batch 15: friendly NPCs, island treasure chests, side-quest bookkeeping
+        self.npcs = []           # npcs.NPC entities (open Realm only) - never in self.enemies
+        self.island_chests = []  # [{"idx","pos","skin","opened": set(pid)}] - see open_island_chest
+        self._players_by_pid = {}
+        self._near_cd = 0.0
+        self._night_watch = set()
+        self._vignette_centers = []
+        if not bonus:
+            self.npcs = npcs_mod.spawn_realm_npcs(self)
+            self._spawn_island_chests()
+            for v in self.biome_vignettes:
+                r = world.biome_vignette_rect(v["anchor"])
+                self._vignette_centers.append((pygame.Vector2(r.centerx * TILE, r.centery * TILE), v["biome"]))
 
     def _pick_achievable_goon_target(self, min_frac=0.6):
         """Counts actual spawned occurrences per kind across the fixed-pod
@@ -678,6 +727,17 @@ class RealmSim:
         self.enemies.append(self.boss)
         self.vfx_events.append(("boss_appear", self.boss.pos.x, self.boss.pos.y, (255, 140, 0)))
 
+    def _continent_bounds(self):
+        """(y0, y1, x0, x1) tile range of the embedded continent square (world.
+        CONTINENT_OFFSET/CONTINENT_SIZE) - everything outside it is open ocean or
+        the big islands, so the whole-map scans (spawn, lairs, vignettes) only
+        ever walk the continent: same cost as the old 900x900 map, and nothing
+        continental lands out on an island."""
+        w, h = self.realm_map.w, self.realm_map.h
+        off = (getattr(self, "realm_info", None) or {}).get("offset", 0)
+        size = world.CONTINENT_SIZE if off else min(w, h)
+        return (max(2, off), min(h - 2, off + size), max(2, off), min(w - 2, off + size))
+
     def _find_beach_spawn(self):
         # RotMG-flavoured touch for this island map: arrive on the shore rather
         # than dropped in the dead center, so the coastline is the first thing
@@ -685,14 +745,21 @@ class RealmSim:
         grid = self.realm_map.grid
         w, h = self.realm_map.w, self.realm_map.h
         cx = w / 2
+        info = getattr(self, "realm_info", None)
         candidates = []
-        for y in range(2, h - 2):
+        y0, y1, x0, x1 = self._continent_bounds()
+        for y in range(y0, y1):
             row, row_above, row_below = grid[y], grid[y - 1], grid[y + 1]
-            for x in range(2, w - 2):
+            for x in range(x0, x1):
                 t = row[x]
                 if t == world.WATER or t in world.SOLID:
                     continue
                 if world.WATER in (row[x - 1], row[x + 1], row_above[x], row_below[x]):
+                    # a real SEA shore only - a river bank or lake shore south of
+                    # centre must not steal the beach spawn
+                    if info and not any(world.is_ocean(info, nx, ny) for nx, ny in
+                                        ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1))):
+                        continue
                     candidates.append((x, y))
         if not candidates:
             return self.realm_map.center_world_pos()
@@ -714,12 +781,14 @@ class RealmSim:
         w, h = self.realm_map.w, self.realm_map.h
         spawn = self._beach_spawn or self.realm_map.center_world_pos()
         center = self.realm_map.center_world_pos()
-        max_r_world = min(w, h) / 2 * TILE
+        # difficulty scales on the CONTINENT's radius, not the (ocean-padded) map's
+        max_r_world = world.CONTINENT_R * TILE
+        cy0, cy1, cx0, cx1 = self._continent_bounds()
         for _ in range(LAIR_COUNT):
             pos = None
             for _try in range(30):
-                tx = random.randint(5, w - 6)
-                ty = random.randint(5, h - 6)
+                tx = random.randint(max(5, cx0), min(w - 6, cx1 - 1))
+                ty = random.randint(max(5, cy0), min(h - 6, cy1 - 1))
                 candidate = pygame.Vector2(tx * TILE + TILE / 2, ty * TILE + TILE / 2)
                 # water is walkable now (see world.SPEED_MULT) but lairs still shouldn't
                 # sit out in open water - is_solid() alone no longer excludes it
@@ -730,7 +799,7 @@ class RealmSim:
                     break
             if pos is None:
                 continue
-            tile_here = self.realm_map.tile_at(pos.x, pos.y)
+            tile_here = world.biome_ground_of(self.realm_map.tile_at(pos.x, pos.y))
             kind_sets = BIOME_LAIR_KIND_SETS.get(tile_here, LAIR_KIND_SETS)
             kinds, weights = random.choice(kind_sets)
             # RotMG's real beaches-to-Godlands gradient: lairs near the continent's
@@ -755,7 +824,7 @@ class RealmSim:
         # that biome's visual terrace (plan section 2) at a position distinct from its
         # landmark building, never the same lair
         for lair in self.lairs:
-            biome_name = world.GROUND_TO_BIOME_NAME.get(self.realm_map.tile_at(lair["pos"].x, lair["pos"].y))
+            biome_name = world.TILE_TO_BIOME_NAME.get(self.realm_map.tile_at(lair["pos"].x, lair["pos"].y))
             if biome_name is None:
                 continue
             current = toughest_by_biome.get(biome_name)
@@ -816,7 +885,7 @@ class RealmSim:
         # biome outright: its lairs are tried toughest-first until one fits.
         for biome_name in toughest_by_biome:
             candidates = sorted((lair for lair in self.lairs
-                                 if world.GROUND_TO_BIOME_NAME.get(
+                                 if world.TILE_TO_BIOME_NAME.get(
                                      self.realm_map.tile_at(lair["pos"].x, lair["pos"].y)) == biome_name
                                  and lair is not toughest_by_biome.get(biome_name)
                                  and lair is not second_by_biome.get(biome_name)),
@@ -836,6 +905,15 @@ class RealmSim:
                     "biome": biome_name, "name": defn["name"], "lore": defn["lore"],
                 })
                 break
+
+        # Batch 15 (E1): ten big named areas (game/areas.py) - stamped before the
+        # vignettes so those avoid them; lairs inside an area are dropped (towns are
+        # safe, and nothing should spawn inside a hut)
+        self.areas = areas_mod.place_realm_areas(self, placed_rects)
+        for a in self.areas:
+            keep_out = a["rect"].inflate(16, 16)
+            self.lairs = [l for l in self.lairs
+                          if not keep_out.collidepoint(int(l["pos"].x // TILE), int(l["pos"].y // TILE))]
 
         # Curated biome decoration vignettes (Track C, Batch 14) - 20
         # guaranteed hand-composed prop clusters per biome, additional to
@@ -871,24 +949,59 @@ class RealmSim:
         structural_rects = list(placed_rects)
         grid = self.realm_map.grid
         grid_h, grid_w = len(grid), len(grid[0])
+        decor = (getattr(self, "realm_info", None) or {}).get("decor") or {}
+        dens, dthr = decor.get("dens"), decor.get("thr", {})
+        # candidate anchors per biome from one stride-3 scan (instead of blind whole-
+        # grid rejection sampling, which starved small biomes of attempts)
+        candidates = {}
+        vy0, vy1, vx0, vx1 = self._continent_bounds()
+        for ty in range(max(4, vy0), min(grid_h - 4, vy1), 3):
+            row = grid[ty]
+            for tx in range(max(4, vx0), min(grid_w - 4, vx1), 3):
+                b = world.GROUND_TO_BIOME_NAME.get(row[tx])
+                if b is not None:
+                    candidates.setdefault(b, []).append((tx, ty))
+        VIGNETTE_SPACING = 16  # tiles - curated scenes read as deliberate, never piled up
+        taken = {}
+
+        def far_from_others(ax, ay):
+            cx, cy = ax // VIGNETTE_SPACING, ay // VIGNETTE_SPACING
+            for gy in (cy - 1, cy, cy + 1):
+                for gx in (cx - 1, cx, cx + 1):
+                    for (ox, oy) in taken.get((gx, gy), ()):
+                        if (ox - ax) ** 2 + (oy - ay) ** 2 < VIGNETTE_SPACING ** 2:
+                            return False
+            return True
+
+        r = world.BIOME_VIGNETTE_RADIUS
         for biome_name in world.BIOME_VIGNETTE_TEMPLATES:
             ground_tiles = {g for g, name in world.GROUND_TO_BIOME_NAME.items() if name == biome_name}
-            if not ground_tiles:
+            pool = candidates.get(biome_name)
+            if not ground_tiles or not pool:
                 continue
             placed = 0
             template_idx = 0
-            for _ in range(VIGNETTES_PER_BIOME * MAX_ATTEMPTS_PER_VIGNETTE):
+            attempts = VIGNETTES_PER_BIOME * MAX_ATTEMPTS_PER_VIGNETTE
+            for attempt in range(attempts):
                 if placed >= VIGNETTES_PER_BIOME:
                     break
-                ax = random.randint(3, grid_w - 4)
-                ay = random.randint(3, grid_h - 4)
-                if grid[ay][ax] not in ground_tiles:
+                ax, ay = random.choice(pool)
+                # a scene sits in a clearing (below the biome's grove threshold) for
+                # the first 70% of attempts; after that anywhere, so small biomes still fill
+                if (dens is not None and attempt < attempts * 0.7
+                        and world._coarse_sample(dens, ax, ay) >= dthr.get(biome_name, 9.0)):
+                    continue
+                if not all(grid[yy][xx] in ground_tiles
+                           for yy in range(ay - r, ay + r + 1) for xx in range(ax - r, ax + r + 1)):
+                    continue   # the whole footprint must be this biome's plain ground
+                if not far_from_others(ax, ay):
                     continue
                 candidate_rect = world.biome_vignette_rect((ax, ay))
-                if any(candidate_rect.inflate(2, 2).colliderect(r) for r in structural_rects):
+                if any(candidate_rect.inflate(2, 2).colliderect(rr) for rr in structural_rects):
                     continue
                 rect = world.stamp_biome_vignette(grid, (ax, ay), biome_name, template_idx)
                 placed_rects.append(rect)
+                taken.setdefault((ax // VIGNETTE_SPACING, ay // VIGNETTE_SPACING), []).append((ax, ay))
                 self.biome_vignettes.append({"anchor": (ax, ay), "biome": biome_name, "template_idx": template_idx})
                 placed += 1
                 template_idx += 1
@@ -896,6 +1009,7 @@ class RealmSim:
             # overlapping vignettes simply gets fewer - a rare shortfall on
             # a small/fragmented biome region, not a bug (same "rare skip"
             # convention as the terrace/landmark loops above).
+        self._structure_rects = structural_rects
 
     def _stamp_islands(self):
         """"The Reforging" storyline: stamps 10 small standalone island zones
@@ -913,77 +1027,101 @@ class RealmSim:
         grid_h, grid_w = len(grid), len(grid[0])
         cx, cy = grid_w / 2, grid_h / 2
         n = len(ISLAND_NAMES)
+        info = getattr(self, "realm_info", None)
+        R = world.ISLAND_RADIUS
         placed_centers = []
+        self._walkway_landings = []
+        self.island_tiles = set()
         for i, name in enumerate(ISLAND_NAMES):
             theme = "island_shard" if i % 2 == 0 else "island_choir"
             angle = (2 * math.pi * i) / n
             dx, dy = math.cos(angle), math.sin(angle)
-            # walk outward from the map center until hitting water - that's the
-            # real mainland coastline at this angle, and last_land is the exact
-            # shore point the walkway below connects FROM
-            x, y = cx, cy
-            last_land = (int(cx), int(cy))
-            for _ in range(max(grid_w, grid_h)):
-                x += dx
-                y += dy
-                ix, iy = int(x), int(y)
-                if not (0 <= ix < grid_w and 0 <= iy < grid_h):
-                    break
-                if grid[iy][ix] == world.WATER:
-                    break
-                last_land = (ix, iy)
-            # anchor a real distance PAST the coastline - reusing
-            # world.coastline_radius (the SAME smooth formula make_realm()
-            # itself used to carve the coastline shape) as the base, rather
-            # than the raw walked last_land distance, since a small inland
-            # pond/decoration-patch water tile can make the walk above stop
-            # well short of the true coastline (confirmed empirically: at
-            # some angles the walked distance and the formula's value matched
-            # exactly, at others the walk stopped over 100 tiles early on an
-            # inland pond) - the smooth formula is immune to that noise. A
-            # fixed water-gap (12% of the map's own size) pushes the anchor a
-            # real distance further out into open water at EVERY angle,
-            # scaling with map size rather than being a guessed constant -
-            # islands now read as clearly out at the map's edges, not just a
-            # few tiles off the coast. The growing gap back to the mainland
-            # shore is bridged by a real colored plank walkway
-            # (world.stamp_walkway, below) instead of a short hop.
-            water_gap = min(grid_w, grid_h) * 0.12
-            target_r = world.coastline_radius(angle) + water_gap
-            margin = world.ISLAND_RADIUS + 3
-            ax = min(max(int(cx + dx * target_r), margin), grid_w - margin)
-            ay = min(max(int(cy + dy * target_r), margin), grid_h - margin)
-            if any(math.hypot(ax - c[0], ay - c[1]) < world.ISLAND_RADIUS * 2.5 for c in placed_centers):
+            coast_r = world.coastline_radius(angle, info)
+            # the island's centre sits a real gap past the FURTHEST coast point
+            # across the island's own angular span (not just the coast straight
+            # below it), so a 100-tile island never touches a peninsula beside it
+            r0 = coast_r + ISLAND_WATER_GAP + R
+            half = min(0.3, (R + ISLAND_WATER_GAP) / max(1.0, r0))  # < half the 36deg island spacing
+            span = [world.coastline_radius(angle + half * (k / 6.0 - 1.0), info) for k in range(13)]
+            target_r = max(span) + ISLAND_WATER_GAP + R
+            # HARD bound: the whole island (incl. edge jitter) stays inside the map
+            limit = min(grid_w, grid_h) / 2 - R - 6
+            target_r = min(target_r, limit)
+            ax, ay = int(cx + dx * target_r), int(cy + dy * target_r)
+            if any(math.hypot(ax - c[0], ay - c[1]) < R * 2.1 for c in placed_centers):
                 continue  # too close to an already-placed island - rare, skip rather than overlap it
-            rect, center_tile = world.stamp_island(grid, (ax, ay), theme)
-            # stop the walkway at the island's EDGE, not its exact center -
-            # targeting center_tile directly would lay planks straight over
-            # the landmark tile stamp_island just placed there (a real bug
-            # caught by actually checking the island's core tile afterward,
-            # not just "did it run without crashing")
-            dist_to_center = math.hypot(center_tile[0] - last_land[0], center_tile[1] - last_land[1])
-            edge_frac = max(0.0, (dist_to_center - world.ISLAND_RADIUS) / dist_to_center) if dist_to_center > 0 else 0.0
-            walkway_end = (last_land[0] + (center_tile[0] - last_land[0]) * edge_frac,
-                           last_land[1] + (center_tile[1] - last_land[1]) * edge_frac)
-            world.stamp_walkway(grid, last_land, walkway_end, world.WALKWAY_PLANK_TILE[i])
-            # the walkway's landing point can overwrite a decoration stamp_island
-            # just placed at the island's edge - refill it so all 10 curated
-            # kinds always survive (see ensure_island_decorations' docstring)
+            rect, center_tile, iinfo = world.stamp_island(grid, (ax, ay), theme, idx=i)
+            self.island_tiles |= iinfo["tiles"]
+            if info and info.get("ocean") is not None:
+                ow = info["w"]
+                for (tx, ty) in iinfo["tiles"]:
+                    info["ocean"][ty * ow + tx] = 0
+            # walkway: walk INWARD from open sea at this angle to the mainland shore
+            # (the first non-water tile), then lay planks outward over water only,
+            # ending at the island's own first tile along the same line
+            r = min(coast_r + 4, max(grid_w, grid_h) / 2 - 1)
+            last_land = (int(cx), int(cy))
+            while r > 0:
+                ix, iy = int(cx + dx * r), int(cy + dy * r)
+                if 0 <= ix < grid_w and 0 <= iy < grid_h and grid[iy][ix] != world.WATER                         and (ix, iy) not in iinfo["tiles"]:
+                    last_land = (ix, iy)
+                    break
+                r -= 1.0
+            walkway_end = None
+            lx, ly = last_land
+            dist = math.hypot(center_tile[0] - lx, center_tile[1] - ly)
+            left_land = False
+            for step in range(1, int(dist)):
+                px = lx + (center_tile[0] - lx) * step / dist
+                py = ly + (center_tile[1] - ly) * step / dist
+                t = (int(px), int(py))
+                if grid[t[1]][t[0]] == world.WATER:
+                    left_land = True
+                elif left_land:
+                    walkway_end = (px, py)
+                    break
+            if walkway_end is not None:
+                world.stamp_walkway(grid, last_land, walkway_end, world.WALKWAY_PLANK_TILE[i])
+            # the walkway's landing point can overwrite a curated decoration -
+            # refill so all 10 curated kinds always survive
             world.ensure_island_decorations(grid, center_tile, theme)
             placed_centers.append(center_tile)
             center_world = pygame.Vector2(center_tile[0] * TILE + TILE / 2, center_tile[1] * TILE + TILE / 2)
-            # cooldown starts at 0 (not a delay) so every island's first guardian
-            # wave is already live the moment a fresh Realm is generated - a
-            # player's very first entry finds them already spawned, not waiting
-            # through an initial timer; every wave AFTER this one still refreshes
-            # on the normal 5-minute ISLAND_QUEST_INTERVAL via _progress_island_event
             # idx is the NAME index (ISLAND_NAMES/ISLAND_MINI_BOSS key), not the list position -
             # a skipped placement above must not shift every later island's identity. The
             # list position is stored separately for _progress_island_event's lookup.
             self.islands.append({"idx": i, "slot": len(self.islands), "pos": center_world, "theme": theme,
-                                  "label": name, "cooldown": 0.0,
-                                  "alive_guardians": 0})
+                                  "label": name, "cooldown": 0.0, "alive_guardians": 0,
+                                  "rect": rect, "biome": iinfo["biome"]})
+            self._walkway_landings.append(last_land)
+            # mob camps: permanent island lairs of the theme's guardians (populated by
+            # _populate_all_lairs right after this, respawning like any other lair)
+            guardians = ISLAND_THEMES[theme]["guardians"]
+            for (tx, ty) in iinfo["camps"]:
+                self.lairs.append({"pos": pygame.Vector2(tx * TILE + TILE / 2, ty * TILE + TILE / 2),
+                                   "kinds": list(guardians), "weights": [1] * len(guardians),
+                                   "cap": ISLAND_CAMP_CAP, "difficulty_scale": ISLAND_CAMP_SCALE,
+                                   "respawn_cd": 0.0, "spawn_min_tiles": 8, "spawn_max_tiles": 120,
+                                   "island_camp": i})
         self._stamp_island_hub()
+        self._clear_approaches()
+
+    def _clear_approaches(self):
+        """Noise outcrops are solid ROCK - make sure none of them ever blocks a
+        building/terrace/landmark approach, a lair, a walkway landing or the
+        arrival plaza (see world.clear_blockers)."""
+        grid = self.realm_map.grid
+        for rect in getattr(self, "_structure_rects", ()):
+            world.clear_blockers(grid, rect, margin=3)
+        for lair in self.lairs:
+            t = (int(lair["pos"].x // TILE), int(lair["pos"].y // TILE))
+            world.clear_blockers(grid, pygame.Rect(t[0], t[1], 1, 1), margin=4)
+        for (lx, ly) in self._walkway_landings:
+            world.clear_blockers(grid, pygame.Rect(lx, ly, 1, 1), margin=4)
+        if self._beach_spawn is not None:
+            t = (int(self._beach_spawn.x // TILE), int(self._beach_spawn.y // TILE))
+            rad = world.REALM_START_RADIUS + 3
+            world.clear_blockers(grid, pygame.Rect(t[0], t[1], 1, 1), margin=rad)
 
     def _stamp_island_hub(self):
         """A real "starting area" plaza around the Realm's own arrival point
@@ -996,7 +1134,7 @@ class RealmSim:
         if not self.islands or self._beach_spawn is None:
             return
         anchor_tile = (int(self._beach_spawn.x // TILE), int(self._beach_spawn.y // TILE))
-        biome_name = world.GROUND_TO_BIOME_NAME.get(self.realm_map.tile_at(self._beach_spawn.x, self._beach_spawn.y))
+        biome_name = world.TILE_TO_BIOME_NAME.get(self.realm_map.tile_at(self._beach_spawn.x, self._beach_spawn.y))
         if biome_name is None:
             biome_name = "forest"  # sane fallback - _find_beach_spawn always lands on real biome ground in practice
         world.stamp_realm_start(self.realm_map.grid, anchor_tile, biome_name)
@@ -1109,8 +1247,11 @@ class RealmSim:
         Caller must have already called begin_tick() this tick (see its docstring)."""
         alive = [p for p in players.values() if p.alive]
         self._story_players = alive
+        self._players_by_pid = players
         self._refresh_story_scale(alive)
+        was_night = self._was_night
         self._update_day_night(dt)
+        self._tick_night_watch(was_night, alive)
         self._update_fishing(dt, players)
         self._update_weather_damage(dt, alive)
 
@@ -1121,6 +1262,7 @@ class RealmSim:
             self._tick_island_events(dt)
             self._tick_world_boss(dt, alive)
             self._tick_landmarks(alive)
+            self._tick_side_quests(dt, alive)
 
         if self.is_bonus_room:
             self._ambient.update(dt, self._ambient_bounds)
@@ -1156,12 +1298,14 @@ class RealmSim:
             if e.alive and e.bleed_time > 0:
                 tick_dmg = e.bleed_dps * dt
                 killed = e.take_damage(tick_dmg, whole=False)
+                self._credit_hit(e, e.status_source_pid, e._last_hit_damage)
                 self.damage_popups.append((e.pos.x, e.pos.y, round(e._last_hit_damage), (200, 30, 30)))
                 if killed:
                     self._reward(e, players.get(e.status_source_pid))
             if e.alive and e.burn_time > 0:
                 tick_dmg = e.burn_dps * dt
                 killed = e.take_damage(tick_dmg, whole=False)
+                self._credit_hit(e, e.status_source_pid, e._last_hit_damage)
                 self.damage_popups.append((e.pos.x, e.pos.y, round(e._last_hit_damage), (255, 130, 30)))
                 if killed:
                     self._reward(e, players.get(e.status_source_pid))
@@ -1178,7 +1322,7 @@ class RealmSim:
                 # regular aggro'd trash/elite mob's line still shows as an in-world
                 # bubble (unaffected), just doesn't also spam the chat history
                 if e.neutral or e.rank == "boss":
-                    self.mob_speech_events.append((e.kind, e.speech))
+                    self.mob_speech_events.append((e.kind, e.speech, e.pos.x, e.pos.y))
             if e._root_pulse:
                 e._root_pulse = False
                 for p in alive:
@@ -1308,7 +1452,7 @@ class RealmSim:
             else:
                 wave = [theme["anchor"]] + [random.choice(theme["guardians"]) for _ in range(ISLAND_WAVE_SIZE - 1)]
             for kind in wave:
-                pos = self._find_spawn_pos_near(isl["pos"], min_tiles=2, max_tiles=6)
+                pos = self._find_spawn_pos_near(isl["pos"], min_tiles=40, max_tiles=220)
                 if pos is None:
                     pos = pygame.Vector2(isl["pos"])
                 enemy = Enemy(kind, pos, level_scale=self.story_scale)
@@ -1323,7 +1467,7 @@ class RealmSim:
             self.events.append((None, msg, theme["color"]))
             self.vfx_events.append(("boss_appear", isl["pos"].x, isl["pos"].y, theme["color"]))
 
-    def _progress_island_event(self, enemy, killer):
+    def _progress_island_event(self, enemy, killer, credited=()):
         """Tap point for an island guardian's death (called from _reward()
         alongside _progress_secret_quest/_progress_phase2_quest) - decrements
         that island's live-guardian count (tagged at spawn via
@@ -1341,15 +1485,20 @@ class RealmSim:
         if isl["alive_guardians"] > 0:
             return
         isl["cooldown"] = ISLAND_QUEST_INTERVAL
-        cls_for_bonus = killer.cls_name if killer else "wizard"
-        bonus_items = roll_loot(cls_for_bonus, "elite", 1.0)
-        if bonus_items:
-            self._spawn_loot_bag(bonus_items, enemy.pos)
-        if killer:
-            self._grant_achievement(killer, "reforger")
+        for p in (list(credited) or [None]):
+            bonus_items = roll_loot(p.cls_name if p else "wizard", "elite", 1.0)
+            if bonus_items:
+                self._spawn_loot_bag(bonus_items, enemy.pos, owner_pid=p.pid if p else None)
+            if p is not None:
+                self._grant_achievement(p, "reforger")
         theme = ISLAND_THEMES[isl["theme"]]
         self.events.append((None, f"{isl['label']} has been calmed. The Reforging continues.", theme["color"]))
-        self._story_credit("island", isl["idx"], near=isl["pos"], radius=STORY_CREDIT_RADIUS, killer=killer)
+        self._story_credit("island", isl["idx"], near=isl["pos"], radius=STORY_CREDIT_RADIUS, killer=killer,
+                           extra=credited)
+        for ch in self.island_chests:
+            if ch["idx"] == isl["idx"] and ch["opened"]:
+                ch["opened"].clear()
+                self.events.append((None, f"A fresh treasure chest washes up on {isl['label']}!", theme["color"]))
 
     def _tick_world_boss(self, dt, alive):
         """A rare, server-wide-announced roaming boss incursion - see the
@@ -1388,7 +1537,7 @@ class RealmSim:
         if acts:
             self.story_scale = story.act_scale(max(acts))
 
-    def _story_credit(self, kind, key=None, near=None, radius=None, killer=None):
+    def _story_credit(self, kind, key=None, near=None, radius=None, killer=None, extra=()):
         """Feeds a story event to every player it should count for - everyone present
         (near=None) or everyone within `radius` of `near`, plus the killer - and turns
         the returned quest lines into per-player feed events."""
@@ -1396,6 +1545,9 @@ class RealmSim:
                    if near is None or p.pos.distance_to(near) <= radius]
         if killer is not None and killer not in targets:
             targets.append(killer)
+        for p in extra:
+            if p not in targets:
+                targets.append(p)
         for p in targets:
             progress = getattr(p, "story", None)
             if progress is None:
@@ -1421,7 +1573,8 @@ class RealmSim:
             kind = story.GUARDIAN_KIND.get(lm["biome"], "goblin")
             spawn = self._find_spawn_pos_near(lm["pos"], min_tiles=2, max_tiles=5) or pygame.Vector2(lm["pos"])
             g = Enemy(kind, spawn, level_scale=LANDMARK_GUARDIAN_HP_SCALE * self.story_scale, home_pos=lm["pos"])
-            g.radius = int(g.radius * 1.4)
+            g.scale = GUARDIAN_SCALE   # drawn bigger too, not just a wider hitbox
+            g.radius = int(round(ENEMY_KINDS[kind]["radius"] * GUARDIAN_SCALE))
             g.aggro = True
             g.story_guardian = lm["biome"]
             self.enemies.append(g)
@@ -1457,7 +1610,7 @@ class RealmSim:
                 self.events.append((p.pid, f"You discover {lm['name']}. {lm['lore']}", (200, 190, 255)))
                 bonus_items = roll_loot(p.cls_name, "elite", 1.0)
                 if bonus_items:
-                    self._spawn_loot_bag(bonus_items, lm["pos"])
+                    self._spawn_loot_bag(bonus_items, lm["pos"], owner_pid=p.pid)
 
     def _trigger_wildlife_flee(self):
         """Ambient unshootable wildlife "runs away if you shoot near them" - any
@@ -1536,6 +1689,7 @@ class RealmSim:
                 for e in _nearby_enemies(b.pos):
                     if e.alive and b.hit_test(e.pos, e.radius):
                         killed = e.take_damage(b.dmg)
+                        self._credit_hit(e, b.owner, e._last_hit_damage)
                         self.damage_popups.append((e.pos.x, e.pos.y, e._last_hit_damage, (255, 220, 90)))
                         hit_kind = "hit_boss" if e.rank == "boss" else "hit_enemy"
                         self.vfx_events.append((hit_kind, e.pos.x, e.pos.y, (255, 220, 90)))
@@ -1606,6 +1760,128 @@ class RealmSim:
             player.title = title
             self.events.append((player.pid, f"Achievement unlocked: {player.name} {title}!", (255, 215, 90)))
 
+    # ------------------------------------------------------- side quests --
+    def _credit_hit(self, enemy, pid, amount):
+        """Remembers who damaged `enemy` (co-op: they all share the kill, see _reward)."""
+        if pid is None or pid == "enemy":
+            return
+        c = enemy.contributors
+        c[pid] = c.get(pid, 0) + (amount or 0)
+
+    def _credited_players(self, enemy, killer):
+        out = []
+        for pid in getattr(enemy, "contributors", {}):
+            p = self._players_by_pid.get(pid)
+            if p is not None and p not in out:
+                out.append(p)
+        if killer is not None and killer not in out:
+            out.append(killer)
+        return out
+
+    def _biome_at(self, pos):
+        return world.TILE_TO_BIOME_NAME.get(self.realm_map.tile_at(pos.x, pos.y))
+
+    def _side_event(self, p, kind, key=None, amount=1.0, ctx=None):
+        sq = getattr(p, "sidequests", None)
+        if sq is None:
+            return
+        for msg, color in sq.on_event(kind, key, amount, ctx, player=p):
+            self.events.append((p.pid, msg, color))
+
+    def _tick_night_watch(self, was_night, alive):
+        """"Survive a whole night": anyone out in the Realm for the entire night
+        (present and alive from nightfall to dawn) gets a 'night' side-quest event."""
+        if self.is_bonus_room:
+            return
+        pids = {p.pid for p in alive}
+        if self.is_night and not was_night:
+            self._night_watch = set(pids)
+        elif self.is_night:
+            self._night_watch &= pids
+        elif was_night:
+            for p in alive:
+                if p.pid in self._night_watch:
+                    self._side_event(p, "night")
+            self._night_watch = set()
+
+    def _tick_side_quests(self, dt, alive):
+        """NPC wandering, plus (every NEAR_TICK) the positional side-quest events:
+        standing near wildlife groups / NPC herds, reaching landmarks, islands and
+        curated vignette spots. Reward items that didn't fit earlier are handed over
+        here once there's backpack room."""
+        for n in self.npcs:
+            n.update(dt, self.is_solid)
+        self._near_cd -= dt
+        if self._near_cd > 0 or not alive:
+            return
+        self._near_cd = sidequests.NEAR_TICK
+        r2 = sidequests.NEAR_RADIUS ** 2
+        wildlife = [e for e in self.enemies if e.alive and e.neutral and e.unshootable]
+        for p in alive:
+            sq = getattr(p, "sidequests", None)
+            if sq is None:
+                continue
+            for msg, color in sq.flush(p):
+                self.events.append((p.pid, msg, color))
+            px, py = p.pos.x, p.pos.y
+            counts = {}
+            for e in wildlife:
+                if (e.pos.x - px) ** 2 + (e.pos.y - py) ** 2 <= r2:
+                    counts[e.kind] = counts.get(e.kind, 0) + 1
+            for n in self.npcs:
+                if (n.pos.x - px) ** 2 + (n.pos.y - py) ** 2 <= r2:
+                    counts["npc:" + n.npc_id] = 1
+            if counts:
+                ctx = {"biome": self._biome_at(p.pos), "night": self.is_night}
+                for kind, c in counts.items():
+                    self._side_event(p, "near", kind, sidequests.NEAR_TICK, dict(ctx, count=c))
+            for idx, lm in enumerate(self.landmarks):
+                if p.pos.distance_to(lm["pos"]) <= 3 * TILE:
+                    self._side_event(p, "reach", "landmark", 1, {"idx": idx})
+            for isl in self.islands:
+                if p.pos.distance_to(isl["pos"]) <= (world.ISLAND_RADIUS + 2) * TILE:
+                    self._side_event(p, "reach", "island", 1, {"idx": isl["idx"]})
+            for vi, (center, biome) in enumerate(self._vignette_centers):
+                if abs(center.x - px) <= 5 * TILE and abs(center.y - py) <= 5 * TILE:
+                    self._side_event(p, "reach", "vignette:" + biome, 1, {"idx": vi})
+
+    # ------------------------------------------------------ island chests --
+    ISLAND_CHEST_RADIUS = 72
+
+    def _spawn_island_chests(self):
+        for isl in self.islands:
+            pos = npcs_mod._walkable_near(self.realm_map, isl["pos"] + pygame.Vector2(2 * TILE, 1.5 * TILE), 4)
+            self.island_chests.append({"idx": isl["idx"], "pos": pos, "skin": isl["idx"] % 4, "opened": set()})
+
+    def island_chest_near(self, pos, pid):
+        best, bd = None, self.ISLAND_CHEST_RADIUS
+        for ch in self.island_chests:
+            d = ch["pos"].distance_to(pos)
+            if d <= bd and pid not in ch["opened"]:
+                best, bd = ch, d
+        return best
+
+    def open_island_chest(self, player):
+        """F next to an island chest: rolls GOOD personal loot (plus any quest items this
+        player still needs, e.g. Sal's camel bell / Driftwood Rum) into a bag only they can
+        see. Each player can open each chest once until that island's next calming."""
+        ch = self.island_chest_near(player.pos, player.pid)
+        if ch is None:
+            return False
+        ch["opened"].add(player.pid)
+        items = roll_loot(player.cls_name, "boss", 1.0) + roll_loot(player.cls_name, "elite", 1.0)
+        sq = getattr(player, "sidequests", None)
+        if sq is not None:
+            for qit in sidequests.chest_quest_items(sq, player):
+                items.append(("brown", qit))
+        if items:
+            self._spawn_loot_bag(items, ch["pos"] + pygame.Vector2(0, TILE), owner_pid=player.pid)
+        label = next((isl["label"] for isl in self.islands if isl["idx"] == ch["idx"]), "the island")
+        self.events.append((player.pid, f"You pry open the treasure chest on {label}!", (255, 215, 120)))
+        self.vfx_events.append(("jackpot", ch["pos"].x, ch["pos"].y, (255, 215, 120)))
+        self._side_event(player, "chest", None, 1, {"idx": ch["idx"]})
+        return True
+
     def _reward(self, enemy, killer):
         self.kill_count += 1
         death_color = (255, 140, 0) if enemy.rank == "boss" else (255, 200, 120)
@@ -1613,24 +1889,29 @@ class RealmSim:
         self.sound_events.append(("mob_death", sound_family(enemy.kind), enemy.pos.x, enemy.pos.y))
         self._room_cleared_check(getattr(enemy, "room_idx", None))
         cls_for_loot = killer.cls_name if killer else "wizard"
-        if killer:
-            killer.kills += 1
-            xp_gained = RANK_XP[enemy.rank]
-            killer.gain_xp(xp_gained)
+        # Batch 15 co-op fairness: EVERY player who damaged this mob (plus the killer)
+        # gets the kill - XP, story/side-quest credit and their own personal loot bag -
+        # so nobody's storyline is "stolen" by someone else landing the last hit
+        credited = self._credited_players(enemy, killer)
+        for p in credited:
+            p.kills += 1
+            xp_gained = int(round(RANK_XP[enemy.rank] * live_events.get_multiplier("xp")))  # Happy Hour etc.
+            p.gain_xp(xp_gained)
             # Echo passive accrual (Batch 14): bank 1 real echo to the ACCOUNT
             # immediately for every ECHO_XP_PER_ECHO of cumulative lifetime XP
             # crossed - not held back until death, so nothing is lost to a
             # crash/disconnect, and a single big XP gain (e.g. a boss kill)
             # can correctly cross more than one threshold at once.
-            before = killer._echo_xp_progress // ECHO_XP_PER_ECHO
-            killer._echo_xp_progress += xp_gained
-            after = killer._echo_xp_progress // ECHO_XP_PER_ECHO
+            before = p._echo_xp_progress // ECHO_XP_PER_ECHO
+            p._echo_xp_progress += xp_gained
+            after = p._echo_xp_progress // ECHO_XP_PER_ECHO
             new_echoes = after - before
             if new_echoes > 0:
-                accounts.add_echoes(killer.name, new_echoes)
-                killer._echoes_this_life += new_echoes
-            if killer.kills == 1:
-                self._grant_achievement(killer, "first_blood")
+                accounts.add_echoes(p.name, new_echoes)
+                p._echoes_this_life += new_echoes
+            if p.kills == 1:
+                self._grant_achievement(p, "first_blood")
+        if killer:
             if enemy.rank == "boss":
                 crew_name = crews.get_crew_for_player(killer.name)
                 if crew_name:
@@ -1638,31 +1919,51 @@ class RealmSim:
         loot_rolls = self.difficulty["loot_rolls"] if self.is_bonus_room else 1
         if enemy.moonlit:
             loot_rolls += 1  # a Moonlit kill always rolls at least one extra bag
-        rolled_items = []
-        for _ in range(loot_rolls):
-            for bag_color, item in roll_loot(cls_for_loot, enemy.rank, enemy.difficulty_fraction):
-                rolled_items.append((bag_color, item))
-                if item.is_ut:
-                    self.events.append((None, f"{item.name} dropped!", TIER_COLORS["ut"]))
         # a Dungeon Shard rides in the SAME loot bag as everything else this kill
         # dropped, instead of an ambient portal that pops up at the (soon-forgotten)
         # kill spot - it's a real carried item now, used later from the backpack
         # wherever the player happens to be standing (see Player.use_shard)
         dropped_shard_label = None
-        if not self.is_bonus_room and enemy.rank == "elite" and random.random() < MOB_PORTAL_CHANCE:
-            theme_name = THEME_FOR_KIND.get(enemy.kind, "generic")
-            dropped_shard_label = DUNGEON_THEMES[theme_name]["label"]
-            rolled_items.append(("brown", make_dungeon_shard(theme_name, dropped_shard_label)))
-        if rolled_items:
-            self._spawn_loot_bag(rolled_items, enemy.pos)
+        # an inner-biome Landmark Guardian always drops one - Act III needs dungeons, and
+        # the plain 8% elite roll alone made that act mostly waiting on luck (story pacing)
+        story_shard = getattr(enemy, "story_guardian", None) in story.INNER_BIOMES
+        biome = self._biome_at(enemy.pos)
+        # one PERSONAL roll + bag per credited player (a kill with no known player - a DoT
+        # from someone who left - still drops one shared bag, as before)
+        for p in (credited or [None]):
+            pid = p.pid if p is not None else None
+            rolled_items = []
+            for _ in range(loot_rolls):
+                for bag_color, item in roll_loot(p.cls_name if p else cls_for_loot, enemy.rank,
+                                                 enemy.difficulty_fraction):
+                    rolled_items.append((bag_color, item))
+                    if item.is_ut:
+                        self.events.append((pid, f"{item.name} dropped!", TIER_COLORS["ut"]))
+            if not self.is_bonus_room and enemy.rank == "elite" and (story_shard or random.random() < MOB_PORTAL_CHANCE):
+                theme_name = THEME_FOR_KIND.get(enemy.kind, "generic")
+                dropped_shard_label = DUNGEON_THEMES[theme_name]["label"]
+                rolled_items.append(("brown", make_dungeon_shard(theme_name, dropped_shard_label)))
+                self.events.append((pid, f"A Dungeon Shard ({dropped_shard_label}) dropped!", (190, 120, 230)))
+            if p is not None and getattr(p, "sidequests", None) is not None:
+                for qit in sidequests.quest_drops(p.sidequests, p, enemy.kind, biome, enemy.rank):
+                    rolled_items.append(("brown", qit))
+                    self.events.append((pid, f"{qit.name} dropped! (quest item)", (255, 215, 120)))
+            if rolled_items:
+                self._spawn_loot_bag(rolled_items, enemy.pos, owner_pid=pid)
+        dropped_shard_label = None  # announced per player above
+        for p in credited:
+            self._side_event(p, "kill", enemy.kind, 1, {"biome": biome})
         self._progress_secret_quest(enemy)
         self._progress_phase2_quest(enemy)
-        self._progress_island_event(enemy, killer)
+        self._progress_island_event(enemy, killer, credited)
         guardian_biome = getattr(enemy, "story_guardian", None)
         if guardian_biome is not None:
             self.events.append((None, f"The Guardian of {story.landmark_name(guardian_biome)} has been put to bed.",
                                  (255, 200, 120)))
-            self._story_credit("guardian", guardian_biome, near=enemy.pos, radius=STORY_CREDIT_RADIUS, killer=killer)
+            self._story_credit("guardian", guardian_biome, near=enemy.pos, radius=STORY_CREDIT_RADIUS, killer=killer,
+                               extra=credited)
+            for p in credited:
+                self._side_event(p, "guardian", guardian_biome)
         if enemy is self.boss and enemy.kind == "mad_god":
             # the finale's phase 2 is immediate - he gets back up, angrier, right where he fell
             self.boss = Enemy("mad_god_phase2", enemy.pos,
@@ -1674,6 +1975,8 @@ class RealmSim:
             return
         if enemy is self.boss and self.is_bonus_room and not enemy.kind.endswith("_phase2")                 and self.theme_key != "forge":
             self._story_credit("dungeon", None, killer=killer)
+            for p in self._story_players:
+                self._side_event(p, "dungeon", self.theme_key)
         if enemy is self.boss and enemy.kind == "mad_god_phase2":
             self._story_credit("mad_god", None, killer=killer)
         if enemy.rank == "boss":
@@ -1713,11 +2016,19 @@ class RealmSim:
                     self._maybe_open_phase2_door()
             elif getattr(enemy, "is_world_boss", False):
                 self.world_boss = None
-                bonus_items = []
-                for _ in range(2):
-                    bonus_items.extend(roll_loot(cls_for_loot, "boss", enemy.difficulty_fraction))
-                if bonus_items:
-                    self._spawn_loot_bag(bonus_items, enemy.pos)
+                for p in (credited or [None]):
+                    bonus_items = []
+                    for _ in range(2):
+                        bonus_items.extend(roll_loot(p.cls_name if p else cls_for_loot, "boss",
+                                                     enemy.difficulty_fraction))
+                    if bonus_items:
+                        self._spawn_loot_bag(bonus_items, enemy.pos, owner_pid=p.pid if p else None)
+                witnesses = [p for p in self._story_players if p.pos.distance_to(enemy.pos) <= STORY_CREDIT_RADIUS]
+                for p in credited:
+                    if p not in witnesses:
+                        witnesses.append(p)
+                for p in witnesses:
+                    self._side_event(p, "world_boss")
                 self.events.append((None, "The roaming terror has fallen! Its hoard scatters across the land.",
                                      WORLD_BOSS_ANNOUNCE_COLOR))
             else:
@@ -1788,7 +2099,7 @@ class RealmSim:
     LOOT_RADIUS = 45
     LOOT_PREVIEW_RADIUS = 160  # the nearby-loot HUD panel shows bags within this range
 
-    def _spawn_loot_bag(self, rarity_item_pairs, pos):
+    def _spawn_loot_bag(self, rarity_item_pairs, pos, owner_pid=None):
         """Pools items into one Bag - reuses a nearby, still-open, recently-created bag
         if one exists (so back-to-back kills near each other share a bag, matching
         RotMG's loot-bag feel), otherwise starts a fresh one. More than BAG_CAPACITY
@@ -1798,17 +2109,20 @@ class RealmSim:
         while remaining:
             target = next((b for b in self.ground_items
                             if not b.is_full() and b.age <= BAG_MERGE_WINDOW
+                            and getattr(b, "owner_pid", None) == owner_pid
                             and b.pos.distance_to(pos) <= BAG_MERGE_RADIUS), None)
             if target is None:
                 drop_pos = pos + pygame.Vector2(random.uniform(-8, 8), random.uniform(-8, 8))
-                target = Bag([], drop_pos)
+                target = Bag([], drop_pos, owner_pid=owner_pid)
                 self.ground_items.append(target)
             while remaining and target.add_item(remaining[0][1], rarity_key=remaining[0][0]):
                 remaining.pop(0)
 
-    def nearby_ground_items(self, pos, radius=LOOT_PREVIEW_RADIUS):
-        """Bags close enough to preview in the nearby-loot HUD panel, nearest first."""
-        items = [g for g in self.ground_items if g.pos.distance_to(pos) <= radius]
+    def nearby_ground_items(self, pos, radius=LOOT_PREVIEW_RADIUS, pid=None):
+        """Bags close enough to preview in the nearby-loot HUD panel, nearest first
+        (pid: only bags that player can see - personal loot)."""
+        items = [g for g in self.ground_items if g.pos.distance_to(pos) <= radius
+                 and (pid is None or getattr(g, "owner_pid", None) in (None, pid))]
         items.sort(key=lambda g: g.pos.distance_to(pos))
         return items
 
@@ -1954,6 +2268,7 @@ class RealmSim:
         self._grant_achievement(player, "angler")
         msg = f"You caught {item.display_name}!"
         self.events.append((player.pid, msg, item.color))
+        self._side_event(player, "fish", None, 1, {"biome": self._biome_at(player.pos)})
         return item, msg
 
     # -------------------------------------------------------------- input --
@@ -2062,26 +2377,32 @@ class RealmSim:
             self.vfx_events.append((f"{it.effect}_warning", target_pos[0], target_pos[1], it.color))
             self.pending_ability_effects.append({
                 "effect": it.effect, "pos": pygame.Vector2(target_pos), "timer": self.TELEGRAPH_DELAY,
-                "radius": self.NOVA_RADIUS, "magnitude": it.magnitude, "caster": caster,
+                "radius": self.NOVA_RADIUS, "magnitude": ability_power(it), "caster": caster,
+                "style": vfx_style_for(it.name),
             })
         elif it.effect == "heal":
             self.vfx_events.append(("heal", caster.pos.x, caster.pos.y, (110, 230, 140)))
+            self.vfx_events.append((f"ab_{vfx_style_for(it.name) or 'mending'}", caster.pos.x, caster.pos.y, it.color))
             for ally in allies:
                 if ally.alive and ally.pos.distance_to(caster.pos) <= self.SUPPORT_RADIUS:
-                    healed = min(it.magnitude, ally.hp_max - ally.hp)
+                    healed = min(ability_power(it), ally.hp_max - ally.hp)
                     ally.hp += healed
                     if healed > 0:
                         self.damage_popups.append((ally.pos.x, ally.pos.y, int(healed), (110, 230, 140)))
         elif it.effect == "haste":
-            self.vfx_events.append(("haste", caster.pos.x, caster.pos.y, (255, 230, 120)))
+            if not vfx_style_for(it.name):
+                self.vfx_events.append(("haste", caster.pos.x, caster.pos.y, (255, 230, 120)))
+            self.vfx_events.append((f"ab_{vfx_style_for(it.name) or 'horn'}", caster.pos.x, caster.pos.y, it.color))
             for ally in allies:
                 if ally.alive and ally.pos.distance_to(caster.pos) <= self.SUPPORT_RADIUS:
                     ally.haste_time = max(ally.haste_time, it.magnitude)
         elif it.effect == "shield":
-            self.vfx_events.append(("shield", caster.pos.x, caster.pos.y, (100, 160, 230)))
+            if not vfx_style_for(it.name):
+                self.vfx_events.append(("shield", caster.pos.x, caster.pos.y, (100, 160, 230)))
+            self.vfx_events.append((f"ab_{vfx_style_for(it.name) or 'ward'}", caster.pos.x, caster.pos.y, it.color))
             for ally in allies:
                 if ally.alive and ally.pos.distance_to(caster.pos) <= self.SUPPORT_RADIUS:
-                    ally.shield_hp = it.magnitude
+                    ally.shield_hp = ability_power(it)
                     ally.shield_time = self.SHIELD_DURATION
         self.events.append((caster.pid, f"{it.display_name}!", it.color))
         return True, f"{it.display_name}!"
@@ -2101,11 +2422,20 @@ class RealmSim:
 
     def _impact_ability_effect(self, pe):
         effect, pos, magnitude, caster, radius = pe["effect"], pe["pos"], pe["magnitude"], pe["caster"], pe["radius"]
+        # friendly wildlife (neutral/unshootable) and already-dead enemies are never hit - they
+        # used to die to novas and pay out XP/loot + count toward kill quests
+        targets = [e for e in self.enemies if e.alive and not e.unshootable and not e.neutral]
+        style = pe.get("style")
+        if style and effect != "chain":
+            extra = (caster.pos.x, caster.pos.y) if (effect == "drain" and caster is not None) else ()
+            self.vfx_events.append((f"ab_{style}", pos.x, pos.y, (255, 255, 255), *extra))
         if effect == "nova":
-            self.vfx_events.append(("nova", pos.x, pos.y, (170, 130, 255)))
-            for e in self.enemies:
+            if not style:  # a styled spell draws its own look (vfx.spawn_ability_style)
+                self.vfx_events.append(("nova", pos.x, pos.y, (170, 130, 255)))
+            for e in targets:
                 if e.pos.distance_to(pos) <= radius:
                     killed = e.take_damage(magnitude)
+                    self._credit_hit(e, caster.pid if caster else None, magnitude)
                     self.damage_popups.append((e.pos.x, e.pos.y, e._last_hit_damage, (170, 130, 255)))
                     if killed:
                         self._reward(e, caster)
@@ -2114,24 +2444,29 @@ class RealmSim:
             current = pygame.Vector2(pos)
             self.vfx_events.append(("chain", current.x, current.y, (140, 200, 255)))
             for _ in range(self.CHAIN_HOPS):
-                cand = [e for e in self.enemies if id(e) not in hit_ids
+                cand = [e for e in targets if e.alive and id(e) not in hit_ids
                         and e.pos.distance_to(current) <= (radius if not hit_ids else self.CHAIN_RANGE)]
                 if not cand:
                     break
                 e = min(cand, key=lambda e: e.pos.distance_to(current))
                 hit_ids.add(id(e))
                 killed = e.take_damage(magnitude)
+                self._credit_hit(e, caster.pid if caster else None, magnitude)
                 self.damage_popups.append((e.pos.x, e.pos.y, e._last_hit_damage, (140, 200, 255)))
                 self.vfx_events.append(("chain", e.pos.x, e.pos.y, (140, 200, 255)))
+                if style:  # an arc from the previous hop to this one
+                    self.vfx_events.append((f"ab_{style}", e.pos.x, e.pos.y, (190, 110, 255), current.x, current.y))
                 if killed:
                     self._reward(e, caster)
                 current = e.pos
         elif effect == "drain":
             total = 0
-            self.vfx_events.append(("drain", pos.x, pos.y, (170, 40, 60)))
-            for e in self.enemies:
+            if not style:  # a styled spell draws its own look (vfx.spawn_ability_style)
+                self.vfx_events.append(("drain", pos.x, pos.y, (170, 40, 60)))
+            for e in targets:
                 if e.pos.distance_to(pos) <= radius:
                     killed = e.take_damage(magnitude)
+                    self._credit_hit(e, caster.pid if caster else None, magnitude)
                     total += e._last_hit_damage  # lifesteal scales with REAL damage dealt, not the raw magnitude
                     self.damage_popups.append((e.pos.x, e.pos.y, e._last_hit_damage, (170, 40, 60)))
                     if killed:
@@ -2142,10 +2477,12 @@ class RealmSim:
                 if healed > 0:
                     self.damage_popups.append((caster.pos.x, caster.pos.y, int(healed), (110, 230, 140)))
         elif effect == "freeze":
-            self.vfx_events.append(("freeze", pos.x, pos.y, (150, 220, 255)))
-            for e in self.enemies:
+            if not style:  # a styled spell draws its own look (vfx.spawn_ability_style)
+                self.vfx_events.append(("freeze", pos.x, pos.y, (150, 220, 255)))
+            for e in targets:
                 if e.pos.distance_to(pos) <= radius:
                     killed = e.take_damage(magnitude)
+                    self._credit_hit(e, caster.pid if caster else None, magnitude)
                     self.damage_popups.append((e.pos.x, e.pos.y, e._last_hit_damage, (150, 220, 255)))
                     e.frozen_time = max(e.frozen_time, self.FREEZE_DURATION)
                     if killed:

@@ -42,9 +42,10 @@ def _setting_row(kind, key, label, section, choices=None):
 
 
 def build_rows(auto_fire_get, auto_fire_set, fullscreen_get, fullscreen_toggle,
-               reset_camera, close, full_map=None, leave=None):
+               reset_camera, close, full_map=None, leave=None, journal=None):
     """full_map: optional (get_open, toggle) pair, shown only when a map exists.
-    leave: optional (label, fn) - "Abandon run" in single-player, "Disconnect" in co-op."""
+    leave: optional (label, fn) - "Abandon run" in single-player, "Disconnect" in co-op.
+    journal: optional [(label, fn)] - the Quest Log / Dictionary windows (game/journal.py)."""
     rows = [
         Row("toggle", "Auto-fire", "Gameplay", get=auto_fire_get, set=auto_fire_set),
         _setting_row("slider", "master_volume", "Master volume", "Audio"),
@@ -59,8 +60,10 @@ def build_rows(auto_fire_get, auto_fire_set, fullscreen_get, fullscreen_toggle,
         _setting_row("toggle", "hit_stop", "Hit-stop (freeze on big hits)", "Effects"),
         _setting_row("cycle", "particles", "Particles", "Effects",
                      choices=[("off", "Off"), ("low", "Low"), ("high", "High")]),
-        Row("action", "Reset camera rotation", "Actions", action=reset_camera),
     ]
+    for label, fn in journal or ():
+        rows.append(Row("action", label, "Journal", action=fn))
+    rows.append(Row("action", "Reset camera rotation", "Actions", action=reset_camera))
     if full_map is not None:
         get_open, toggle = full_map
         rows.append(Row("toggle", "Full map", "Actions", get=get_open, set=lambda _v: toggle()))
@@ -98,12 +101,12 @@ MENU_KEYS = _UP + _DOWN + _LEFT + _RIGHT + _ACTIVATE  # keys the open menu swall
 
 
 def quit_confirm_verdict(event):
-    """For the Esc quit-confirmation dialog: True = quit (Enter/Y or the Quit
-    button), False = stay (Esc/N or the Stay button), None = ignore this event."""
+    """For the Esc quit-confirmation dialog: True = quit (Esc again, Enter/Y or the
+    Quit button), False = stay (N or the Stay button), None = ignore this event."""
     if event.type == pygame.KEYDOWN:
-        if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_y):
+        if event.key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_y):
             return True
-        if event.key in (pygame.K_ESCAPE, pygame.K_n):
+        if event.key == pygame.K_n:
             return False
     elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
         from game import ui

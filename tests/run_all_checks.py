@@ -36,6 +36,8 @@ def main():
     # settings.json (a saved fullscreen/fps cap/mute must not change test behaviour)
     import tempfile
     env = dict(os.environ)
+    env.setdefault("RR_EVENT_ROTATION", "off")
+    env.setdefault("RR_NO_MUSIC", "1")  # no background music rendering/playback during checks  # a scheduled live event must never make a baseline flaky
     env["RR_SETTINGS_PATH"] = os.path.join(tempfile.mkdtemp(prefix="rr_settings_"), "settings.json")
 
     results = []

@@ -185,6 +185,24 @@ def buy_starting_xp_boost(name: str):
     return True, "Future characters will start with bonus XP!"
 
 
+def echo_shop_rows(unlocks):
+    """[(label, buy_key or None), ...] for the Echo Keeper's shop - shared by
+    main.py (single-player) and coop_client.py so both show identical rows;
+    buy_key is "backpack_slot" / "starting_xp", None = already owned/maxed."""
+    slots = int(unlocks.get("backpack_slots", 0))
+    rows = []
+    if slots < MAX_BACKPACK_BONUS_SLOTS:
+        cost = BACKPACK_SLOT_COST + slots * BACKPACK_SLOT_COST_STEP
+        rows.append((f"+1 Backpack Slot - {cost} Echoes ({slots}/{MAX_BACKPACK_BONUS_SLOTS})", "backpack_slot"))
+    else:
+        rows.append(("Backpack Slots: MAXED", None))
+    if unlocks.get("starting_xp_boost"):
+        rows.append(("Starting XP Boost: OWNED", None))
+    else:
+        rows.append((f"Starting XP Boost - {STARTING_XP_COST} Echoes (future characters)", "starting_xp"))
+    return rows
+
+
 def apply_unlocks(player, name: str) -> None:
     """Applies this account's permanent unlocks to a FRESH character only -
     call exactly once, right after constructing a brand-new (never-saved)

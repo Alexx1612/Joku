@@ -9,7 +9,17 @@ import random
 import pygame
 from game import constants as C
 
-REALM_W, REALM_H = 900, 900  # an immense continent - 1.27x the tile area of the previous
+# Batch 15: the realm grew to 1308x1308 around an UNCHANGED 900x900 continent -
+# the continent is still generated exactly as before (CONTINENT_SIZE), then
+# embedded centred in open ocean, leaving a ~200-tile sea ring for the ten big
+# (~100x100) islands (see stamp_island / RealmSim._stamp_islands). 1308 = 900 +
+# 2*204 so the offset stays a whole number of COARSE (6) cells (the decoration
+# density grid is padded by exactly 34 cells).
+CONTINENT_SIZE = 900
+CONTINENT_OFFSET = 204
+CONTINENT_R = CONTINENT_SIZE / 2 - 3   # the continent's max radius (tiles) - lair difficulty scales on this
+REALM_W, REALM_H = CONTINENT_SIZE + 2 * CONTINENT_OFFSET, CONTINENT_SIZE + 2 * CONTINENT_OFFSET
+# (history) the continent alone was 900x900, an immense continent - 1.27x the tile area of the previous
 # 800x800 size (and far bigger still vs. v0.1's original small island).
 # Benchmarked before picking this number (see the v0.2 changelog entry in README.md):
 # make_realm() scales roughly with tile area, so 1200x1200 (~4.4s) and 1600x1600
@@ -20,7 +30,7 @@ REALM_W, REALM_H = 900, 900  # an immense continent - 1.27x the tile area of the
 # ~2.6s for a full RealmSim() (map + all lairs populated) on this dev machine, which
 # already has real background load - the margin matters given a corporate laptop can
 # get slower under things like AV scans, not just a cleaner benchmark box.
-NEXUS_W, NEXUS_H = 64, 50    # a spectacular, huge Nexus hub - grand fountain plaza + statues
+NEXUS_W, NEXUS_H = 96, 72    # Batch 15: enlarged - fountain plaza + tavern, park, dockside, arena (game/areas.py)
 BAZAAR_W, BAZAAR_H = 32, 22  # a bigger marketplace, RotMG's Bazaar-with-a-fountain-plaza scale
 BONUS_W, BONUS_H = 60, 60  # a real multi-room dungeon, not one small arena
 VAULT_ROOM_W, VAULT_ROOM_H = 20, 16  # a small, fixed, hand-authored room - a vault should
@@ -174,6 +184,18 @@ for (_biome_name, _kind), _tile_id in BIOME_PROP_TILE.items():
 TILE_TO_BIOME_NAME = dict(GROUND_TO_BIOME_NAME)
 for (_biome_name, _kind), _tile_id in BIOME_PROP_TILE.items():
     TILE_TO_BIOME_NAME[_tile_id] = _biome_name
+
+# a prop tile resolved back to its biome's own GROUND tile - lookups keyed by ground
+# tile (lair rosters, landmark/building biome) must not lose the biome just because
+# a decoration prop happens to sit on the sampled tile
+PROP_GROUND_TILE = {}
+for (_biome_name, _kind), _tile_id in BIOME_PROP_TILE.items():
+    PROP_GROUND_TILE[_tile_id] = next(g for g, name in GROUND_TO_BIOME_NAME.items() if name == _biome_name)
+
+
+def biome_ground_of(tile_id):
+    return PROP_GROUND_TILE.get(tile_id, tile_id)
+
 
 WEATHER_FOR_BIOME = {
     "forest": "rain", "swamp": "rain", "jungle": "rain",
@@ -361,6 +383,78 @@ SOLID.update(BUILDING_WALL_TILE.values())
 # natural stone, regardless of what's next to them.
 BUILDING_WALL_TILE_IDS = set(BUILDING_WALL_TILE.values())
 
+# ------------------------------------------- Batch 15: big props & areas --
+# Area floor tiles for the big named areas (stamp_area) - walkable, not a biome
+AREA_COBBLE, AREA_PLANK, AREA_FROZEN = 1600, 1601, 1602
+TILE_COLORS.update({AREA_COBBLE: (132, 124, 112), AREA_PLANK: (128, 92, 58), AREA_FROZEN: (178, 214, 232)})
+SPEED_MULT[AREA_FROZEN] = 0.9
+
+# Multi-tile props (game/big_props.py): one ANCHOR tile id per (base ground, kind) -
+# the base ground is drawn underneath, the sprite on top - plus one solid BLOCKER id
+# per base ground for the rest of a footprint. Registered for every base ground
+# up front (deterministic ids, so co-op clients decode the same grid).
+from game import big_props as _big_props  # noqa: E402  (pure data + lazy sprite painting)
+BIG_PROP_BASES = sorted(set(GROUND_TO_BIOME_NAME) | {GRASS, GRASS2, DIRT, NEXUS_FLOOR,
+                                                     AREA_COBBLE, AREA_PLANK, AREA_FROZEN})
+BIG_PROP_TILE = {}          # (base_ground, kind) -> anchor tile id
+BIG_PROP_BASE_GROUND = {}   # anchor/blocker id -> base ground tile
+BIG_PROP_KIND_BY_ID = {}    # anchor id -> kind
+BIG_BLOCKER_TILE = {}       # base_ground -> blocker id
+_next_big_id = 1700
+for _base in BIG_PROP_BASES:
+    for _kind in _big_props.KINDS:
+        BIG_PROP_TILE[(_base, _kind)] = _next_big_id
+        BIG_PROP_BASE_GROUND[_next_big_id] = _base
+        BIG_PROP_KIND_BY_ID[_next_big_id] = _kind
+        _bc = TILE_COLORS.get(_base, (90, 90, 90))
+        TILE_COLORS[_next_big_id] = (tuple(max(0, c - 45) for c in _bc)
+                                     if _kind in _big_props.TREE_KINDS else tuple(max(0, c - 25) for c in _bc))
+        if _big_props.KINDS[_kind][4]:
+            SOLID.add(_next_big_id)
+        _next_big_id += 1
+_next_big_id = max(_next_big_id, 2300)
+for _base in BIG_PROP_BASES:
+    BIG_BLOCKER_TILE[_base] = _next_big_id
+    BIG_PROP_BASE_GROUND[_next_big_id] = _base
+    TILE_COLORS[_next_big_id] = tuple(max(0, c - 25) for c in TILE_COLORS.get(_base, (90, 90, 90)))
+    SOLID.add(_next_big_id)
+    _next_big_id += 1
+BIG_PROP_ANCHOR_IDS = set(BIG_PROP_KIND_BY_ID)
+BIG_BLOCKER_IDS = set(BIG_BLOCKER_TILE.values())
+BIG_PROP_ALL_IDS = BIG_PROP_ANCHOR_IDS | BIG_BLOCKER_IDS
+BIG_TREE_IDS = {tid for tid, k in BIG_PROP_KIND_BY_ID.items() if k in _big_props.TREE_KINDS}
+for _bid, _bg in BIG_PROP_BASE_GROUND.items():   # biome lookups keep working on prop tiles
+    if _bg in GROUND_TO_BIOME_NAME:
+        TILE_TO_BIOME_NAME[_bid] = GROUND_TO_BIOME_NAME[_bg]
+        PROP_GROUND_TILE[_bid] = _bg
+
+
+def can_place_big_prop(grid, anchor, kind, allowed_ground):
+    """True if every footprint tile is in-bounds and one of `allowed_ground`."""
+    h, w = len(grid), len(grid[0])
+    for (x, y) in _big_props.footprint_tiles(kind, anchor):
+        if not (1 <= x < w - 1 and 1 <= y < h - 1) or grid[y][x] not in allowed_ground:
+            return False
+    return True
+
+
+def stamp_big_prop(grid, anchor, kind, base_ground=None):
+    """Writes a big prop (anchor + blockers) onto the grid. base_ground defaults to
+    whatever the anchor tile currently is. Returns False if that ground has no
+    registered variant (nothing written)."""
+    ax, ay = anchor
+    base = grid[ay][ax] if base_ground is None else base_ground
+    base = BIG_PROP_BASE_GROUND.get(base, base)
+    tid = BIG_PROP_TILE.get((base, kind))
+    if tid is None:
+        return False
+    blocker = BIG_BLOCKER_TILE[base]
+    for (x, y) in _big_props.footprint_tiles(kind, anchor):
+        grid[y][x] = blocker
+    grid[ay][ax] = tid
+    return True
+
+
 # ------------------------------------------------------- island zones -----
 # "The Reforging" storyline (see RealmSim._stamp_islands): 10 small
 # standalone island zones stamped as coastal peninsulas jutting out of the
@@ -521,9 +615,31 @@ def stamp_lair_building(grid, center_tile, biome_name):
             on_border = yy in (rect.top - 1, rect.bottom) or xx in (rect.left - 1, rect.right)
             grid[yy][xx] = wall_tile if on_border else floor_tile
 
+    claimed = set()
+    # a real 3-tile doorway in the wall facing the map centre (buildings used to be
+    # sealed on all four sides - the lair's mob was visible inside but unreachable),
+    # with the two tiles outside it forced walkable so the gap can't open onto rock/water
+    dx, dy = grid_w / 2 - rect.centerx, grid_h / 2 - rect.centery
+    if abs(dx) >= abs(dy):
+        wx = rect.right if dx > 0 else rect.left - 1
+        step = 1 if dx > 0 else -1
+        door = [(wx, rect.centery + o) for o in (-1, 0, 1)]
+        outside = [(wx + step * k, y) for (_x, y) in door for k in (1, 2)]
+        inside = [(wx - step, y) for (_x, y) in door]
+    else:
+        wy = rect.bottom if dy > 0 else rect.top - 1
+        step = 1 if dy > 0 else -1
+        door = [(rect.centerx + o, wy) for o in (-1, 0, 1)]
+        outside = [(x, wy + step * k) for (x, _y) in door for k in (1, 2)]
+        inside = [(x, wy - step) for (x, _y) in door]
+    for (xx, yy) in door + outside:
+        if 0 <= yy < grid_h and 0 <= xx < grid_w and (
+                (xx, yy) in door or grid[yy][xx] in SOLID or grid[yy][xx] == WATER):
+            grid[yy][xx] = floor_tile
+    claimed.update(inside)  # keep the entrance clear of props
+
     prop_kinds = BIOME_PROP_KINDS
     prop_weights = _biome_prop_weights(biome_name)
-    claimed = set()
     for _ in range(random.randint(4, 7)):
         px = random.randint(rect.left + 1, rect.right - 2)
         py = random.randint(rect.top + 1, rect.bottom - 2)
@@ -551,57 +667,124 @@ def stamp_lair_building(grid, center_tile, biome_name):
     return rect
 
 
-ISLAND_RADIUS = 7  # tile radius of the circular island patch, before edge jitter
+ISLAND_RADIUS = 52  # Batch 15: ~100x100-tile islands (max coast radius before its lobes)
+ISLAND_PLAZA_RADIUS = 10   # the landmark plaza / mini-boss arena at the island's core
+ISLAND_BEACH_WIDTH = 5     # sand ring around every island's coast
+ISLAND_CAMP_COUNT = 4      # mob camps per island (become lairs - see RealmSim._stamp_islands)
+# each island's interior is its own mini-biome matching its drink-pun name
+# (index = realm_sim.ISLAND_NAMES index): Emberball -> ashlands, Coral Colada ->
+# jungle, Frostquiri -> ice, Pearlini -> desert, Bonshine -> highlands, Tidricane
+# -> swamp, Thorn-on-the-Rocks -> forest, Driftai -> tundra, Ashioned -> wasteland,
+# Abyssal Rumnal -> cave
+ISLAND_BIOME = ["ashlands", "jungle", "ice", "desert", "highlands",
+                "swamp", "forest", "tundra", "wasteland", "cave"]
 
 
-def stamp_island(grid, anchor_tile, theme):
-    """Carves a small organic circular island patch (see ISLAND_GROUND/
-    ISLAND_PROP_KINDS/ISLAND_LANDMARK_KIND above) directly into an already-
-    generated open-Realm grid, centered on `anchor_tile` - unlike
-    stamp_lair_building's clean walled rect, this converts every tile within
-    a jittered radius (land OR water alike) to the theme's own ground tile,
-    so the result reads as a real coastal landmass jutting into the sea
-    rather than a room. `anchor_tile` should sit just past the mainland's
-    coastline (see RealmSim._stamp_islands' coastline walk) so part of the
-    circle still overlaps existing land - an island is always walkable from
-    the mainland, never a fully isolated unreachable patch, matching how the
-    user wants to be ABLE to walk there (the hub portal is just a shortcut).
-    The edge jitter reuses `_tile_hash` (the same deterministic per-tile
-    pseudo-randomness the texture-variant system uses) rather than `random`,
-    so it never perturbs the gameplay RNG stream, matching this file's own
-    established convention (see _art_rng's docstring above). Returns
-    (stamped_rect, center_tile) - the caller needs the center tile to place
-    the flare-spawn point and to target the hub portal at it."""
+def island_coast_radius(idx, ang):
+    """Organic island outline: radius at angle `ang` for island `idx` - a few
+    low harmonics with per-island phases (0.64..1.0 of ISLAND_RADIUS), so every
+    island has its own lobed silhouette instead of a circle."""
+    h = _tile_hash(idx * 131 + 7, idx * 17 + 3)
+    p1, p2, p3 = (h % 628) / 100.0, ((h >> 10) % 628) / 100.0, ((h >> 20) % 628) / 100.0
+    wob = 0.5 * math.sin(3 * ang + p1) + 0.3 * math.sin(5 * ang + p2) + 0.2 * math.sin(8 * ang + p3)
+    return ISLAND_RADIUS * (0.82 + 0.18 * wob)
+
+
+def stamp_island(grid, anchor_tile, theme, idx=0, rng=None):
+    """Carves one big (~100x100) organic island into open ocean, centred on
+    `anchor_tile`: a sand beach ring, an interior in the island's own mini-biome
+    (ISLAND_BIOME) scattered with that biome's props, and a landmark plaza of the
+    island theme's ground (ISLAND_GROUND) at its core - the mini-boss arena, the
+    home of the 10 curated island props (two rings) and the central landmark.
+    Edge jitter uses _tile_hash, so it never perturbs the gameplay RNG. Returns
+    (rect, center_tile, info) - info["tiles"] is every stamped tile (the caller
+    clears them from the realm's ocean mask) and info["camps"] the mob-camp
+    anchor tiles."""
+    rng = rng or random
     grid_h, grid_w = len(grid), len(grid[0])
     ax, ay = anchor_tile
     ground_tile = ISLAND_GROUND[theme]
     prop_kinds = ISLAND_PROP_KINDS[theme]
+    biome = ISLAND_BIOME[idx % len(ISLAND_BIOME)]
+    inner_tile = next(g for g, name in GROUND_TO_BIOME_NAME.items() if name == biome)
+    beach_tile = SAND
     claimed = set()
-    for yy in range(ay - ISLAND_RADIUS - 2, ay + ISLAND_RADIUS + 3):
-        for xx in range(ax - ISLAND_RADIUS - 2, ax + ISLAND_RADIUS + 3):
-            if not (0 <= yy < grid_h and 0 <= xx < grid_w):
+    reach = ISLAND_RADIUS + 3
+    for yy in range(ay - reach, ay + reach + 1):
+        if not (0 <= yy < grid_h):
+            continue
+        row = grid[yy]
+        for xx in range(ax - reach, ax + reach + 1):
+            if not (0 <= xx < grid_w):
                 continue
-            dist = math.hypot(xx - ax, yy - ay)
-            jitter = (_tile_hash(xx, yy) % 300) / 100.0 - 1.5  # -1.5..+1.49, stable per-tile
-            if dist <= ISLAND_RADIUS + jitter:
-                grid[yy][xx] = ground_tile
-                claimed.add((xx, yy))
+            dx, dy = xx - ax, yy - ay
+            dist = math.hypot(dx, dy)
+            edge = island_coast_radius(idx, math.atan2(dy, dx)) + (_tile_hash(xx, yy) % 300) / 100.0 - 1.5
+            if dist > edge:
+                continue
+            if dist <= ISLAND_PLAZA_RADIUS + (_tile_hash(yy, xx) % 150) / 100.0:
+                row[xx] = ground_tile
+            elif dist >= edge - ISLAND_BEACH_WIDTH:
+                row[xx] = beach_tile
+            else:
+                row[xx] = inner_tile
+            claimed.add((xx, yy))
 
-    # Exactly one of each of the theme's 10 curated prop kinds (ISLAND_PROP_KINDS
-    # above already lists exactly 10 per theme) - guarantees a real, full-variety
-    # 10-decoration island instead of a random 7-10 subset that could repeat
-    # kinds and skip others.
-    scatter_candidates = [(xx, yy) for (xx, yy) in claimed if math.hypot(xx - ax, yy - ay) > 2]
-    random.shuffle(scatter_candidates)
-    for (px, py), kind in zip(scatter_candidates, prop_kinds):
-        grid[py][px] = ISLAND_PROP_TILE[(theme, kind)]
+    # the interior's own biome decorations: a jittered grid (one candidate per
+    # 4x4 cell), kept where a smooth hash "density" says grove - clusters of
+    # props with clearings between, never on the plaza or the beach
+    weights = _biome_prop_weights(biome)
+    for cy in range(ay - reach, ay + reach + 1, 4):
+        for cx in range(ax - reach, ax + reach + 1, 4):
+            hh = _tile_hash(cx // 12 + idx * 97, cy // 12 - idx * 53)
+            if (hh % 100) < 45:
+                continue  # clearing
+            px, py = cx + rng.randint(0, 3), cy + rng.randint(0, 3)
+            if (px, py) not in claimed or grid[py][px] != inner_tile:
+                continue
+            if rng.random() < 0.55:
+                grid[py][px] = BIOME_PROP_TILE[(biome, rng.choices(BIOME_PROP_KINDS, weights=weights)[0])]
+
+    # Exactly one of each of the theme's 10 curated prop kinds, laid out as a
+    # deliberate composition around the landmark: two staggered rings (inner
+    # ~4 tiles, outer ~7) on the plaza, evenly spaced by angle
+    base = rng.uniform(0, math.tau)
+    used = set()
+    for k, kind in enumerate(prop_kinds):
+        ang = base + k * math.tau / len(prop_kinds)
+        rad = 4.0 if k % 2 == 0 else 7.0
+        spot = None
+        for nudge in (0.0, 0.8, -0.8, 1.6, -1.6):
+            px = int(round(ax + math.cos(ang) * (rad + nudge)))
+            py = int(round(ay + math.sin(ang) * (rad + nudge)))
+            if (px, py) in claimed and (px, py) not in used and (px, py) != (ax, ay):
+                spot = (px, py)
+                break
+        if spot is None:
+            continue
+        used.add(spot)
+        grid[spot[1]][spot[0]] = ISLAND_PROP_TILE[(theme, kind)]
 
     grid[ay][ax] = TALL_PROP_TILE[(theme, ISLAND_LANDMARK_KIND[theme])]
+
+    # mob camps out in the interior, evenly around the island (clear ground)
+    camps = []
+    cbase = rng.uniform(0, math.tau)
+    for k in range(ISLAND_CAMP_COUNT):
+        ang = cbase + k * math.tau / ISLAND_CAMP_COUNT
+        rad = island_coast_radius(idx, ang) * 0.55
+        tx, ty = int(round(ax + math.cos(ang) * rad)), int(round(ay + math.sin(ang) * rad))
+        for yy in range(ty - 2, ty + 3):
+            for xx in range(tx - 2, tx + 3):
+                if (xx, yy) in claimed and grid[yy][xx] != ground_tile:
+                    grid[yy][xx] = inner_tile
+        if (tx, ty) in claimed:
+            camps.append((tx, ty))
 
     xs = [p[0] for p in claimed] or [ax]
     ys = [p[1] for p in claimed] or [ay]
     rect = pygame.Rect(min(xs), min(ys), max(xs) - min(xs) + 1, max(ys) - min(ys) + 1)
-    return rect, (ax, ay)
+    return rect, (ax, ay), {"tiles": claimed, "camps": camps, "biome": biome}
 
 
 def ensure_island_decorations(grid, center_tile, theme):
@@ -620,7 +803,7 @@ def ensure_island_decorations(grid, center_tile, theme):
     prop_ids = {ISLAND_PROP_TILE[(theme, k)]: k for k in ISLAND_PROP_KINDS[theme]}
     found_kinds = set()
     plain_ground_candidates = []
-    r = ISLAND_RADIUS + 3
+    r = ISLAND_PLAZA_RADIUS + 2  # the curated props live on the plaza only
     for yy in range(ay - r, ay + r + 1):
         for xx in range(ax - r, ax + r + 1):
             if not (0 <= yy < grid_h and 0 <= xx < grid_w):
@@ -632,6 +815,9 @@ def ensure_island_decorations(grid, center_tile, theme):
                 plain_ground_candidates.append((xx, yy))
     missing = [k for k in ISLAND_PROP_KINDS[theme] if k not in found_kinds]
     random.shuffle(plain_ground_candidates)
+    # refill on the same ~3-5 tile ring the layout uses, so a refilled prop still
+    # sits in the composition rather than out on the island's edge
+    plain_ground_candidates.sort(key=lambda c: abs(math.hypot(c[0] - ax, c[1] - ay) - 5.5))
     for kind, (px, py) in zip(missing, plain_ground_candidates):
         grid[py][px] = ISLAND_PROP_TILE[(theme, kind)]
 
@@ -861,6 +1047,29 @@ BIOME_VIGNETTE_TEMPLATES = {
 }
 
 
+def clear_blockers(grid, rect, margin=3, floor_tile=None):
+    """Turns solid ROCK outcrop tiles within `margin` of a tile-space rect into
+    walkable DIRT - so a noise outcrop can never wall off a landmark, building
+    door, lair, walkway landing or the arrival plaza."""
+    grid_h, grid_w = len(grid), len(grid[0])
+    floor_tile = DIRT if floor_tile is None else floor_tile
+    for yy in range(max(0, rect.top - margin), min(grid_h, rect.bottom + margin)):
+        row = grid[yy]
+        for xx in range(max(0, rect.left - margin), min(grid_w, rect.right + margin)):
+            t = row[xx]
+            if t == ROCK:
+                row[xx] = floor_tile
+            elif t in BIG_PROP_KIND_BY_ID:   # a big tree/boulder in the way - remove its footprint
+                if rect.collidepoint(xx, yy) and (rect.w > 1 or rect.h > 1):
+                    continue   # a structure's OWN props (e.g. a big area's tents) stay
+                base = BIG_PROP_BASE_GROUND[t]
+                for (fx, fy) in _big_props.footprint_tiles(BIG_PROP_KIND_BY_ID[t], (xx, yy)):
+                    if 0 <= fy < grid_h and 0 <= fx < grid_w and grid[fy][fx] in BIG_PROP_ALL_IDS:
+                        grid[fy][fx] = base
+            elif t in BIG_BLOCKER_IDS and not (rect.collidepoint(xx, yy) and (rect.w > 1 or rect.h > 1)):
+                row[xx] = BIG_PROP_BASE_GROUND[t]
+
+
 def biome_vignette_rect(anchor_tile):
     """Pure geometry (no mutation) - same overlap-check calling convention as
     lair_building_rect()/terrace_rect()/landmark_rect() above."""
@@ -954,6 +1163,42 @@ def _tint(color, delta):
     return tuple(max(0, min(255, c + delta)) for c in color)
 
 
+# Textures that were loaded before any display mode existed (main.py/coop_client.py
+# import this module at startup, BEFORE Game() opens the window): convert_alpha()
+# raises "No video mode has been set" then, which used to silently drop EVERY
+# hand-painted tile/prop PNG back to its flat/procedural fallback in the real game
+# (the tests never saw it - they all call set_mode before importing). They now load
+# unconverted (renders identically, just blits slower) and get converted once by
+# _finalize_textures() on the first TileMap.draw(), when the window exists.
+_UNCONVERTED = []  # [(list_holding_it, index), ...]
+_textures_final = False
+
+
+def _load_png(path):
+    img = pygame.image.load(path)
+    if pygame.display.get_init() and pygame.display.get_surface() is not None:
+        return img.convert_alpha(), True
+    return img, False
+
+
+def _finalize_textures():
+    global _textures_final, _CHEST_SPRITE
+    if _textures_final or pygame.display.get_surface() is None:
+        return
+    for lst, i in _UNCONVERTED:
+        try:
+            lst[i] = lst[i].convert_alpha()
+        except pygame.error:
+            pass
+    _UNCONVERTED.clear()
+    if _CHEST_SPRITE is not None:
+        try:
+            _CHEST_SPRITE = _CHEST_SPRITE.convert_alpha()
+        except pygame.error:
+            pass
+    _textures_final = True
+
+
 def _load_tile_variants(name_prefix, procedural_variants, subdir="tiles"):
     """Hand-painted PNG tile variants (assets/sprites/v0.2/<subdir>/tile_<name>_N.png,
     made with the pixel-mcp tool) load in front of the procedural textures below,
@@ -964,15 +1209,19 @@ def _load_tile_variants(name_prefix, procedural_variants, subdir="tiles"):
     for i, fallback in enumerate(procedural_variants):
         path = os.path.join(_SPRITE_DIR, subdir, f"tile_{name_prefix}_{i}.png")
         surf = None
+        converted = True
         if os.path.isfile(path):
             try:
                 # convert_alpha (not convert) - ground/wall tiles are always fully
                 # opaque so this is visually identical for them, but decorative
                 # props (banners, statues, garden clusters, wells, boards) rely on
                 # a transparent background to blend into the floor tile beneath.
-                surf = pygame.transform.smoothscale(pygame.image.load(path).convert_alpha(), (C.TILE, C.TILE))
+                img, converted = _load_png(path)
+                surf = pygame.transform.smoothscale(img, (C.TILE, C.TILE))
             except Exception:
                 surf = None
+        if not converted or pygame.display.get_surface() is None:
+            _UNCONVERTED.append((out, len(out)))
         out.append(surf if surf is not None else fallback)
     return out
 
@@ -1293,11 +1542,36 @@ _VAULT_RUNE_TEX = _load_tile_variants("vault_rune", [_flat_tex(TILE_COLORS[VAULT
 # Overworld biome decoration props (make_realm()) - 100 tile ids (see
 # BIOME_PROP_TILE above), each with exactly one hand-painted variant, loaded
 # in a loop rather than 100 hand-typed _load_tile_variants(...) lines.
+# Kinds with no painted PNG get procedural art (game/prop_art.py) drawn over the
+# biome's own ground instead of a flat ground-coloured tile - that flat fallback
+# made them invisible (5 of the 27 kinds, e.g. every swamp reed and tundra dead tree).
+from game import prop_art as _prop_art
+_GROUND_TEX_FOR_AREA = {"forest": _GRASS_TEX, "desert": _SAND_TEX, "swamp": _SWAMP_TEX, "tundra": _SNOW_TEX,
+                        "highlands": _STONE_TEX, "ashlands": _ASH_TEX, "jungle": _JUNGLE_TEX,
+                        "wasteland": _WASTELAND_TEX, "ice": _ICE_TEX, "cave": _CAVE_TEX,
+                        "island_shard": _ASH_TEX, "island_choir": _SAND_TEX}
+
+
+def _prop_fallback(area, kind, tile_id):
+    ground = _GROUND_TEX_FOR_AREA.get(area)
+    painted = _prop_art.paint_prop(kind, ground[0] if ground else None, C.TILE)
+    return painted if painted is not None else _flat_tex(TILE_COLORS[tile_id])
+
+
 _BIOME_PROP_TEX = {}
 for (_bp_biome, _bp_kind), _bp_id in BIOME_PROP_TILE.items():
     _BIOME_PROP_TEX[_bp_id] = _load_tile_variants(
-        f"biome_{_bp_biome}_{_bp_kind}", [_flat_tex(TILE_COLORS[_bp_id])],
+        f"biome_{_bp_biome}_{_bp_kind}", [_prop_fallback(_bp_biome, _bp_kind, _bp_id)],
         subdir=f"decorations/biomes/{_bp_biome}")
+    # painted props have a transparent background now (their baked ground square
+    # showed as a visible tile against the real ground) - composite each over its
+    # biome's own ground tile, so the prop tile still fully replaces a ground tile
+    _bp_ground = _GROUND_TEX_FOR_AREA.get(_bp_biome)
+    if _bp_ground:
+        for _i, _t in enumerate(_BIOME_PROP_TEX[_bp_id]):
+            _c = _bp_ground[0].copy()
+            _c.blit(_t, (0, 0))
+            _BIOME_PROP_TEX[_bp_id][_i] = _c
 
 # Dungeon-theme decoration props (make_bonus_room()) - 77 tile ids (see
 # DUNGEON_PROP_TILE above), same one-hand-painted-variant-per-id pattern.
@@ -1312,7 +1586,7 @@ for (_dp_theme, _dp_kind), _dp_id in DUNGEON_PROP_TILE.items():
 _ISLAND_PROP_TEX = {}
 for (_isl_biome, _isl_kind), _isl_tid in ISLAND_PROP_TILE.items():
     _ISLAND_PROP_TEX[_isl_tid] = _load_tile_variants(
-        f"island_{_isl_biome}_{_isl_kind}", [_flat_tex(TILE_COLORS[_isl_tid])],
+        f"island_{_isl_biome}_{_isl_kind}", [_prop_fallback(_isl_biome, _isl_kind, _isl_tid)],
         subdir=f"decorations/islands/{_isl_biome}")
 
 # Walkway plank tiles (WALKWAY_PLANK_TILE above) - 10 tile ids, one per
@@ -1356,7 +1630,7 @@ def _load_single(path_rel, size):
     if not os.path.isfile(path):
         return None
     try:
-        return pygame.transform.smoothscale(pygame.image.load(path).convert_alpha(), size)
+        return pygame.transform.smoothscale(_load_png(path)[0], size)  # _finalize_textures converts it
     except Exception:
         return None
 
@@ -1385,25 +1659,99 @@ _TEX_BY_TILE.update(_WALKWAY_PLANK_TEX)
 _TEX_BY_TILE.update({BUILDING_WALL_TILE[_b]: _tex for _b, _tex in _BUILDING_WALL_TEX.items()})
 
 
+def _make_cobble_tex(seed):
+    import random as _r
+    rr = _r.Random(seed)
+    surf = pygame.Surface((C.TILE, C.TILE))
+    surf.fill((96, 90, 82))
+    for gy in range(0, C.TILE, 8):
+        off = 4 if (gy // 8) % 2 else 0
+        for gx in range(-off, C.TILE, 8):
+            g = rr.randint(118, 146)
+            pygame.draw.rect(surf, (g, g - 6, g - 14), (gx + 1, gy + 1, 7, 7), border_radius=2)
+            pygame.draw.line(surf, (g + 22, g + 18, g + 10), (gx + 2, gy + 2), (gx + 6, gy + 2))
+    return surf
+
+
+def _make_plank_tex(seed):
+    import random as _r
+    rr = _r.Random(seed)
+    surf = pygame.Surface((C.TILE, C.TILE))
+    for i in range(4):
+        b = rr.randint(-12, 12)
+        pygame.draw.rect(surf, (128 + b, 92 + b, 58 + b), (0, i * 8, C.TILE, 8))
+        pygame.draw.line(surf, (82, 58, 36), (0, i * 8 + 7), (C.TILE, i * 8 + 7))
+        pygame.draw.line(surf, (82, 58, 36), (rr.randint(4, 28), i * 8), (rr.randint(4, 28), i * 8 + 7))
+    return surf
+
+
+def _make_frozen_tex(seed):
+    import random as _r
+    rr = _r.Random(seed)
+    surf = pygame.Surface((C.TILE, C.TILE))
+    surf.fill((172, 210, 230))
+    for _ in range(3):
+        x0, y0 = rr.randint(0, 31), rr.randint(0, 31)
+        pygame.draw.line(surf, (228, 244, 252), (x0, y0), (x0 + rr.randint(-10, 10), y0 + rr.randint(-10, 10)))
+    pygame.draw.line(surf, (140, 186, 212), (rr.randint(0, 31), 0), (rr.randint(0, 31), 31))
+    return surf
+
+
+_TEX_BY_TILE[AREA_COBBLE] = [_make_cobble_tex(i) for i in range(4)]
+_TEX_BY_TILE[AREA_PLANK] = [_make_plank_tex(i) for i in range(3)]
+_TEX_BY_TILE[AREA_FROZEN] = [_make_frozen_tex(i) for i in range(4)]
+
+
 def _tile_hash(tx, ty):
     n = (tx * 374761393 + ty * 668265263) & 0xffffffff
     n = (n ^ (n >> 13)) * 1274126177 & 0xffffffff
     return n ^ (n >> 16)
 
 
-def coastline_radius(angle):
-    """The Realm's own organic coastline shape at a given angle from map
-    center (a sum of a few sine terms at different angle-frequencies, same
-    "cheap coherent-ish noise" trick as _warp below) - module-level (not a
-    make_realm()-local closure like before) specifically so RealmSim's
-    island-placement code can call the SAME formula make_realm() actually
-    used to carve the coastline, instead of duplicating or guessing at it.
-    make_realm() itself now just aliases its local `island_radius` name to
-    this function - the returned values are bit-for-bit identical to before
-    this was extracted, since max_r here is computed from the same
-    REALM_W/REALM_H module constants make_realm() already uses for its own
-    local max_r."""
-    max_r = min(REALM_W, REALM_H) / 2 - 3
+# ------------------------------------------------------------------ realm terrain --
+# Realm terrain generator (2026-09-25 rewrite). The old generator gave every biome
+# its own sum of a few very long plane waves (480-1570-tile wavelengths on a
+# 900-tile map) and took the argmax: across one region those fields are ~linear,
+# and the argmax of near-linear functions is a set of convex polygons - the
+# "diamonds" players kept seeing - inside a fixed 4-sine star coastline and a
+# near-perfect inner-tier circle. Rebuilt from documented techniques instead:
+#   * value-noise fBm (octaves: frequency x2, amplitude x0.5) on a hashed random
+#     lattice, so it is not periodic like a handful of sines
+#     (redblobgames.com/maps/terrain-from-noise, .../articles/noise/introduction.html)
+#   * two-level domain warping, f(p + A*fbm(p + A*fbm(p))) (iquilezles.org/articles/warp)
+#   * elevation = noise blended with a radial "island" falloff; the coastline is a
+#     sea-level contour of it, so the coast is organic by construction (Red Blob,
+#     "islands")
+#   * outer/inner tier = an elevation contour (not a circle); biome inside a tier =
+#     a Whittaker-style temperature x moisture lookup, thresholds taken as area
+#     QUANTILES so all 10 biomes appear on every seed with a controlled share
+#     (en.wikipedia.org/wiki/Biome, Whittaker diagram; Red Blob "biomes")
+#   * rivers: priority-flood depression filling (Barnes et al., arXiv:1511.04463),
+#     then downhill flow accumulation - cells with enough upstream area become
+#     rivers, deep filled depressions become lakes, and moisture is boosted near
+#     fresh water (Amit Patel, "Polygonal Map Generation"; redblobgames mapgen4)
+# Everything is computed on a coarse grid (one sample per COARSE tiles) and
+# bilinearly upsampled per tile, which keeps the pure-Python cost inside the
+# ~3s realm-creation budget.
+
+COARSE = 6                # tiles per coarse sample
+LAND_FRACTION = 0.47      # share of the map that is land - the sea level is picked
+# per seed as the matching elevation quantile, so every continent is about the
+# same size (a fixed sea level swung land from 36% to 51% of the map by seed)
+INNER_TIER_SHARE = 0.40   # share of land that is inner-tier (Godlands-style) biomes
+RIVER_FLOW_CELLS = 240    # upstream coarse cells (rain-weighted) needed to become a river
+LAKE_DEPTH = 0.05         # filled-depression depth that becomes a lake
+
+# Realm side info for callers (RealmSim) that need more than the tile grid:
+# "coast" (per-angle coastline radius table), "ocean" (bytearray, 1 = ocean-
+# connected water tile) and the coarse fields (for tests). Replaced on every
+# make_realm() - RealmSim keeps its own reference right after generating.
+LAST_REALM_INFO = {}
+COAST_BINS = 720
+
+
+def _legacy_coastline_radius(angle):
+    max_r = CONTINENT_R
     r = max_r * 0.78
     r += max_r * 0.13 * math.sin(angle * 3 + 1.3)
     r += max_r * 0.08 * math.sin(angle * 5 + 0.7)
@@ -1412,327 +1760,729 @@ def coastline_radius(angle):
     return max(max_r * 0.4, r)
 
 
+def coastline_radius(angle, info=None):
+    """Distance (in tiles) from map center to the real generated coastline at
+    `angle` - read from the per-angle coast table make_realm() records (see
+    LAST_REALM_INFO), linearly interpolated between bins. Before any realm has
+    been generated it falls back to the old smooth formula."""
+    info = info if info is not None else LAST_REALM_INFO
+    table = info.get("coast") if info else None
+    if not table:
+        return _legacy_coastline_radius(angle)
+    f = (angle % math.tau) / math.tau * COAST_BINS
+    i = int(f) % COAST_BINS
+    t = f - int(f)
+    return table[i] + (table[(i + 1) % COAST_BINS] - table[i]) * t
+
+
+def is_ocean(info, tx, ty):
+    """True if tile (tx, ty) is ocean-connected water in the realm `info`
+    describes - rivers, lakes and ponds are fresh water, not ocean."""
+    ocean = info.get("ocean") if info else None
+    if ocean is None:
+        return False
+    w = info["w"]
+    if not (0 <= tx < w and 0 <= ty < info["h"]):
+        return True
+    return ocean[ty * w + tx] == 1
+
+
+def _fbm_sampler(rng, octaves, base_freq, extent):
+    """f(x, y) -> ~[0, 1] value-noise fBm over coarse-cell coordinates in
+    [-40, extent + 40) (the margin is for domain warping).
+
+    Each octave samples its lattice ROTATED by its own random angle about the
+    map centre: plain value noise has square lattice cells, and with every
+    octave aligned to the same axes those cells showed through as a
+    rounded-square coastline and long straight biome edges."""
+    lats = []
+    c = extent / 2.0
+    half = (extent / 2.0 + 40) * 1.4143 + 2  # rotated domain's reach from the centre
+    freq, amp, total_amp = base_freq, 1.0, 0.0
+    for _ in range(octaves):
+        n = int(2 * half * freq) + 4
+        ang = rng.uniform(0, math.tau)
+        lats.append(([[rng.random() for _ in range(n)] for _ in range(n)], freq, amp,
+                     rng.uniform(0, 1), math.cos(ang), math.sin(ang)))
+        total_amp += amp
+        freq *= 2.0
+        amp *= 0.5
+    inv = 1.0 / total_amp
+
+    def f(x, y):
+        total = 0.0
+        dx, dy = x - c, y - c
+        for lat, fr, a, off, ca, sa in lats:
+            u = (dx * ca - dy * sa + half) * fr + off
+            v = (dx * sa + dy * ca + half) * fr + off
+            iu, iv = int(u), int(v)
+            tu, tv = u - iu, v - iv
+            tu = tu * tu * (3 - 2 * tu)
+            tv = tv * tv * (3 - 2 * tv)
+            r0, r1 = lat[iv], lat[iv + 1]
+            a0 = r0[iu] + (r0[iu + 1] - r0[iu]) * tu
+            a1 = r1[iu] + (r1[iu + 1] - r1[iu]) * tu
+            total += a * (a0 + (a1 - a0) * tv)
+        return total * inv
+    return f
+
+
+def _quantile(sorted_vals, p):
+    if not sorted_vals:
+        return 0.0
+    return sorted_vals[min(len(sorted_vals) - 1, max(0, int(p * (len(sorted_vals) - 1))))]
+
+
+_NBRS8 = ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1))
+
+
+def _realm_fields(w, h, rng):
+    """Coarse-grid elevation / temperature / moisture, plus rivers and lakes."""
+    import heapq
+    cw, ch = w // COARSE + 2, h // COARSE + 2
+    extent = max(cw, ch)
+    cxc, cyc = (w / 2) / COARSE, (h / 2) / COARSE
+    max_rc = (min(w, h) / 2 - 3) / COARSE
+
+    warp1x = _fbm_sampler(rng, 3, 1 / 38, extent)
+    warp1y = _fbm_sampler(rng, 3, 1 / 38, extent)
+    warp2x = _fbm_sampler(rng, 3, 1 / 30, extent)
+    warp2y = _fbm_sampler(rng, 3, 1 / 30, extent)
+    elev_n = _fbm_sampler(rng, 5, 1 / 34, extent)
+    temp_n = _fbm_sampler(rng, 3, 1 / 46, extent)
+    moist_n = _fbm_sampler(rng, 4, 1 / 26, extent)
+    A1, A2 = 9.0, 14.0   # warp strength in coarse cells (~55 / ~85 tiles)
+
+    elev = [[0.0] * cw for _ in range(ch)]
+    tier = [[0.0] * cw for _ in range(ch)]
+    temp = [[0.0] * cw for _ in range(ch)]
+    moist = [[0.0] * cw for _ in range(ch)]
+    for j in range(ch):
+        er, tr, mr, kr = elev[j], temp[j], moist[j], tier[j]
+        for i in range(cw):
+            px = i + A1 * (warp1x(i, j) - 0.5)
+            py = j + A1 * (warp1y(i, j) - 0.5)
+            sx = i + A2 * (warp2x(px, py) - 0.5)
+            sy = j + A2 * (warp2y(px, py) - 0.5)
+            # radial falloff measured at the WARPED point, so the coast and the
+            # inner-tier contour bend with the same organic flow as the noise
+            d = math.hypot(sx - cxc, sy - cyc) / max_rc
+            # fBm clusters near 0.5, so stretch its contrast; noise-heavy blend so
+            # the sea-level contour wanders into real bays and peninsulas
+            n = (elev_n(sx, sy) - 0.5) * 1.7 + 0.5
+            e = 0.6 * n + 0.4 * (1.0 - d * d) - 0.10
+            if d > 0.93:
+                e -= (d - 0.93) * 6.0   # always ocean at the map's rim
+            er[i] = e
+            # the tier/peak field: same elevation plus a radial bias, so the
+            # inner (Godlands-style) biomes and the Cave peaks sit toward the
+            # centre while their outline still follows the noise
+            kr[i] = e + 0.45 * (1.0 - d)
+            tr[i] = temp_n(sx + 17, sy - 11)
+            mr[i] = moist_n(sx - 23, sy + 7)
+
+    n_cells = cw * ch
+    flat = [elev[j][i] for j in range(ch) for i in range(cw)]
+    SEA_LEVEL = _quantile(sorted(flat), 1.0 - LAND_FRACTION)
+
+    # --- rivers & lakes: priority-flood from the map border, then flow accumulation
+    filled = [0.0] * n_cells
+    down = [-1] * n_cells
+    visited = bytearray(n_cells)
+    ocean_c = bytearray(n_cells)
+    heap = []
+    for j in range(ch):
+        for i in range(cw):
+            if i in (0, cw - 1) or j in (0, ch - 1):
+                k = j * cw + i
+                visited[k] = 1
+                filled[k] = flat[k]
+                heap.append((flat[k], k))
+    heapq.heapify(heap)
+    order = []
+    while heap:
+        fe, k = heapq.heappop(heap)
+        order.append(k)
+        j, i = divmod(k, cw)
+        # ocean = below sea level AND reached from the border only through ocean
+        if fe < SEA_LEVEL and (down[k] == -1 or ocean_c[down[k]]):
+            ocean_c[k] = 1
+        for di, dj in _NBRS8:
+            ni, nj = i + di, j + dj
+            if 0 <= ni < cw and 0 <= nj < ch:
+                nk = nj * cw + ni
+                if not visited[nk]:
+                    visited[nk] = 1
+                    down[nk] = k
+                    fv = flat[nk]
+                    filled[nk] = fv if fv > fe + 1e-6 else fe + 1e-6
+                    heapq.heappush(heap, (filled[nk], nk))
+    flow = [0.0] * n_cells
+    for k in reversed(order):   # upstream cells pop last, so this visits sources first
+        if ocean_c[k]:
+            continue
+        j, i = divmod(k, cw)
+        flow[k] += 0.5 + moist[j][i]   # wetter cells feed rivers more
+        dk = down[k]
+        if dk >= 0:
+            flow[dk] += flow[k]
+    lake = bytearray(n_cells)
+    for k in range(n_cells):
+        if not ocean_c[k] and filled[k] - flat[k] > LAKE_DEPTH:
+            lake[k] = 1
+    rivers = []   # (k, downstream k, flow)
+    river_c = bytearray(n_cells)
+    for k in range(n_cells):
+        if ocean_c[k] or lake[k] or flow[k] < RIVER_FLOW_CELLS or flat[k] < SEA_LEVEL:
+            continue
+        river_c[k] = 1
+        rivers.append((k, down[k], flow[k]))
+
+    # moisture from fresh water (Patel): a short BFS falloff around rivers/lakes
+    dist = [99] * n_cells
+    frontier = [k for k in range(n_cells) if river_c[k] or lake[k]]
+    for k in frontier:
+        dist[k] = 0
+    step = 0
+    while frontier and step < 6:
+        step += 1
+        nxt = []
+        for k in frontier:
+            j, i = divmod(k, cw)
+            for di, dj in _NBRS8[:4]:
+                ni, nj = i + di, j + dj
+                if 0 <= ni < cw and 0 <= nj < ch:
+                    nk = nj * cw + ni
+                    if dist[nk] > step:
+                        dist[nk] = step
+                        nxt.append(nk)
+        frontier = nxt
+    for k in range(n_cells):
+        if dist[k] < 99:
+            j, i = divmod(k, cw)
+            moist[j][i] += 0.10 * (1.0 - dist[k] / 7.0)
+
+    dep = [[filled[j * cw + i] - flat[j * cw + i] for i in range(cw)] for j in range(ch)]
+    return dict(sea=SEA_LEVEL, cw=cw, ch=ch, elev=elev, tier=tier, temp=temp, moist=moist, dep=dep, filled=filled,
+                down=down, flow=flow, ocean_c=ocean_c, lake=lake, river_c=river_c, rivers=rivers)
+
+
+def _classify_thresholds(F):
+    """Quantile thresholds (from coarse land samples) so every biome gets a
+    controlled share of land on every seed."""
+    elev, tier, temp, moist, dep = F["elev"], F["tier"], F["temp"], F["moist"], F["dep"]
+    SEA_LEVEL = F["sea"]
+    land = []
+    for j in range(F["ch"]):
+        for i in range(F["cw"]):
+            if elev[j][i] >= SEA_LEVEL and dep[j][i] <= LAKE_DEPTH:
+                land.append((tier[j][i], temp[j][i], moist[j][i]))
+    land.sort()
+    inner_thr = _quantile([v[0] for v in land], 1.0 - INNER_TIER_SHARE)
+    outer = [v for v in land if v[0] < inner_thr]
+    inner = [v for v in land if v[0] >= inner_thr]
+    T = {"inner": inner_thr}
+    # outer tier: Tundra = coldest 24%; of the rest, Desert = driest 33%,
+    # Swamp = wettest 30%, Forest = the rest
+    T["tundra"] = _quantile(sorted(v[1] for v in outer), 0.24)
+    rest = [v for v in outer if v[1] >= T["tundra"]]
+    om = sorted(v[2] for v in rest)
+    T["desert"] = _quantile(om, 0.33)
+    T["swamp"] = _quantile(om, 0.70)
+    # inner tier: Cave = highest 16% (the central peaks); Ice = coldest 17% of the
+    # rest; the remainder splits into four temperature x moisture quadrants
+    T["cave"] = _quantile(sorted(v[0] for v in inner), 0.84)
+    rest = [v for v in inner if v[0] < T["cave"]]
+    T["ice"] = _quantile(sorted(v[1] for v in rest), 0.17)
+    rest = [v for v in rest if v[1] >= T["ice"]]
+    T["hot"] = _quantile(sorted(v[1] for v in rest), 0.5)
+    # moisture median taken separately inside the hot and the cool half, so the
+    # four quadrants stay ~equal even where temperature and moisture correlate
+    T["wet_hot"] = _quantile(sorted(v[2] for v in rest if v[1] >= T["hot"]), 0.5)
+    T["wet_cool"] = _quantile(sorted(v[2] for v in rest if v[1] < T["hot"]), 0.5)
+    return T
+
+
+def _generate_realm_terrain(w, h):
+    """Returns (grid, land, ocean, F, T): biome ground tiles on land, WATER
+    for ocean/lakes/rivers."""
+    rng = random.Random(random.getrandbits(32))
+    F = _realm_fields(w, h, rng)
+    T = _classify_thresholds(F)
+    cw = F["cw"]
+    elev, temp, moist, dep, ocean_c = F["elev"], F["temp"], F["moist"], F["dep"], F["ocean_c"]
+    tier = F["tier"]
+
+    # small tile-scale jitter so biome borders get a ragged 1-3 tile ecotone
+    # instead of the bilinear upsample's smooth curve (64x64 random table)
+    jit = [[rng.uniform(-1.0, 1.0) for _ in range(64)] for _ in range(64)]
+    JE, JT, JM = 0.004, 0.006, 0.008
+
+    xi = [x // COARSE for x in range(w)]
+    xt = [(x % COARSE) / COARSE for x in range(w)]
+    xnear = [1 if t >= 0.5 else 0 for t in xt]
+    grid = [[WATER] * w for _ in range(h)]
+    land = [[False] * w for _ in range(h)]
+    ocean = bytearray(w * h)
+    SEA = F["sea"]
+    inner_thr, cave_thr, ice_thr = T["inner"], T["cave"], T["ice"]
+    hot_thr, wet_hot, wet_cool = T["hot"], T["wet_hot"], T["wet_cool"]
+    tundra_thr, desert_thr, swamp_thr = T["tundra"], T["desert"], T["swamp"]
+    G = BIOME_GROUND
+    G_FOREST, G_DESERT, G_TUNDRA, G_SWAMP = G[BIOME_FOREST], G[BIOME_DESERT], G[BIOME_TUNDRA], G[BIOME_SWAMP]
+    G_HIGH, G_ASH, G_JUNGLE = G[BIOME_HIGHLANDS], G[BIOME_ASHLANDS], G[BIOME_JUNGLE]
+    G_WASTE, G_ICE, G_CAVE = G[BIOME_WASTELAND], G[BIOME_ICE], G[BIOME_CAVE]
+
+    for y in range(h):
+        j = y // COARSE
+        ty = (y % COARSE) / COARSE
+        e0, e1 = elev[j], elev[j + 1]
+        t0, t1 = temp[j], temp[j + 1]
+        m0, m1 = moist[j], moist[j + 1]
+        d0, d1 = dep[j], dep[j + 1]
+        k0, k1 = tier[j], tier[j + 1]
+        er = [a + (b - a) * ty for a, b in zip(e0, e1)]
+        kr = [a + (b - a) * ty for a, b in zip(k0, k1)]
+        tr = [a + (b - a) * ty for a, b in zip(t0, t1)]
+        mr = [a + (b - a) * ty for a, b in zip(m0, m1)]
+        dr = [a + (b - a) * ty for a, b in zip(d0, d1)]
+        jrow = jit[y & 63]
+        jrow2 = jit[(y * 5 + 3) & 63]
+        orow = (j + (1 if ty >= 0.5 else 0)) * cw
+        grow, lrow = grid[y], land[y]
+        base = y * w
+        for x in range(w):
+            i = xi[x]
+            t = xt[x]
+            e = er[i] + (er[i + 1] - er[i]) * t
+            if e < SEA:
+                # below sea level: ocean if its coarse cell drains to the open sea,
+                # otherwise an enclosed low spot, which stays a (fresh-water) lake
+                if ocean_c[orow + i + xnear[x]]:
+                    ocean[base + x] = 1
+                continue
+            if dr[i] + (dr[i + 1] - dr[i]) * t > LAKE_DEPTH:
+                continue  # lake
+            e = kr[i] + (kr[i + 1] - kr[i]) * t + jrow[x & 63] * JE
+            tv = tr[i] + (tr[i + 1] - tr[i]) * t + jrow[(x * 7 + 13) & 63] * JT
+            mv = mr[i] + (mr[i + 1] - mr[i]) * t + jrow2[x & 63] * JM
+            if e >= inner_thr:
+                if e >= cave_thr:
+                    g = G_CAVE
+                elif tv < ice_thr:
+                    g = G_ICE
+                elif tv >= hot_thr:
+                    g = G_JUNGLE if mv >= wet_hot else G_ASH
+                else:
+                    g = G_HIGH if mv >= wet_cool else G_WASTE
+            elif tv < tundra_thr:
+                g = G_TUNDRA
+            elif mv < desert_thr:
+                g = G_DESERT
+            elif mv > swamp_thr:
+                g = G_SWAMP
+            else:
+                g = G_FOREST
+            grow[x] = g
+            lrow[x] = True
+
+    # rivers: each river cell draws a meandering segment to its downstream cell,
+    # widening with upstream flow; only ever carves land (never touches ocean)
+    for k, dk, fl in F["rivers"]:
+        if dk < 0:
+            continue
+        j0, i0 = divmod(k, cw)
+        j1, i1 = divmod(dk, cw)
+        # per-cell jitter so the river doesn't read as an 8-direction zigzag
+        h0, h1 = _tile_hash(i0, j0), _tile_hash(i1, j1)
+        x0 = i0 * COARSE + (h0 % 5) - 2
+        y0 = j0 * COARSE + ((h0 >> 8) % 5) - 2
+        x1 = i1 * COARSE + (h1 % 5) - 2
+        y1 = j1 * COARSE + ((h1 >> 8) % 5) - 2
+        radius = 0.7 + min(1.8, math.sqrt(fl / RIVER_FLOW_CELLS) * 0.55)
+        steps = max(1, int(math.hypot(x1 - x0, y1 - y0) * 2))
+        r_int = int(radius + 0.999)
+        r2 = radius * radius
+        for s in range(steps + 1):
+            px = x0 + (x1 - x0) * s / steps
+            py = y0 + (y1 - y0) * s / steps
+            ipx, ipy = int(px), int(py)
+            for yy in range(ipy - r_int, ipy + r_int + 1):
+                if not (0 <= yy < h):
+                    continue
+                row, lr = grid[yy], land[yy]
+                for xx in range(ipx - r_int, ipx + r_int + 1):
+                    if 0 <= xx < w and lr[xx] and (xx - px) ** 2 + (yy - py) ** 2 <= r2:
+                        row[xx] = WATER
+                        lr[xx] = False
+    return grid, land, ocean, F, T
+
+
+def _record_coast(grid, w, h):
+    """Per-angle coastline radius table: march inward from the map rim along
+    COAST_BINS rays until the first non-water tile."""
+    cx, cy = w / 2, h / 2
+    max_r = min(w, h) / 2
+    table = []
+    for b in range(COAST_BINS):
+        ang = b / COAST_BINS * math.tau
+        dx, dy = math.cos(ang), math.sin(ang)
+        r = max_r - 1
+        while r > 0:
+            ix, iy = int(cx + dx * r), int(cy + dy * r)
+            if grid[iy][ix] != WATER:
+                break
+            r -= 1.0
+        table.append(r)
+    return table
+
+
+# ------------------------------------------------------------ realm decoration --
+# Decoration pass (2026-09-25 rewrite, on top of the noise terrain above). The old
+# pass dropped ~275 small seed-and-spread prop discs and ~1400 uniform random
+# radius-2-4 discs of ROCK/DIRT/GRASS2/pond anywhere on land: a polka-dot map, 16k+
+# solid ROCK tiles in random places (incl. against landmark approaches), ponds with
+# no relation to the new hydrology, and 74% of the land with no prop at all.
+# Now, following documented techniques:
+#   * groves/clearings: a low-frequency density fBm per coarse cell, thresholded
+#     per biome by QUANTILE so each biome gets exactly its `cover` share of grove
+#     (Red Blob Games, "Making maps with noise": noise-thresholded tree placement -
+#     https://www.redblobgames.com/maps/terrain-from-noise/);
+#   * blue-noise spacing inside groves: dart throwing against a spatial hash with a
+#     per-biome minimum distance, tighter in a grove's core than at its edge
+#     (Bridson, "Fast Poisson Disk Sampling in Arbitrary Dimensions", 2007 -
+#     https://www.cs.ubc.ca/~rbridson/docs/bridson-siggraph07-poissondisk.pdf);
+#   * kinds cluster: a second small noise picks which kind dominates a patch, big
+#     "core" kinds (trees/boulders/reeds) in grove cores, small "edge" kinds
+#     (flowers/pebbles/tufts) toward grove edges and sparsely across clearings;
+#   * outcrops and ground patches are noise-shaped blobs, not circles, kept off
+#     river banks and beaches; swamp pools only in swamps (rivers/lakes now come
+#     from the terrain's own downhill flow, so random ponds are gone).
+# Prop tiles replace the ground tile 1:1 (one blit either way), so a denser map
+# costs nothing extra to draw.
+DECOR_BIOMES = {
+    #            r: blue-noise spacing in a grove core (tiles); cover: grove share of
+    #            the biome; rock: solid-outcrop share; patch: DIRT/GRASS2 share;
+    #            clear: chance a clearing cell (6x6 tiles) gets one small detail prop
+    "forest":    dict(r=1.7, cover=0.46, rock=0.0, patch=0.035, clear=0.30),
+    "jungle":    dict(r=1.5, cover=0.56, rock=0.0, patch=0.03, clear=0.30),
+    "swamp":     dict(r=2.1, cover=0.42, rock=0.0, patch=0.02, clear=0.25, pools=0.05),
+    "tundra":    dict(r=3.3, cover=0.32, rock=0.012, patch=0.02, clear=0.12),
+    "desert":    dict(r=4.6, cover=0.26, rock=0.018, patch=0.02, clear=0.10),
+    "highlands": dict(r=3.0, cover=0.36, rock=0.03, patch=0.025, clear=0.16),
+    "ashlands":  dict(r=3.5, cover=0.32, rock=0.018, patch=0.025, clear=0.14),
+    "wasteland": dict(r=3.8, cover=0.30, rock=0.018, patch=0.03, clear=0.14),
+    "ice":       dict(r=4.2, cover=0.26, rock=0.022, patch=0.015, clear=0.10),
+    "cave":      dict(r=2.7, cover=0.38, rock=0.028, patch=0.02, clear=0.16),
+}
+# (core kinds, edge kinds) with weights - core = a grove's dense middle
+GROVE_KINDS = {
+    "forest": ({"tree": 7, "bush": 4, "berry_bush": 3, "stump": 1, "fallen_log": 1},
+               {"flowers": 3, "wildflower_patch": 3, "grasstuft": 4, "bush": 1, "mushroom_cluster": 1}),
+    "jungle": ({"tree": 7, "vine": 4, "root_tangle": 3, "berry_bush": 2},
+               {"mushroom_cluster": 3, "vine": 2, "grasstuft": 2, "moss_patch": 2}),
+    "swamp": ({"reed_cluster": 6, "puddle": 3, "moss_patch": 3, "dead_tree": 1},
+              {"water_stain": 3, "mushroom_cluster": 2, "moss_patch": 2, "reed_cluster": 2}),
+    "tundra": ({"dead_tree": 4, "stump": 3, "fallen_log": 3, "rock": 2},
+               {"debris": 3, "pebbles": 2, "rock": 1}),
+    "desert": ({"boulder": 4, "rock": 4, "skull": 1},
+               {"pebbles": 3, "gravel_patch": 3, "cracked_ground": 3, "skull": 1}),
+    "highlands": ({"boulder": 5, "rock": 4},
+                  {"pebbles": 4, "gravel_patch": 3, "cracked_ground": 2, "grasstuft": 1}),
+    "ashlands": ({"dead_tree": 4, "ash_pile": 4, "skull": 2},
+                 {"cracked_ground": 3, "ash_pile": 2, "debris": 2}),
+    "wasteland": ({"dead_tree": 3, "debris": 4, "skull": 3},
+                  {"gravel_patch": 3, "ash_pile": 2, "cracked_ground": 2}),
+    "ice": ({"boulder": 4, "rock": 3, "dead_tree": 1},
+            {"debris": 2, "pebbles": 3, "cracked_ground": 1}),
+    "cave": ({"mushroom_cluster": 5, "root_tangle": 3, "small_pile": 2},
+             {"cobweb": 3, "rune_marking": 1, "mushroom_cluster": 2, "pebbles": 2}),
+}
+# Batch 15 (E5): big multi-tile trees/boulders in grove cores - (chance per grove-core
+# dart, {kind: weight}). Forests/jungles get real canopies; rocky biomes big boulders.
+BIG_GROVE_PROPS = {
+    "forest":    (0.42, {"oak": 5, "pine": 3}),
+    "jungle":    (0.48, {"jungle_giant": 4, "palm": 2}),
+    "swamp":     (0.20, {"dead_big": 2, "mushroom_tree": 2}),
+    "tundra":    (0.34, {"snow_pine": 5, "dead_big": 1}),
+    "desert":    (0.07, {"palm": 3, "dead_big": 1}),
+    "highlands": (0.20, {"pine": 4, "big_boulder": 3}),
+    "ashlands":  (0.15, {"dead_big": 4, "big_boulder": 1}),
+    "wasteland": (0.12, {"dead_big": 3, "big_boulder": 2}),
+    "ice":       (0.18, {"snow_pine": 2, "ice_boulder": 3, "crystal_spire": 2}),
+    "cave":      (0.24, {"mushroom_tree": 3, "crystal_spire": 3, "big_boulder": 1}),
+}
+BIG_TREE_SPACING = 3.3   # tiles between big trunks - groves stay walkable
+OUTCROP_RIM_KINDS = ("rock", "pebbles", "boulder", "gravel_patch")
+WATER_LOVING_KINDS = {"reed_cluster", "puddle", "moss_patch", "water_stain"}
+PATCH_TILE = {"forest": GRASS2, "jungle": GRASS2}  # every other biome uses DIRT
+
+
+def _coarse_sample(g, x, y):
+    """Bilinear read of a coarse node grid (node (i, j) sits at tile (i*COARSE, j*COARSE))."""
+    fx, fy = x / COARSE, y / COARSE
+    i, j = int(fx), int(fy)
+    tx, ty = fx - i, fy - j
+    r0, r1 = g[j], g[j + 1]
+    a = r0[i] + (r0[i + 1] - r0[i]) * tx
+    b = r1[i] + (r1[i + 1] - r1[i]) * tx
+    return a + (b - a) * ty
+
+
+def _decorate_realm(grid, land, ocean, F, rng):
+    """Groves/clearings/outcrops/ground patches - see the section comment above.
+    Returns the density grid + per-biome thresholds (kept in LAST_REALM_INFO so
+    RealmSim can put curated vignettes in clearings)."""
+    h, w = len(grid), len(grid[0])
+    cw, ch = F["cw"], F["ch"]
+    extent = max(cw, ch)
+    dens_n = _fbm_sampler(rng, 3, 1 / 7.0, extent)
+    kind_n = _fbm_sampler(rng, 1, 1 / 2.5, extent)
+    rock_n = _fbm_sampler(rng, 2, 1 / 3.2, extent)
+    patch_n = _fbm_sampler(rng, 1, 1 / 3.5, extent)
+    ground_of = {name: g for g, name in GROUND_TO_BIOME_NAME.items()}
+
+    node_biome = [[None] * cw for _ in range(ch)]
+    per_biome = {b: ([], [], []) for b in DECOR_BIOMES}
+    dens = [[0.0] * cw for _ in range(ch)]
+    kindg = [[0.0] * cw for _ in range(ch)]
+    rockg = [[0.0] * cw for _ in range(ch)]
+    patchg = [[0.0] * cw for _ in range(ch)]
+    for j in range(ch):
+        ty = min(h - 1, j * COARSE)
+        drow, krow, rrow, prow, brow = dens[j], kindg[j], rockg[j], patchg[j], node_biome[j]
+        for i in range(cw):
+            b = GROUND_TO_BIOME_NAME.get(grid[ty][min(w - 1, i * COARSE)])
+            if b is None:
+                continue   # water/other nodes stay 0.0 = "clearing" (keeps shores open)
+            d = drow[i] = dens_n(i, j)
+            brow[i] = b
+            krow[i] = kind_n(i, j)
+            rv = rrow[i] = rock_n(i, j)
+            pv = prow[i] = patch_n(i, j)
+            lists = per_biome[b]
+            lists[0].append(d)
+            lists[1].append(rv)
+            lists[2].append(pv)
+
+    thr, dmax, rock_thr, patch_thr = {}, {}, {}, {}
+    for b, (dl, rl, pl) in per_biome.items():
+        cfg = DECOR_BIOMES[b]
+        dl.sort()
+        rl.sort()
+        pl.sort()
+        thr[b] = _quantile(dl, 1.0 - cfg["cover"]) if dl else 1.0
+        dmax[b] = dl[-1] if dl else 1.0
+        rock_thr[b] = _quantile(rl, 1.0 - cfg["rock"]) if (rl and cfg["rock"] > 0) else 9.0
+        patch_thr[b] = _quantile(pl, 1.0 - cfg["patch"] - cfg.get("pools", 0.0)) if pl else 9.0
+
+    def near_water(x, y, reach):
+        for dx, dy in ((reach, 0), (-reach, 0), (0, reach), (0, -reach), (1, 1), (-1, -1), (1, -1), (-1, 1)):
+            xx, yy = x + dx, y + dy
+            if 0 <= xx < w and 0 <= yy < h and grid[yy][xx] == WATER:
+                return True
+        return False
+
+    def near_ocean(x, y, reach=2):
+        for dx, dy in ((reach, 0), (-reach, 0), (0, reach), (0, -reach)):
+            xx, yy = x + dx, y + dy
+            if not (0 <= xx < w and 0 <= yy < h) or ocean[yy * w + xx]:
+                return True
+        return False
+
+    # 1) noise-shaped solid outcrops (with a rim of loose rock props) and ground patches.
+    #    Judged per TILE by that tile's own biome, so an outcrop crossing a border
+    #    between two rocky biomes carries on instead of being cut along the cell's edge
+    rim = []
+    min_rock_thr = min(rock_thr.values())
+    min_patch_thr = min(patch_thr.values())
+    for j in range(ch - 1):
+        for i in range(cw - 1):
+            if node_biome[j][i] is None and node_biome[j + 1][i + 1] is None:
+                continue
+            corners_r = max(rockg[j][i], rockg[j][i + 1], rockg[j + 1][i], rockg[j + 1][i + 1])
+            corners_p = max(patchg[j][i], patchg[j][i + 1], patchg[j + 1][i], patchg[j + 1][i + 1])
+            do_rock = corners_r > min_rock_thr - 0.03
+            do_patch = corners_p > min_patch_thr
+            if not (do_rock or do_patch):
+                continue
+            for y in range(j * COARSE, min(h - 2, (j + 1) * COARSE)):
+                row = grid[y]
+                for x in range(i * COARSE, min(w - 2, (i + 1) * COARSE)):
+                    b = GROUND_TO_BIOME_NAME.get(row[x])
+                    if b is None:
+                        continue
+                    if do_rock and rock_thr[b] < 9.0:
+                        rv = _coarse_sample(rockg, x, y)
+                        if rv > rock_thr[b]:
+                            if not near_water(x, y, 3) and not near_ocean(x, y, 4):
+                                row[x] = ROCK
+                            continue
+                        if rv > rock_thr[b] - 0.03 and rng.random() < 0.28:
+                            rim.append((x, y, b))
+                            continue
+                    if do_patch:
+                        pv = _coarse_sample(patchg, x, y)
+                        if pv > patch_thr[b] and _coarse_sample(dens, x, y) < thr[b]:
+                            cfg = DECOR_BIOMES[b]
+                            if cfg.get("pools") and pv > patch_thr[b] + (1.0 - patch_thr[b]) * 0.45:
+                                if not near_ocean(x, y, 3):
+                                    row[x] = WATER
+                                    land[y][x] = False
+                            else:
+                                row[x] = PATCH_TILE.get(b, DIRT)
+    for x, y, b in rim:
+        if grid[y][x] == ground_of[b] and not near_water(x, y, 1) and not near_ocean(x, y):
+            grid[y][x] = BIOME_PROP_TILE[(b, rng.choice(OUTCROP_RIM_KINDS))]
+
+    # 2) props: blue-noise darts inside groves, sparse detail across clearings
+    occ = {}
+    placed = 0
+
+    def spaced(x, y, r):
+        cr = int(r / 2) + 1
+        cx, cy = x >> 1, y >> 1
+        r2 = r * r
+        for gy in range(cy - cr, cy + cr + 1):
+            for gx in range(cx - cr, cx + cr + 1):
+                for (px, py) in occ.get((gx, gy), ()):
+                    if (px - x) ** 2 + (py - y) ** 2 < r2:
+                        return False
+        return True
+
+    big_occ = {}
+    big_placed = 0
+
+    def big_spaced(x, y):
+        r2 = BIG_TREE_SPACING * BIG_TREE_SPACING
+        cx, cy = x // 4, y // 4
+        for gy in (cy - 1, cy, cy + 1):
+            for gx in (cx - 1, cx, cx + 1):
+                for (px, py) in big_occ.get((gx, gy), ()):
+                    if (px - x) ** 2 + (py - y) ** 2 < r2:
+                        return False
+        return True
+
+    def pick(table, kval):
+        kinds = list(table)
+        if rng.random() < 0.55:   # the local kind-noise decides - similar kinds clump
+            return kinds[min(len(kinds) - 1, int(kval * 1.6 % 1.0 * len(kinds)))]
+        return rng.choices(kinds, weights=[table[k] for k in kinds])[0]
+
+    for j in range(ch - 1):
+        for i in range(cw - 1):
+            b = node_biome[j][i]
+            if b is None:
+                continue
+            cfg = DECOR_BIOMES[b]
+            core_t, edge_t = GROVE_KINDS[b]
+            g_tile = ground_of[b]
+            t_b, span = thr[b], max(1e-6, dmax[b] - thr[b])
+            corner_max = max(dens[j][i], dens[j][i + 1], dens[j + 1][i], dens[j + 1][i + 1])
+            x0, y0 = i * COARSE, j * COARSE
+            if corner_max < t_b:
+                if rng.random() < cfg["clear"]:
+                    x, y = x0 + rng.randrange(COARSE), y0 + rng.randrange(COARSE)
+                    if (2 <= x < w - 2 and 2 <= y < h - 2 and grid[y][x] == g_tile
+                            and not near_water(x, y, 1) and not near_ocean(x, y)):
+                        grid[y][x] = BIOME_PROP_TILE[(b, pick(edge_t, _coarse_sample(kindg, x, y)))]
+                        placed += 1
+                continue
+            n_cand = int(COARSE * COARSE * 0.9 / (cfg["r"] ** 2)) + 1
+            for _ in range(n_cand):
+                x, y = x0 + rng.randrange(COARSE), y0 + rng.randrange(COARSE)
+                if not (2 <= x < w - 2 and 2 <= y < h - 2) or grid[y][x] != g_tile:
+                    continue
+                d = _coarse_sample(dens, x, y)
+                if d < t_b:
+                    continue
+                m = min(1.0, (d - t_b) / span)
+                r = cfg["r"] * (1.55 - 0.75 * m)   # denser toward a grove's core
+                if not spaced(x, y, r):
+                    continue
+                if near_ocean(x, y):
+                    continue
+                big = BIG_GROVE_PROPS.get(b)
+                if big is not None and m > 0.4 and rng.random() < big[0] and big_spaced(x, y):
+                    bk = rng.choices(list(big[1]), weights=list(big[1].values()))[0]
+                    if (not near_water(x, y, 2) and can_place_big_prop(grid, (x, y), bk, {g_tile})
+                            and stamp_big_prop(grid, (x, y), bk, g_tile)):
+                        occ.setdefault((x >> 1, y >> 1), []).append((x, y))
+                        big_occ.setdefault((x // 4, y // 4), []).append((x, y))
+                        placed += 1
+                        big_placed += 1
+                        continue
+                kind = pick(core_t if m > 0.3 else edge_t, _coarse_sample(kindg, x, y))
+                if kind not in WATER_LOVING_KINDS and near_water(x, y, 1):
+                    continue
+                grid[y][x] = BIOME_PROP_TILE[(b, kind)]
+                occ.setdefault((x >> 1, y >> 1), []).append((x, y))
+                placed += 1
+    return dict(dens=dens, thr=thr, spacing={b: c["r"] for b, c in DECOR_BIOMES.items()},
+                grove_points=occ, placed=placed + len(rim), big_placed=big_placed)
+
+
 def make_realm():
     """
-    One immense continent (water ocean all around, organic coastline via
-    layered sine noise on the radius, not a circle), carved into ten distinct
-    Godlands-style biome regions via a smooth noise-field classification
-    (Whittaker-diagram-style: each biome "wins" wherever its own field is
-    locally highest), not nearest-seed Voronoi - a straight-line
-    nearest-neighbor rule mathematically produces regular polygon (diamond/
-    rhombus) cells when seeds sit at roughly evenly-spaced angles, which is
-    exactly the earlier version of this function did and the shape the
-    biomes visibly showed. Comparing independent smooth fields instead of
-    point distances has no straight bisector lines to produce in the first
-    place, so the boundaries follow the noise texture instead. The four
-    "outer" biomes (Forest/Desert/Tundra/Swamp) are only eligible in the
-    outer radius band; the six "inner" ones (Highlands/Ashlands/Jungle/
-    Wasteland/Ice/Cave) only in the inner band - mirroring RotMG's real
-    beaches-at-the-edge, Godlands-in-the-middle structure, and setting up the
-    distance-from-center difficulty gradient applied in _generate_lairs().
-    Decorated with the usual rock/dirt/pond patches on top for texture
-    variety within each region.
+    One immense continent generated from warped value-noise fields (see the
+    "realm terrain" section comment above for the techniques and their
+    sources): an organic coastline, outer/inner biome tiers that follow an
+    elevation contour (RotMG's beaches-at-the-edge, Godlands-in-the-middle
+    structure - lair difficulty stays radial, see RealmSim._generate_lairs),
+    Whittaker-style biome selection inside each tier, and downhill rivers and
+    lakes. Decorated with clustered props and rock/dirt/pond patches on top.
+    Side info (coast table, ocean mask) is left in LAST_REALM_INFO.
     """
-    w, h = REALM_W, REALM_H
-    cx, cy = w / 2, h / 2
-    max_r = min(w, h) / 2 - 3
+    cw_, ch_ = CONTINENT_SIZE, CONTINENT_SIZE
+    sub, land, sub_ocean, _fields, _thresholds = _generate_realm_terrain(cw_, ch_)
 
-    island_radius = coastline_radius
-
-    # Which radius band a tile falls in decides which 4 (outer) or 6 (inner) biome
-    # types are even eligible there - a smooth, explicit radial rule instead of
-    # emergent seed placement, matching the original's "beaches at the edge,
-    # Godlands in the middle" intent directly. INNER_CUTOFF was tuned (see the
-    # biome-territory histogram check run after this change) to land roughly the
-    # same ~70/30 outer/inner land-area split the old seed-radius-band version
-    # produced. Wobbled by a small slice of _warp's own output (see below) so the
-    # tier boundary itself isn't a perfect circle either.
-    INNER_CUTOFF = 0.5
-
-    # _warp(x, y) is cheap coherent-ish noise from a handful of sine waves at
-    # different frequencies/phases (same trick as island_radius's coastline) -
-    # it warps the (x, y) used for the nearest-seed distance check, turning what
-    # would otherwise be dead-straight Voronoi polygon edges into wavy, natural-
-    # looking biome boundaries. Every term is of the form sin(freq*x + freq*y +
-    # phase), which the angle-sum identity sin(a+b) = sin(a)cos(b) + cos(a)sin(b)
-    # splits into a pure-x factor times a pure-y factor - so instead of calling
-    # math.sin() ~700k times (once per land tile, each with 4 terms) we call it
-    # ~2*(w+h) times up front to fill small per-row/per-column tables, then every
-    # tile's warp is just a handful of table lookups and multiply-adds. This was
-    # the single largest chunk of make_realm()'s runtime by profiling (roughly a
-    # third of total wall-clock at 1200x1200), which matters once the continent
-    # is big enough that generation time becomes a real one-time loading pause.
-    sx1 = [math.sin(x * 0.045) for x in range(w)]
-    cx1 = [math.cos(x * 0.045) for x in range(w)]
-    sy1 = [math.sin(y * 0.02) for y in range(h)]
-    cy1 = [math.cos(y * 0.02) for y in range(h)]
-    sx2 = [math.sin(x * 0.017 + 2.1) for x in range(w)]
-    cx2 = [math.cos(x * 0.017 + 2.1) for x in range(w)]
-    sy2 = [math.sin(y * 0.031) for y in range(h)]
-    cy2 = [math.cos(y * 0.031) for y in range(h)]
-    sx3 = [math.sin(x * 0.008 + 1.7) for x in range(w)]
-    sx4 = [math.sin(x * 0.11 + 4.2) for x in range(w)]
-    cx4 = [math.cos(x * 0.11 + 4.2) for x in range(w)]
-    sy4 = [math.sin(y * 0.09) for y in range(h)]
-    cy4 = [math.cos(y * 0.09) for y in range(h)]
-    syy1 = [math.sin(y * 0.045 + 1.1) for y in range(h)]
-    cyy1 = [math.cos(y * 0.045 + 1.1) for y in range(h)]
-    sxx1 = [math.sin(x * 0.02) for x in range(w)]
-    cxx1 = [math.cos(x * 0.02) for x in range(w)]
-    syy2 = [math.sin(y * 0.017 + 0.4) for y in range(h)]
-    cyy2 = [math.cos(y * 0.017 + 0.4) for y in range(h)]
-    sxx2 = [math.sin(x * 0.031) for x in range(w)]
-    cxx2 = [math.cos(x * 0.031) for x in range(w)]
-    syy3 = [math.sin(y * 0.008 + 3.3) for y in range(h)]
-    syy4 = [math.sin(y * 0.11 + 1.6) for y in range(h)]
-    cyy4 = [math.cos(y * 0.11 + 1.6) for y in range(h)]
-    sxx4 = [math.sin(x * 0.09) for x in range(w)]
-    cxx4 = [math.cos(x * 0.09) for x in range(w)]
-
-    def _warp(x, y):
-        wx = (18 * (sx1[x] * cy1[y] + cx1[x] * sy1[y])
-              + 26 * (sx2[x] * cy2[y] - cx2[x] * sy2[y])
-              + 34 * sx3[x]
-              + 7 * (sx4[x] * cy4[y] + cx4[x] * sy4[y]))
-        wy = (18 * (syy1[y] * cxx1[x] - cyy1[y] * sxx1[x])
-              + 26 * (syy2[y] * cxx2[x] + cyy2[y] * sxx2[x])
-              + 34 * syy3[y]
-              + 7 * (syy4[y] * cxx4[x] - cyy4[y] * sxx4[x]))
-        return wx, wy
-
-    # a bit of per-tile dither noise, independent of the warp above - used to softly
-    # blend the two closest biomes near a boundary instead of a razor-sharp edge,
-    # like a real ecotone rather than a country border on a map
-    def _dither(x, y):
-        return (math.sin(x * 0.31 + y * 0.27) + math.sin(x * 0.53 - y * 0.19 + 1.3)) * 0.25 + 0.5
-
-    # Each biome type gets its own smooth "affinity" field instead of a seed point -
-    # wherever a biome's field is locally the highest among its tier's other fields,
-    # that biome wins. A field is the sum of 3 plane waves (sin(x*fx+y*fy+phase)) at
-    # random, meaningfully different (fx, fy) directions per term - a SINGLE plane
-    # wave has dead-straight parallel level sets (which would just reintroduce the
-    # straight-edge problem in a different orientation), but summing several
-    # non-parallel ones makes the level sets genuinely curve, so there's no straight
-    # bisector line for two competing biomes to share in the first place - unlike
-    # nearest-seed Voronoi, which always has one. Built with the same angle-sum-
-    # identity table trick as _warp above for the same reason: this is evaluated for
-    # several biomes on every land tile, so raw math.sin() calls here would undo the
-    # earlier perf work that keeps make_realm() inside its ~3s budget.
-    AFFINITY_OCTAVES = 5  # was a flat 3 independent-random terms (no octave relationship
-    # between them) - the real fBm/multi-octave technique researched for this rehaul:
-    # each successive octave's frequency DOUBLES and its amplitude HALVES relative to a
-    # single randomized base frequency, so a biome's field is coarse large-scale shape
-    # (low octave, high amplitude) with progressively finer detail layered on top (high
-    # octave, low amplitude) - real terrain-generation practice for "organic, not
-    # regular/lobed" region shapes, confirmed via research, versus the old flat sum of
-    # 3 EQUALLY-weighted, independently-random-frequency terms (which stayed closer to
-    # its predecessor's still-fairly-regular boundaries - "diamond shapes" - since so
-    # few terms of comparable strength rarely cancel into a genuinely organic outline).
-    # Each octave still gets its own independently-randomized DIRECTION/phase (this
-    # codebase's affinity field is a sum of plane waves, not a single coherent noise
-    # function sampled at different scales, so per-octave direction variety is what
-    # actually produces multi-directional, non-parallel level-set curvature - see the
-    # comment above this function for why a single shared direction would fail).
-    def _affinity_tables(is_inner):
-        xa_list, xb_list, yc_list, yd_list = [], [], [], []
-        # base frequency picked the same way as before (still controls overall biome
-        # region SIZE, unrelated to the octave count/detail level above).
-        # DIAGNOSIS (real bug, confirmed by rendering actual biome-classification
-        # screenshots, not guessed): the inner tier's 6 biomes compete for a disk of
-        # radius INNER_CUTOFF*max_r while the outer tier's 4 compete for the much
-        # bigger remaining annulus - inner-tier CELLS end up ~4-5x smaller in area
-        # than outer-tier cells (6 biomes in ~1/4 the land area vs 4 biomes in ~3/4),
-        # so an inner cell only ever samples a small, nearly-linear fraction of the
-        # SAME wavelength range used for outer cells - a plane wave looks like a
-        # straight ramp over a small enough slice of its own cycle, which is exactly
-        # what was still reading as flat/diamond-edged boundaries between inner
-        # biomes even with 5 octaves layered on top (screenshots showed this clearly:
-        # outer-tier lobes curve organically, inner-tier boundaries stayed visibly
-        # more angular/straight-edged). Fix: scale the inner tier's frequency up by
-        # ~2.1x (sqrt of that ~4.5x area ratio, so linear/wavelength scale matches
-        # cell size) so inner biomes get the same relative curvature-per-cell as
-        # outer ones, instead of literally the same absolute wavelength range.
-        freq = random.uniform(0.004, 0.0133) * (2.1 if is_inner else 1.0)
-        amplitude = 1.0
-        for _octave in range(AFFINITY_OCTAVES):
-            theta = random.uniform(0, math.tau)
-            fx, fy = freq * math.cos(theta), freq * math.sin(theta)
-            phase = random.uniform(0, math.tau)
-            xa_list.append([amplitude * math.sin(x * fx + phase) for x in range(w)])
-            xb_list.append([amplitude * math.cos(x * fx + phase) for x in range(w)])
-            yc_list.append([math.cos(y * fy) for y in range(h)])
-            yd_list.append([math.sin(y * fy) for y in range(h)])
-            freq *= 2.0
-            amplitude *= 0.5
-        return xa_list, xb_list, yc_list, yd_list
-
-    _affinity_by_biome = {}
-    for bt in BIOME_TIER_OUTER:
-        _affinity_by_biome[bt] = _affinity_tables(is_inner=False)
-    for bt in BIOME_TIER_INNER:
-        _affinity_by_biome[bt] = _affinity_tables(is_inner=True)
-
-    def _affinity(bt, x, y):
-        xa, xb, yc, yd = _affinity_by_biome[bt]
-        total = 0.0
-        for i in range(AFFINITY_OCTAVES):
-            total += xa[i][x] * yc[i][y] + xb[i][x] * yd[i][y]
-        return total
-
-    TIE_MARGIN = 0.22  # widened from 0.15 (which was itself narrowed from an original 0.5
-    # per an earlier, explicit "biomes feel too combined/salt-and-peppered" complaint) -
-    # this rehaul specifically asked for smoother, less hard-cut region borders, so this
-    # nudges back toward a real blended ecotone band WITHOUT fully reverting to the old
-    # 0.5 that caused that earlier complaint - a deliberate middle ground, not a revert.
-    # Deep inside a region the runner-up's affinity is far behind and this never triggers.
-
-    grid = [[WATER for _ in range(w)] for _ in range(h)]
-    land = [[False] * w for _ in range(h)]
-    # island_radius() always returns a value in [max_r*0.4, max_r*1.08] (the low end
-    # from its own clamp, the high end since its wave amplitudes sum to 0.78+0.13+
-    # 0.08+0.05+0.04=1.08 at most) - so tiles inside the smaller radius are land and
-    # tiles outside the bigger one are water REGARDLESS of angle, without ever calling
-    # island_radius/atan2/hypot for them. This matters a lot once the continent gets
-    # big: profiling showed island_radius/_warp's trig calls dominating make_realm()'s
-    # runtime, and skipping the coastline check entirely for the guaranteed-land core
-    # and guaranteed-water corners (together a meaningful fraction of every tile) cuts
-    # real wall-clock time without changing a single output tile.
-    guaranteed_land_r = max_r * 0.4
-    guaranteed_water_r = max_r * 1.08
-    for y in range(h):
-        for x in range(w):
-            dx, dy = x - cx, y - cy
-            dist = math.hypot(dx, dy)
-            if dist > guaranteed_water_r:
-                continue
-            if dist > guaranteed_land_r and dist > island_radius(math.atan2(dy, dx)):
-                continue
-            wx, wy = _warp(x, y)
-            # the affinity tables are indexed by integer tile coordinate, so the
-            # warped sample point needs clamping into range (unlike the old
-            # distance-based check, which was happy with an out-of-grid float) -
-            # only matters within a few dozen tiles of the coastline/map edge,
-            # where it just mildly steadies the sampled field rather than
-            # distorting anything that reads as "the middle of a biome"
-            xi = max(0, min(w - 1, int(x + wx)))
-            yi = max(0, min(h - 1, int(y + wy)))
-
-            dist_frac = dist / max_r + wx * 0.001  # small wobble so the tier
-            # boundary (see INNER_CUTOFF) isn't a perfect circle either
-            tier = BIOME_TIER_INNER if dist_frac < INNER_CUTOFF else BIOME_TIER_OUTER
-
-            best_bt, best_v = tier[0], -float("inf")
-            second_bt, second_v = tier[0], -float("inf")
-            for bt in tier:
-                v = _affinity(bt, xi, yi)
-                if v > best_v:
-                    second_bt, second_v = best_bt, best_v
-                    best_v, best_bt = v, bt
-                elif v > second_v:
-                    second_v, second_bt = v, bt
-            # only near-tied boundaries get dithered - deep inside a region the
-            # gap to the runner-up biome is huge and this never triggers
-            gap = best_v - second_v
-            if gap < TIE_MARGIN and _dither(x, y) < 0.5 * (1.0 - gap / TIE_MARGIN):
-                best_bt = second_bt
-            grid[y][x] = BIOME_GROUND[best_bt]
-            land[y][x] = True
-
-    _BASE_GROUND_TILES = set(BIOME_GROUND.values())
-
-    # scattered single-tile decoration props (one of each biome's 10 hand-
-    # painted kinds - rock/bush/flowers/boulder/puddle/skull/stump/grasstuft/
-    # debris/tree) - placed BEFORE the patch step below so grid[y][x] is
-    # still the pure biome-ground tile when the biome is looked up. Sparser
-    # than the patches (single tiles, not radius-2-4 areas), reads as
-    # "occasional interesting detail" across the continent rather than
-    # clutter - see BIOME_PROP_TILE/BIOME_PROP_KINDS near the top of the file.
-    #
-    # Placed via a seed-and-spread pass rather than independent per-tile
-    # sampling: real vegetation/rock fields cluster (trees compete for
-    # light/water, undergrowth fills canopy gaps) instead of sprinkling
-    # uniformly, so a handful of cluster centers are picked on land first,
-    # then each cluster's share of props is scattered around its center with
-    # a density that falls off with distance (closer = more likely). Total
-    # placed count is still budgeted against the same decor_prop_count as
-    # before, so density/perf stays roughly the same as the old uniform pass.
-    decor_prop_count = round(10 * (w * h) / (70 * 70))
-    num_clusters = max(1, decor_prop_count // 6)
-    placed = 0
-    for _ in range(num_clusters):
-        cx = cy = None
-        for _try in range(30):
-            tx, ty = random.randint(2, w - 3), random.randint(2, h - 3)
-            if land[ty][tx]:
-                cx, cy = tx, ty
-                break
-        if cx is None:
-            continue
-        cluster_share = max(1, round(decor_prop_count / num_clusters))
-        cluster_radius = random.uniform(4.0, 9.0)
-        attempts = 0
-        cluster_placed = 0
-        # generous retry budget per cluster (water/off-biome misses are
-        # common near coastlines) so the total placed count still lands
-        # close to decor_prop_count, matching the old pass's density.
-        while cluster_placed < cluster_share and attempts < cluster_share * 4:
-            attempts += 1
-            # random.random() ** 1.5 biases samples toward the center -
-            # the "falloff" that makes clusters read as a dense core
-            # thinning out at the edges, not a flat disc.
-            r = cluster_radius * (random.random() ** 1.5)
-            ang = random.uniform(0, math.tau)
-            px = int(cx + r * math.cos(ang))
-            py = int(cy + r * math.sin(ang))
-            if not (2 <= px <= w - 3 and 2 <= py <= h - 3):
-                continue
-            if not land[py][px]:
-                continue
-            biome_name = GROUND_TO_BIOME_NAME.get(grid[py][px])
-            if biome_name is None:
-                continue
-            kind = random.choices(BIOME_PROP_KINDS, weights=_biome_prop_weights(biome_name))[0]
-            grid[py][px] = BIOME_PROP_TILE[(biome_name, kind)]
-            cluster_placed += 1
-            placed += 1
-
-    # decorative patches (rock outcrops, dirt clearings, small ponds) - land only,
-    # never overwrite the ocean, so the coastline stays clean. What kind of patch can
-    # appear depends on the underlying biome, so a tundra region gets icy rock instead
-    # of a random patch of grass, an ashland gets cracked rock instead of a pond, etc.
-    # Guarded to never overwrite a decoration prop placed just above.
-    decor_by_ground = {
-        GRASS: [GRASS2, DIRT, ROCK, WATER],
-        SAND: [DIRT, ROCK, WATER],
-        SNOW: [STONE, ROCK, WATER],
-        SWAMP: [DIRT, WATER, WATER],
-        STONE: [ROCK, DIRT],
-        ASH: [ROCK, DIRT],
-        JUNGLE: [GRASS, DIRT, WATER],
-        WASTELAND: [ROCK, DIRT],
-        ICE: [SNOW, ROCK],
-        CAVE: [ROCK, DIRT],
-    }
-    patch_count = round(26 * (w * h) / (70 * 70))
-    for _ in range(patch_count):
-        px, py = random.randint(2, w - 3), random.randint(2, h - 3)
-        if not land[py][px] or grid[py][px] not in _BASE_GROUND_TILES:
-            continue
-        options = decor_by_ground.get(grid[py][px], [GRASS2, DIRT, ROCK, WATER])
-        tile = random.choice(options)
-        radius = random.randint(2, 4)
-        for yy in range(py - radius, py + radius + 1):
-            for xx in range(px - radius, px + radius + 1):
-                if (0 <= xx < w and 0 <= yy < h and land[yy][xx]
-                        and grid[yy][xx] in _BASE_GROUND_TILES
-                        and (xx - px) ** 2 + (yy - py) ** 2 <= radius * radius):
-                    grid[yy][xx] = tile
+    # decoration: noise-thresholded groves/outcrops with blue-noise spacing - see
+    # _decorate_realm below (replaces the old seed-and-spread prop clusters and the
+    # ~1400 uniform random ROCK/DIRT/pond discs that read as polka dots)
+    decor = _decorate_realm(sub, land, sub_ocean, _fields, random.Random(random.getrandbits(32)))
 
     # keep the arrival point clear and guaranteed walkable regardless of biome/patch RNG
-    for y in range(h // 2 - 2, h // 2 + 3):
-        for x in range(w // 2 - 2, w // 2 + 3):
-            grid[y][x] = GRASS
+    for y in range(ch_ // 2 - 2, ch_ // 2 + 3):
+        for x in range(cw_ // 2 - 2, cw_ // 2 + 3):
+            sub[y][x] = GRASS
+    # coast radii are measured from the continent's centre, which is also the
+    # full realm's centre once embedded, so the table carries over unchanged
+    coast = _record_coast(sub, cw_, ch_)
+
+    # embed the continent centred in open ocean (Batch 15 map growth)
+    w, h, off = REALM_W, REALM_H, CONTINENT_OFFSET
+    grid = [[WATER] * w for _ in range(h)]
+    ocean = bytearray(b"") * (w * h)
+    for y in range(ch_):
+        grid[y + off][off:off + cw_] = sub[y]
+        base = (y + off) * w + off
+        ocean[base:base + cw_] = sub_ocean[y * cw_:(y + 1) * cw_]
+    decor = _offset_decor(decor, off)
+    LAST_REALM_INFO.clear()
+    LAST_REALM_INFO.update(w=w, h=h, ocean=ocean, coast=coast, offset=off,
+                           fields=_fields, thresholds=_thresholds, decor=decor)
     return grid
+
+
+def _offset_decor(decor, off):
+    """Shifts the decoration side info (built on the continent sub-grid) into full
+    realm coordinates: the coarse density grid is padded by off/COARSE cells of
+    "never a grove" (-1.0) and grove points move by `off` tiles."""
+    oc = off // COARSE
+    dens = decor["dens"]
+    rows = REALM_H // COARSE + 2
+    cols = REALM_W // COARSE + 2
+    padded = [[-1.0] * cols for _ in range(rows)]
+    for j, row in enumerate(dens):
+        if j + oc < rows:
+            padded[j + oc][oc:oc + len(row)] = row[:max(0, cols - oc)]
+    occ = {}
+    for pts in decor["grove_points"].values():
+        for (x, y) in pts:
+            occ.setdefault(((x + off) >> 1, (y + off) >> 1), []).append((x + off, y + off))
+    out = dict(decor)
+    out.update(dens=padded, grove_points=occ)
+    return out
 
 
 def make_nexus():
@@ -1789,14 +2539,7 @@ def make_nexus():
         grid[y][2] = NEXUS_BANNER
         grid[y][NEXUS_W - 3] = NEXUS_BANNER
 
-    # garden clusters in the four quadrants, well off the main plaza and paths
-    for gy, gx in ((-16, -22), (-16, 22), (16, -22), (16, 22)):
-        for dy in range(-2, 3):
-            for dx in range(-2, 3):
-                if dx * dx + dy * dy <= 5:
-                    yy, xx = mid_y + gy + dy, mid_x + gx + dx
-                    if 1 <= yy < NEXUS_H - 1 and 1 <= xx < NEXUS_W - 1:
-                        grid[yy][xx] = NEXUS_GARDEN
+    # garden clusters now live in the park district (game/areas.build_nexus_districts)
 
     # a minor second well, off to one side of the plaza
     for dy in range(-1, 2):
@@ -1814,20 +2557,26 @@ def make_nexus():
     # walkable plaza between the board and the garden clusters
     grid[mid_y + 12][mid_x + 5] = ECHO_KEEPER_TILE
 
+    # Batch 15: tavern / garden park / dockside / arena plaza districts
+    from game import areas as _areas
+    _areas.build_nexus_districts(grid)
+
     # scattered decoration props (see NEXUS_PROP_TILE/NEXUS_TALL_PROP_KINDS) -
     # random positions across whatever's STILL plain NEXUS_FLOOR at this point,
     # so this never overwrites the fountain/portals/statues/banners/gardens/
-    # well/board placed above
+    # well/board placed above. SEEDED: co-op clients build their own Nexus and
+    # must get the exact same layout as the server.
+    rng = random.Random(64072)
     all_nexus_kinds = NEXUS_PROP_KINDS + NEXUS_TALL_PROP_KINDS
     placed = 0
-    target_count = random.randint(15, 25)
+    target_count = rng.randint(30, 40)
     attempts = 0
     while placed < target_count and attempts < target_count * 8:
         attempts += 1
-        px, py = random.randint(1, NEXUS_W - 2), random.randint(1, NEXUS_H - 2)
+        px, py = rng.randint(1, NEXUS_W - 2), rng.randint(1, NEXUS_H - 2)
         if grid[py][px] != NEXUS_FLOOR:
             continue
-        kind = random.choice(all_nexus_kinds)
+        kind = rng.choice(all_nexus_kinds)
         tile_id = (TALL_PROP_TILE[("nexus", kind)] if kind in NEXUS_TALL_PROP_KINDS
                    else NEXUS_PROP_TILE[kind])
         grid[py][px] = tile_id
@@ -2449,6 +3198,8 @@ class TileMap:
         in it is drawn as unrevealed fog instead of its real contents. Used to
         gate dungeon rooms behind actual exploration (see MinimapState.explored,
         which this reuses directly rather than tracking a second copy)."""
+        if not _textures_final:
+            _finalize_textures()
         from game import sprites  # local import - only needed for the tall-prop
         # overlay pass below; kept local rather than a new module-level import
         sw, sh = screen_size
@@ -2466,6 +3217,18 @@ class TileMap:
         # entity-vs-prop Y-sorting (see TALL_PROP_TILE's own module comment for
         # the honest scope note on what this does/doesn't handle).
         tall_prop_draws = []
+        big_draws = []                      # (screen_y, kind, variant, screen_cx, world_cx, world_bottom)
+        canopy_overlay = getattr(self, "canopy_overlay", False)
+        self._canopy_queue = []
+        grid = self.grid
+
+        def queue_big(tx, ty, t, px, py):
+            kind = BIG_PROP_KIND_BY_ID[t]
+            cx_t = _big_props.footprint_center_x_tiles(kind, tx)
+            wcx, wbot = cx_t * C.TILE, (ty + 1) * C.TILE
+            scx = px + (cx_t - tx) * C.TILE
+            big_draws.append((py, kind, _tile_hash(tx, ty) % 3, scx, wcx, wbot))
+
         for ty in range(y0, y1):
             for tx in range(x0, x1):
                 px, py = cam((tx * C.TILE, ty * C.TILE))
@@ -2499,6 +3262,16 @@ class TileMap:
                     pygame.draw.rect(surf, tuple(min(255, int(c * pulse)) for c in color), (px, py, C.TILE, C.TILE))
                     ring_r = int(C.TILE * 0.32 + 4 * math.sin(t_ms / 240.0))
                     pygame.draw.circle(surf, _tint(color, 60), (px + C.TILE // 2, py + C.TILE // 2), ring_r, 2)
+                elif t in BIG_PROP_ALL_IDS:
+                    base_id = BIG_PROP_BASE_GROUND[t]
+                    base_variants = _TEX_BY_TILE.get(base_id)
+                    if base_variants:
+                        surf.blit(base_variants[_tile_hash(tx, ty) % len(base_variants)], (px, py))
+                    else:
+                        pygame.draw.rect(surf, TILE_COLORS[base_id], (px, py, C.TILE, C.TILE))
+                    if t in BIG_PROP_KIND_BY_ID:
+                        queue_big(tx, ty, t, px, py)
+                    continue   # big props never get the rock-wall outline/shadow treatment
                 elif t in TALL_PROP_TILE_IDS:
                     # draw the underlying biome ground tile first (same texture-or-
                     # flat-color logic as the generic else-branch below, just keyed
@@ -2561,17 +3334,75 @@ class TileMap:
                     if not (tx < self.w - 1 and self.grid[ty][tx + 1] in SOLID):
                         pygame.draw.line(surf, edge_col, (px + C.TILE, py), (px + C.TILE, py + C.TILE), 2)
 
-        tall_prop_draws.sort(key=lambda item: item[0])
-        for py, tile_id, px in tall_prop_draws:
-            kind = TALL_PROP_KIND_BY_ID.get(tile_id)
-            if kind is None:
-                continue
-            sprite = sprites.tall_prop_sprite(kind)
-            if sprite is None:
-                continue
-            sx = px + (C.TILE - sprite.get_width()) // 2
-            sy = py + C.TILE - sprite.get_height()
-            surf.blit(sprite, (sx, sy))
+        # big props whose anchor is just off-screen still overhang into view (tall
+        # canopies below the bottom edge, wide ones left/right) - anchor-only scan
+        for ty in range(max(0, y0), min(self.h, y1 + 5)):
+            row = grid[ty]
+            if ty >= y1:
+                xs = range(max(0, x0 - 3), min(self.w, x1 + 3))
+            else:
+                # both side strips clamped to the map - on a map narrower than the view
+                # (vault room, bazaar) x0/x1 can lie outside [0, w) and row[tx] overran
+                xs = (list(range(max(0, x0 - 3), min(x0, self.w)))
+                      + list(range(max(0, x1), min(self.w, x1 + 3))))
+            for tx in xs:
+                t = row[tx]
+                if t in BIG_PROP_KIND_BY_ID and (fog is None or (tx, ty) in fog):
+                    px, py = cam((tx * C.TILE, ty * C.TILE))
+                    queue_big(tx, ty, t, px, py)
+
+        draws = [(py, 0, tile_id, px) for py, tile_id, px in tall_prop_draws]
+        draws += [(b[0], 1) + b[1:] for b in big_draws]
+        draws.sort(key=lambda item: item[0])
+        for item in draws:
+            if item[1] == 0:
+                _py, _f, tile_id, px = item
+                kind = TALL_PROP_KIND_BY_ID.get(tile_id)
+                if kind is None:
+                    continue
+                sprite = sprites.tall_prop_sprite(kind)
+                if sprite is None:
+                    continue
+                sx = px + (C.TILE - sprite.get_width()) // 2
+                sy = _py + C.TILE - sprite.get_height()
+                surf.blit(sprite, (sx, sy))
+            else:
+                py, _f, kind, variant, scx, wcx, wbot = item
+                has_canopy = kind in _big_props.TREE_KINDS
+                img = (_big_props.trunk_part(kind, variant) if (canopy_overlay and has_canopy)
+                       else _big_props.sprite(kind, variant))
+                surf.blit(img, (int(scx - img.get_width() / 2), int(py + C.TILE - img.get_height())))
+                if canopy_overlay and has_canopy:
+                    self._canopy_queue.append((wcx, wbot, kind, variant))
+
+    CANOPY_FADE_ALPHA = 95
+
+    def draw_canopies(self, surf, cam, focus_pos=None):
+        """Tree canopies drawn OVER entities (call after drawing players/mobs, with
+        the same cam) - only when self.canopy_overlay is True, which also makes
+        draw() render just the trunks. A canopy the focus point (the local player)
+        stands under is faded so you can always see yourself."""
+        queue = getattr(self, "_canopy_queue", None)
+        if not queue:
+            return
+        fx = fy = None
+        if focus_pos is not None:
+            fx, fy = cam(focus_pos)
+        for wcx, wbot, kind, variant in sorted(queue, key=lambda q: q[1]):
+            img = _big_props.canopy_part(kind, variant)
+            th = _big_props.KINDS[kind][2]
+            sx, sb = cam((wcx, wbot))
+            rect = img.get_rect(midbottom=(int(sx), int(sb - th)))
+            if fx is not None and rect.inflate(-img.get_width() * 0.2, 0).collidepoint(fx, fy):
+                key = ("faded", kind, variant)
+                faded = _big_props._cache.get(key)
+                if faded is None:
+                    faded = img.copy()
+                    faded.set_alpha(self.CANOPY_FADE_ALPHA)
+                    _big_props._cache[key] = faded
+                surf.blit(faded, rect)
+            else:
+                surf.blit(img, rect)
 
 
 class Camera:

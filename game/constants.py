@@ -85,6 +85,23 @@ def apply_defense(damage, deF: int, floor_frac: float = 0.1, whole: bool = True)
     return max(1, round(real))
 
 
+
+# Player-side mitigation (2026-09-25 balance pass). apply_defense's flat
+# subtraction broke for players: enemy hits never scale with level (avg raw
+# trash ~4, elite ~9, boss ~13) while player deF grows every level (lvl-20
+# Wizard ~15, Warrior ~63), so EVERY lvl-20 class sat on the 10% floor -
+# near-immune. A percentage curve scales with the hit instead: tankier is
+# still clearly tankier, never immune. K=75 -> deF 5: 94%, 15: 83%,
+# 25: 75%, 63: 54% of the raw hit gets through. Enemies keep apply_defense.
+PLAYER_DEFENSE_K = 75
+
+
+def player_defense(damage, deF: int, whole: bool = True):
+    real = damage * PLAYER_DEFENSE_K / (PLAYER_DEFENSE_K + max(0, deF))
+    if not whole:
+        return max(0.0, real)
+    return max(1, round(real)) if damage > 0 else 0
+
 def speed_tiles_per_sec(spd: int) -> float:
     return 5.6 * (spd + 53.5) / 75
 

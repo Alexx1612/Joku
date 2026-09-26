@@ -1,23 +1,19 @@
 """
-Regression check for the clustered biome-prop placement rewrite: the main
-continent decorator pass (world.py's make_realm(), the "scattered single-tile
-decoration props" section) used to sample every prop's (x, y) independently
-and uniformly across the whole land area. It now picks a handful of cluster
-centers first and scatters each cluster's props around its center with a
-density that falls off with distance - "real forests don't grow uniformly."
+Regression check that biome decoration props CLUSTER into groves/outcrops
+instead of sprinkling uniformly over the land (world.py's _decorate_realm).
 
-This measures a real spatial statistic (the Clark-Evans nearest-neighbor
-index) on the actual placed decoration-prop tiles, and separately on a
-synthetic control population of the same size sampled UNIFORMLY at random
-from the exact same land mask - so the comparison isn't just against a
-theoretical formula's edge-effect assumptions, it's against a real empirical
-"what would independent uniform placement on this exact map have looked
-like" baseline.
-
-Clark-Evans R = (observed mean nearest-neighbor distance) / (expected mean
-NN distance under complete spatial randomness, 1/(2*sqrt(density))). R < 1
-means points are closer together than random chance would produce (i.e.
-clustered); R ~= 1 means random; R > 1 means dispersed/regular.
+History: the first version of this check used the Clark-Evans nearest-neighbour
+index, which fit the old seed-and-spread placement (props piled up tightly
+around random centres). The 2026-09-25 decoration rewrite places props with
+blue-noise (Poisson-disk-style) spacing INSIDE noise-thresholded groves - so
+props are deliberately evenly spaced at the 2-5 tile scale (nearest-neighbour
+R ~= 1, by design) while being strongly clustered at the grove scale (dense
+groves, empty clearings). The intent - "real forests don't grow uniformly" -
+is now measured where it actually lives: a quadrat test. The land is cut into
+12x12-tile quadrats and the variance-to-mean ratio (VMR, the index of
+dispersion) of per-quadrat prop counts is compared against a synthetic control
+population of the same size sampled UNIFORMLY at random from the exact same
+land mask. Uniform (Poisson) placement gives VMR ~= 1; clustering gives VMR >> 1.
 
 Run with: .venv\\Scripts\\python.exe tests\\check_clustered_decorations.py
 """
@@ -38,42 +34,43 @@ pygame.display.set_mode((100, 100))
 from game import world
 
 DECOR_PROP_TILE_IDS = set(world.BIOME_PROP_TILE.values())
+Q = 12  # quadrat size in tiles
 
 
-def _nn_mean_distance(points):
-    """Mean nearest-neighbor distance across a list of (x, y) points. O(n^2)
-    but n is only ~1-2k for this map size, which is trivial in practice."""
-    n = len(points)
-    if n < 2:
-        return None
+def _vmr(points, land_quadrats):
+    counts = {q: 0 for q in land_quadrats}
+    for x, y in points:
+        q = (x // Q, y // Q)
+        if q in counts:
+            counts[q] += 1
+    vals = list(counts.values())
+    mean = sum(vals) / len(vals)
+    var = sum((v - mean) ** 2 for v in vals) / len(vals)
+    return var / mean if mean else 0.0
+
+
+def _nn_ratio(points, area, sample=400):
+    """Clark-Evans R on a random subsample (diagnostic only - see module doc)."""
+    pts = random.sample(points, min(sample, len(points)))
+    cells = {}
+    for x, y in points:
+        cells.setdefault((x // 8, y // 8), []).append((x, y))
     total = 0.0
-    for i in range(n):
-        xi, yi = points[i]
+    for x, y in pts:
         best = None
-        for j in range(n):
-            if i == j:
-                continue
-            xj, yj = points[j]
-            d2 = (xi - xj) ** 2 + (yi - yj) ** 2
-            if best is None or d2 < best:
-                best = d2
-        total += math.sqrt(best)
-    return total / n
-
-
-def _clark_evans_r(points, area):
-    n = len(points)
-    mean_nn = _nn_mean_distance(points)
-    if mean_nn is None or n == 0 or area <= 0:
-        return None
-    density = n / area
-    expected_nn = 1.0 / (2.0 * math.sqrt(density))
-    return mean_nn / expected_nn
+        for gy in range(y // 8 - 2, y // 8 + 3):
+            for gx in range(x // 8 - 2, x // 8 + 3):
+                for (px, py) in cells.get((gx, gy), ()):
+                    if (px, py) != (x, y):
+                        d2 = (px - x) ** 2 + (py - y) ** 2
+                        if best is None or d2 < best:
+                            best = d2
+        total += math.sqrt(best) if best is not None else 16.0
+    expected = 1.0 / (2.0 * math.sqrt(len(points) / area))
+    return (total / len(pts)) / expected
 
 
 def check_decoration_props_are_clustered_not_uniform():
-    r_values_observed = []
-    r_values_baseline = []
     for seed in (1, 2, 3):
         random.seed(seed)
         t0 = time.time()
@@ -83,6 +80,7 @@ def check_decoration_props_are_clustered_not_uniform():
 
         land_tiles = []
         decor_points = []
+        quad_land = {}
         for y in range(h):
             row = grid[y]
             for x in range(w):
@@ -90,55 +88,31 @@ def check_decoration_props_are_clustered_not_uniform():
                 if t == world.WATER:
                     continue
                 land_tiles.append((x, y))
+                q = (x // Q, y // Q)
+                quad_land[q] = quad_land.get(q, 0) + 1
                 if t in DECOR_PROP_TILE_IDS:
                     decor_points.append((x, y))
+        # only quadrats that are (almost) all land, so coast/river cuts don't count as "clearings"
+        land_quadrats = {q for q, n in quad_land.items() if n >= Q * Q * 0.9}
 
         assert len(decor_points) > 50, (
             f"seed {seed}: only {len(decor_points)} decoration props placed - "
             "too few to measure clustering, something regressed in placement")
 
-        land_area = len(land_tiles)
-        r_observed = _clark_evans_r(decor_points, land_area)
-        assert r_observed is not None
+        vmr_observed = _vmr(decor_points, land_quadrats)
+        control = random.sample(land_tiles, len(decor_points))
+        vmr_baseline = _vmr(control, land_quadrats)
+        r_nn = _nn_ratio(decor_points, len(land_tiles))
+        print(f"seed {seed}: {len(decor_points)} props, gen {gen_time:.2f}s, quadrat VMR observed="
+              f"{vmr_observed:.2f} baseline(uniform)={vmr_baseline:.2f}; NN ratio {r_nn:.2f} (diagnostic)")
 
-        # empirical control: same N points, sampled uniformly at random from
-        # the exact same land mask (not the whole rectangle), so this is a
-        # fair apples-to-apples comparison against what independent uniform
-        # placement really would have produced on this exact coastline.
-        control_sample = random.sample(land_tiles, min(len(decor_points), len(land_tiles)))
-        r_baseline = _clark_evans_r(control_sample, land_area)
-        assert r_baseline is not None
-
-        r_values_observed.append(r_observed)
-        r_values_baseline.append(r_baseline)
-        print(f"seed {seed}: {len(decor_points)} props, gen {gen_time:.2f}s, "
-              f"Clark-Evans R observed={r_observed:.3f} baseline(uniform)={r_baseline:.3f}")
-
-        # 1. Clark-Evans criterion: R < 1.0 means points sit closer together
-        #    than chance alone would produce - the textbook definition of
-        #    clustering.
-        assert r_observed < 1.0, (
-            f"seed {seed}: observed R={r_observed:.3f} is not below 1.0 - "
-            "decoration props don't read as clustered")
-
-        # 2. The empirical uniform-baseline control should land close to 1.0
-        #    (it's drawn from literal random.sample, i.e. what the OLD code's
-        #    behavior effectively was) - confirms the baseline itself isn't
-        #    secretly clustered for some domain-shape reason.
-        assert 0.8 < r_baseline < 1.2, (
-            f"seed {seed}: uniform baseline R={r_baseline:.3f} isn't close to 1.0 - "
-            "baseline sampling itself looks off, can't trust the comparison")
-
-        # 3. The real test: observed clustering must be measurably tighter
-        #    than the uniform-random control on the SAME map, not just
-        #    below the generic 1.0 threshold.
-        assert r_observed < r_baseline * 0.85, (
-            f"seed {seed}: observed R={r_observed:.3f} isn't meaningfully "
-            f"below the uniform baseline R={r_baseline:.3f} - clustering effect "
-            "is too weak to be real")
-
-    print(f"observed R range: {min(r_values_observed):.3f}-{max(r_values_observed):.3f}; "
-          f"baseline R range: {min(r_values_baseline):.3f}-{max(r_values_baseline):.3f}")
+        # the uniform control must look uniform, or the comparison means nothing
+        assert 0.6 < vmr_baseline < 1.6, (
+            f"seed {seed}: uniform baseline VMR={vmr_baseline:.2f} isn't ~1 - can't trust the comparison")
+        # clustered: per-quadrat counts vary far more than uniform placement would give
+        assert vmr_observed > 2.0 and vmr_observed > vmr_baseline * 2.0, (
+            f"seed {seed}: VMR {vmr_observed:.2f} vs uniform {vmr_baseline:.2f} - props don't read as "
+            "groves/clearings")
     print("check_decoration_props_are_clustered_not_uniform: PASSED")
 
 

@@ -143,8 +143,10 @@ def check_vault_deposit_withdraw_swap():
     lo = 3 * VAULT_CHEST_SIZE
     game.vault_items[lo] = _sword("Existing")
     game.vault_chest = 3
+    game.vault_chest_open = 3  # Batch 15: one vault-room chest's bag-style window is open
+    game.right_panel_mode = "inventory"  # the normal dock is visible beside an open chest now
     game._current_bag = lambda: None
-    game.state = main_module.STATE_VAULT
+    game.state = main_module.STATE_VAULT_ROOM
 
     # plain-click deposit fills the first EMPTY slot of the CURRENT chest
     game.drag_from, game.drag_start_pos = ("backpack", 0), (100, 100)
@@ -178,7 +180,9 @@ def check_vault_deposit_withdraw_swap():
 
 def check_vault_chest_skins():
     from game import ui
-    assert len(ui.VAULT_CHEST_SKINS) >= 10
+    from game.items import VAULT_CHEST_COUNT
+    assert VAULT_CHEST_COUNT == 12 and len(ui.VAULT_CHEST_SKINS) >= VAULT_CHEST_COUNT, \
+        "12 vault chests, each with its own skin"
     assert len(set(ui.VAULT_CHEST_SKINS)) == len(ui.VAULT_CHEST_SKINS), "every chest skin should be distinct"
     print("check_vault_chest_skins: PASSED")
 

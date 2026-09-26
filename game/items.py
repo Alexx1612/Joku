@@ -59,6 +59,8 @@ class Item:
     # (Pet.net_state()) - using the item unpacks exactly that pet, levels/xp/bond
     # intact, instead of hatching a fresh one (see Player.pack_pet/use_potion)
     pet_state: dict = None
+    # quest items only (slot "quest", see game/sidequests.QUEST_ITEMS): which quest item this is
+    quest_key: str = ""
 
     @property
     def band(self) -> str:
@@ -70,7 +72,7 @@ class Item:
 
     @property
     def display_name(self) -> str:
-        prefix = f"[T{self.tier}] " if not self.is_ut and self.shape != "carrier" else ""
+        prefix = f"[T{self.tier}] " if not self.is_ut and self.shape not in ("carrier", "quest") else ""
         return f"{prefix}{self.name}"
 
     def to_json(self):
@@ -79,7 +81,8 @@ class Item:
                     min_dmg=self.min_dmg, max_dmg=self.max_dmg, proc=self.proc,
                     effect=self.effect, mp_cost=self.mp_cost, magnitude=self.magnitude,
                     description=self.description, pet_kind=self.pet_kind, shard_theme=self.shard_theme,
-                    socketed_proc=self.socketed_proc, pet_state=self.pet_state)
+                    socketed_proc=self.socketed_proc, pet_state=self.pet_state,
+                    quest_key=self.quest_key)
 
     @staticmethod
     def from_json(d):
@@ -357,6 +360,16 @@ ABILITIES = {
                       "A veil torn from the space between stars. For a few seconds, the whole "
                       "party moves like they were never bound by ordinary time at all.")],
 }
+
+# Batch 15 spell buff, applied at USE time (so abilities already sitting in old saves
+# get it too): damage spells x2.5, heals/shields x1.5, haste durations unchanged.
+ABILITY_POWER_MULT = {"nova": 2.5, "chain": 2.5, "drain": 2.5, "freeze": 2.5, "heal": 1.5, "shield": 1.5}
+
+
+def ability_power(item):
+    """The effective magnitude an ability item casts with (see ABILITY_POWER_MULT)."""
+    return int(round((item.magnitude or 0) * ABILITY_POWER_MULT.get(item.effect, 1.0)))
+
 
 # Armor comes in 3 archetypes, matching real RotMG's own grouping exactly onto
 # this project's 8 classes with no leftovers: Heavy (Warrior/Paladin - highest
@@ -955,7 +968,7 @@ def wish_fountain(player):
 # (7 chests, matching the real game's default vault chest count).
 VAULT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "vaults")
 VAULT_CHEST_SIZE = 8
-VAULT_CHEST_COUNT = 10  # grown from 7 per user request
+VAULT_CHEST_COUNT = 12  # 12 permanent chests in the vault room (Batch 15; was 10)
 VAULT_SLOTS = VAULT_CHEST_SIZE * VAULT_CHEST_COUNT
 
 

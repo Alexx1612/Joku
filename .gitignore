@@ -30,3 +30,6 @@ vaults/
 # Local client settings (options menu)
 settings.json
 settings.json.tmp
+
+# rendered zone music (game/music.py disk cache)
+music_cache/

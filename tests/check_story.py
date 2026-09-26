@@ -78,18 +78,20 @@ def check_transitions_through_every_act():
         sp.on_event("guardian", b)
     assert not sp.wants("guardian", "cave") or sp.act != 1
     assert sp.act == 2
-    for idx in (0, 0, 3, 5, 7):  # a repeated island doesn't count twice
+    n = story.ISLANDS_NEEDED
+    for idx in [0] + list(range(n - 1)):  # a repeated island doesn't count twice
         sp.on_event("island", idx)
-    assert sp.act == 2 and sp.quest_log()["objectives"][0]["have"] == 4
+    assert sp.act == 2 and sp.quest_log()["objectives"][0]["have"] == n - 1
     sp.on_event("island", 9)
     assert sp.act == 3
     sp.on_event("guardian", "forest")  # outer biome doesn't count for Act III
-    for b in ("cave", "ice", "cave", "jungle"):
+    inner = ["cave"] + list(story.INNER_BIOMES[:story.INNER_GUARDIANS_NEEDED])  # repeat cave: no double count
+    for b in inner:
         sp.on_event("guardian", b)
     log = sp.quest_log()
-    assert log["objectives"][0]["have"] == 3 and log["objectives"][1]["have"] == 0
-    sp.on_event("dungeon")
-    sp.on_event("dungeon")
+    assert log["objectives"][0]["have"] == story.INNER_GUARDIANS_NEEDED and log["objectives"][1]["have"] == 0
+    for _ in range(story.DUNGEONS_NEEDED):
+        sp.on_event("dungeon")
     assert sp.act == 4
     assert sp.quest_log()["title"] == story.ACTS[4]["title"]
     msgs = sp.on_event("mad_god")
@@ -140,13 +142,14 @@ def check_character_progress_and_permadeath():
 
 def check_island_idx_survives_a_skipped_placement():
     real = world.coastline_radius
-    gap = min(world.REALM_W, world.REALM_H) * 0.12
+    # the island centre is placed at coast + water gap + island radius (Batch 15 big islands)
+    gap = rs.ISLAND_WATER_GAP + world.ISLAND_RADIUS
     n = len(ISLAND_NAMES)
 
-    def fake(angle):
+    def fake(angle, info=None):
         i = round(angle * n / (2 * math.pi)) % n
         # every odd island lands on the map centre -> all but the first are skipped as "too close"
-        return -gap if i % 2 == 1 else real(angle)
+        return -gap if i % 2 == 1 else real(angle, info)
 
     world.coastline_radius = fake
     try:
@@ -206,6 +209,20 @@ def check_landmark_guardian():
     assert sum(1 for e in sim.enemies if getattr(e, "story_guardian", None) == "forest") == 1
     assert sim._landmark_guardians[lm_idx].alive
     sim.enemies = []
+    # an INNER Landmark Guardian always drops a Dungeon Shard (Act III's dungeons
+    # shouldn't hinge on the 8% elite roll)
+    inner = next((l for l in sim.landmarks if l["biome"] in story.INNER_BIOMES), None)
+    if inner is not None:
+        delver = _player("Delver", act=3)
+        delver.pos = pygame.Vector2(inner["pos"])
+        sim.ground_items = []
+        sim.begin_tick()
+        sim.update(0.01, {delver.pid: delver})
+        ig = next(e for e in sim.enemies if getattr(e, "story_guardian", None) == inner["biome"])
+        _kill(sim, ig, delver)
+        dropped = [it for bag in sim.ground_items for it in getattr(bag, "items", [])]
+        assert any(it.slot == "shard" for it in dropped), [it.name for it in dropped]
+        sim.enemies = []
     print("check_landmark_guardian: PASSED")
 
 
@@ -253,28 +270,33 @@ def check_mad_god_threat():
     rarely reached anyone, and ~60 deF shrugged off what did). The aimed
     volley + nova are armor-piercing, so a high-deF class must not be immune."""
     import random as _r
+    # averaged over 3 forge layouts: a single seed can leave only a couple of open
+    # line-of-sight spots, which made the number swing with where the test stood
     for cls in ("warrior", "wizard"):
-        _r.seed(3)
-        fsim = RealmSim(bonus=True, theme="forge", difficulty_name=FORGE_DIFFICULTY, story_act=4)
-        p = Player(cls, name="Tank" + cls, pid="Tank" + cls)
-        p.story = story.StoryProgress(4)
-        while p.level < 20:
-            p.gain_xp(10 ** 6)
-        boss = fsim.boss
-        boss.hp = boss.hp_max = 10 ** 9
-        spots = [boss.pos + pygame.Vector2(170, 0).rotate(a) for a in range(0, 360, 10)]
-        spots = [v for v in spots if not fsim.is_solid(v.x, v.y)
-                 and fsim.has_line_of_sight(boss.pos.x, boss.pos.y, v.x, v.y)]
-        p.pos = pygame.Vector2(spots[len(spots) // 2])
-        taken, secs = 0.0, 15.0
-        for _ in range(int(secs * 30)):
-            p.hp, p.alive = 10 ** 7, True
-            fsim.begin_tick()
-            fsim.update(1 / 30, {p.pid: p})
-            taken += 10 ** 7 - p.hp
-        dps = taken / secs
-        assert dps > 20, f"Mad God too soft vs a still lvl-20 {cls}: {dps:.1f} hp/s"
-        print(f"  mad_god phase 1 vs still lvl-20 {cls}: {dps:.1f} hp/s")
+        rates = []
+        for seed in (3, 4, 5):
+            _r.seed(seed)
+            fsim = RealmSim(bonus=True, theme="forge", difficulty_name=FORGE_DIFFICULTY, story_act=4)
+            p = Player(cls, name="Tank" + cls, pid="Tank" + cls)
+            p.story = story.StoryProgress(4)
+            while p.level < 20:
+                p.gain_xp(10 ** 6)
+            boss = fsim.boss
+            boss.hp = boss.hp_max = 10 ** 9
+            spots = [boss.pos + pygame.Vector2(170, 0).rotate(a) for a in range(0, 360, 10)]
+            spots = [v for v in spots if not fsim.is_solid(v.x, v.y)
+                     and fsim.has_line_of_sight(boss.pos.x, boss.pos.y, v.x, v.y)]
+            p.pos = pygame.Vector2(spots[len(spots) // 2])
+            taken, secs = 0.0, 15.0
+            for _ in range(int(secs * 30)):
+                p.hp, p.alive = 10 ** 7, True
+                fsim.begin_tick()
+                fsim.update(1 / 30, {p.pid: p})
+                taken += 10 ** 7 - p.hp
+            rates.append(taken / secs)
+        dps = sum(rates) / len(rates)
+        assert dps > 20, f"Mad God too soft vs a still lvl-20 {cls}: {dps:.1f} hp/s ({rates})"
+        print(f"  mad_god phase 1 vs still lvl-20 {cls}: {dps:.1f} hp/s (seeds 3-5)")
     print("check_mad_god_threat: PASSED")
 
 
@@ -417,7 +439,10 @@ def check_coop_client_quest_log():
         def pop_whispers(self):
             return []
 
-        pop_trade_notices = pop_pet_results = pop_whispers
+        pop_trade_notices = pop_pet_results = pop_echo_shop_states = pop_whispers
+
+        def pop_dialogue(self):
+            return None
 
         def pop_story(self):
             v, self.story = self.story, ([], [])

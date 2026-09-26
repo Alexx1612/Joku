@@ -23,6 +23,7 @@ import pygame
 pygame.init()
 pygame.display.set_mode((100, 100))
 
+os.environ["RR_EVENT_ROTATION"] = "off"  # baseline = truly no event, whatever the clock says
 from game import live_events
 from game import items
 from game import realm_sim
