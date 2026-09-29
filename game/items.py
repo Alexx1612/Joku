@@ -555,19 +555,20 @@ def _pet_kind(base, tint, family, rarity, name, description):
 
 
 PET_KINDS = {
+    # every pet uses its OWN base sprite (three used to be the same ghost in different tints)
     "hatchling": _pet_kind("bat", (255, 205, 90), "heal", "common", "Hatchling",
                             "A tiny bat pup that never quite learned to be scary. "
                             "Chirps softly and mends your wounds every few seconds."),
     "imp_pup": _pet_kind("imp", (255, 130, 130), "attack", "common", "Imp Pup",
                           "A pint-sized imp with a big attitude. Lobs a weak cinder "
                           "at the nearest enemy whenever one strays too close."),
-    "wisp": _pet_kind("ghost", (150, 210, 255), "magic", "uncommon", "Wisp",
+    "wisp": _pet_kind("tide_wisp", (150, 210, 255), "magic", "uncommon", "Wisp",
                        "A friendly will-o'-the-wisp that drifts at your shoulder, "
                        "trickling mana back to you as it glows."),
     "griffin_cub": _pet_kind("harpy", (255, 235, 180), "attack", "rare", "Griffin Cub",
                               "A downy cub with a griffin's fierce instincts already "
                               "showing. Dive-bombs nearby enemies with sharp little talons."),
-    "moon_sprite": _pet_kind("ghost", (200, 160, 255), "heal", "rare", "Moon Sprite",
+    "moon_sprite": _pet_kind("frost_sprite", (200, 160, 255), "heal", "rare", "Moon Sprite",
                               "Said to be born from a sliver of fallen moonlight. Its "
                               "gentle glow closes wounds far faster than its size would suggest."),
     "spirit_fox": _pet_kind("panther", (150, 220, 255), "magic", "rare", "Spirit Fox",
@@ -576,7 +577,7 @@ PET_KINDS = {
     "phoenix_chick": _pet_kind("salamander", (255, 170, 60), "heal", "legendary", "Phoenix Chick",
                                 "Hatched from an ember that never went out. Legends say a full-grown "
                                 "phoenix can raise the dead - this one just mends wounds, but fast."),
-    "tipsy_thunderbird": _pet_kind("harpy", (255, 240, 120), "attack", "legendary", "Tipsy Thunderbird",
+    "tipsy_thunderbird": _pet_kind("songbird", (255, 240, 120), "attack", "legendary", "Tipsy Thunderbird",
                                     "Swears it can fly in a straight line. Cannot. Still calls down "
                                     "a crackling peck on anything that looks at you funny."),
     "sommelier_serpent": _pet_kind("vine_serpent", (190, 90, 150), "magic", "legendary", "Sommelier Serpent",
@@ -586,10 +587,10 @@ PET_KINDS = {
     "hangover_hydra": _pet_kind("bog_crawler", (255, 120, 210), "heal", "mythic", "Hangover Hydra",
                                  "Three heads, three headaches, one very caring disposition. Each "
                                  "head insists the others are the drunk one. Mends wounds anyway."),
-    "last_call_leviathan": _pet_kind("vine_serpent", (120, 230, 255), "attack", "mythic", "Last-Call Leviathan",
+    "last_call_leviathan": _pet_kind("coral_leviathan", (120, 230, 255), "attack", "mythic", "Last-Call Leviathan",
                                       "Rings a tiny bell and everything nearby is suddenly cut off. "
                                       "Permanently. Tips generously in bite marks."),
-    "brewmaster_djinn": _pet_kind("ghost", (255, 170, 255), "magic", "mythic", "Brewmaster Djinn",
+    "brewmaster_djinn": _pet_kind("siren_wraith", (255, 170, 255), "magic", "mythic", "Brewmaster Djinn",
                                    "Grants exactly one wish: 'more mana, please.' Grants it again. "
                                    "And again. Has read the terms and conditions; you have not."),
     "sentient_fish": _pet_kind("frost_wraith", (120, 255, 170), "magic", "uncommon", "Sentient Fish",

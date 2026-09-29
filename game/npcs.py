@@ -475,7 +475,9 @@ class NPC:
         img = sprites.player_sprite(key) if src == "player" else sprites.enemy_sprite(key)
         scale = d.get("scale", 1.0)
         if scale != 1.0:
-            img = pygame.transform.smoothscale(img, (int(img.get_width() * scale), int(img.get_height() * scale)))
+            size = (int(img.get_width() * scale), int(img.get_height() * scale))
+            # nearest-neighbour when enlarging pixel art (smoothscale blurred the elk/tortoise)
+            img = (pygame.transform.scale if scale > 1 else pygame.transform.smoothscale)(img, size)
         if d.get("tint"):
             img = img.copy()
             img.fill((*d["tint"], 255), special_flags=pygame.BLEND_RGBA_MULT)
