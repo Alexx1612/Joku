@@ -9,6 +9,8 @@ kept simple since the point is the moment of unlocking, not inventory management
 import json
 import os
 
+from game import paths as _paths
+
 # (id, title, description) - title is what's appended to your name, e.g. "Alice the Bloodied"
 ACHIEVEMENTS = [
     ("first_blood", "the Bloodied", "Land your first kill"),
@@ -26,7 +28,7 @@ ACH_BY_ID = {a[0]: a for a in ACHIEVEMENTS}
 # titles, so title_for() prefers the highest-index unlocked one, not just the newest
 _ORDER = {a[0]: i for i, a in enumerate(ACHIEVEMENTS)}
 
-_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "achievements")
+_DIR = _paths.data_path("achievements")
 
 
 def _path(player_name: str) -> str:

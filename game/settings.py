@@ -12,8 +12,9 @@ at a throwaway temp file so a player's own settings can't leak into the suite).
 import json
 import os
 
-SETTINGS_PATH = os.environ.get("RR_SETTINGS_PATH") or os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "settings.json")
+from game import paths as _paths
+
+SETTINGS_PATH = os.environ.get("RR_SETTINGS_PATH") or _paths.data_path("settings.json")
 
 PARTICLE_LEVELS = ("off", "low", "high")
 FPS_CAPS = (30, 60, 120, 0)  # 0 = unlimited

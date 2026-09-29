@@ -1,0 +1,78 @@
+# Builds standalone Windows and Linux binaries with PyInstaller and attaches
+# them to the GitHub release for the pushed tag (or a tag given by hand).
+# PyInstaller can't cross-compile, so each OS builds on its own runner.
+name: build-release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach the builds to (e.g. v0.2)"
+        required: true
+        default: "v0.2"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      SDL_VIDEODRIVER: dummy
+      SDL_AUDIODRIVER: dummy
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install -r requirements.txt pyinstaller==6.22.3
+      - name: Build
+        run: |
+          python -m PyInstaller --noconfirm --clean RealmReforged.spec
+          python -m PyInstaller --noconfirm --clean RealmReforged-Server.spec
+          python -m PyInstaller --noconfirm --clean RealmReforged-CoopClient.spec
+      - name: Smoke test (server starts and listens)
+        shell: bash
+        run: |
+          ls -l dist
+          if [ "$RUNNER_OS" = "Windows" ]; then SRV=dist/RealmReforged-Server.exe; else SRV=dist/RealmReforged-Server; fi
+          "$SRV" --port 50999 & PID=$!
+          python - <<'PY'
+          import socket, time
+          for _ in range(60):
+              try:
+                  socket.create_connection(("127.0.0.1", 50999), timeout=2).close(); print("server up"); break
+              except OSError:
+                  time.sleep(1)
+          else:
+              raise SystemExit("server never listened")
+          PY
+          kill $PID || true
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir RealmReforged-linux
+          cp dist/RealmReforged dist/RealmReforged-Server dist/RealmReforged-CoopClient packaging/linux/*.sh RealmReforged-linux/
+          chmod +x RealmReforged-linux/*
+          tar -czf RealmReforged-linux-x86_64.tar.gz RealmReforged-linux
+      - name: Upload (Linux)
+        if: runner.os == 'Linux'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" RealmReforged-linux-x86_64.tar.gz --clobber
+      - name: Upload (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/RealmReforged.exe dist/RealmReforged-Server.exe dist/RealmReforged-CoopClient.exe packaging/windows/join.bat --clobber

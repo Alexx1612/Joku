@@ -7,9 +7,11 @@ file per name, atomic tmp+os.replace writes, no database.
 """
 import json
 import os
+
+from game import paths as _paths
 from datetime import datetime, timezone
 
-ACCOUNTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "accounts")
+ACCOUNTS_DIR = _paths.data_path("accounts")
 _LAST_USED_PATH = os.path.join(ACCOUNTS_DIR, "_last_used.txt")
 
 

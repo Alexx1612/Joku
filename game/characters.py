@@ -15,7 +15,9 @@ though a session now survives a graceful quit/disconnect in between.
 import json
 import os
 
-CHAR_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "characters")
+from game import paths as _paths
+
+CHAR_DIR = _paths.data_path("characters")
 
 
 def _sanitize(name: str) -> str:

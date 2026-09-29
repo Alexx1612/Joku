@@ -7,9 +7,11 @@ same persistence pattern as accounts/vault/achievements.
 import json
 import os
 
+from game import paths as _paths
+
 from game.accounts import sanitize_name
 
-FRIENDS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "friends")
+FRIENDS_DIR = _paths.data_path("friends")
 
 
 def _path(name: str) -> str:

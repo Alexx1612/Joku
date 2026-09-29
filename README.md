@@ -362,33 +362,58 @@ integration.
 
 ## Download & play (no Python needed)
 
-Don't want to clone the repo or install Python? Every release ships
-standalone Windows `.exe` builds - the game and all its assets are bundled
-inside, nothing else to install. Download only the file(s) your role
-needs from the [latest release](https://github.com/Alexx1612/Joku/releases/tag/v0.2):
+Every release ships standalone builds for **Windows** and **Linux (x86_64,
+e.g. Ubuntu 22.04+)** - the game and all its assets are bundled, nothing else
+to install. Get them from the [latest release](https://github.com/Alexx1612/Joku/releases/tag/v0.2).
 
-- **Single player**: [RealmReforged.exe](https://github.com/Alexx1612/Joku/releases/download/v0.2/RealmReforged.exe)
-  - Double-click it. That's it - nothing else to run.
-- **Multiplayer (co-op)**: one person hosts, everyone (including the host)
-  also runs the client to actually play.
-  - Host downloads: [RealmReforged-Server.exe](https://github.com/Alexx1612/Joku/releases/download/v0.2/RealmReforged-Server.exe)
-    *and* [RealmReforged-CoopClient.exe](https://github.com/Alexx1612/Joku/releases/download/v0.2/RealmReforged-CoopClient.exe)
-  - Everyone else downloads: [RealmReforged-CoopClient.exe](https://github.com/Alexx1612/Joku/releases/download/v0.2/RealmReforged-CoopClient.exe) only
+| You want to... | Windows | Linux |
+|---|---|---|
+| Play solo | double-click `RealmReforged.exe` | `./play.sh` |
+| Host co-op | `RealmReforged-Server.exe` | `./host.sh` |
+| Join co-op | `join.bat <host> <name>` (or `RealmReforged-CoopClient.exe --host <host> --name <name>`) | `./join.sh <host> <name>` |
 
-See "Play co-op with a friend" below for the exact hosting/joining steps -
-they apply the same way whether you're running the `.py` scripts from
-source or these `.exe` builds, just swap `.venv\Scripts\python.exe
-server.py` for double-clicking `RealmReforged-Server.exe`, and
-`.venv\Scripts\python.exe coop_client.py --host <ip> --name <you>` for
-opening a terminal and running `RealmReforged-CoopClient.exe --host <ip>
---name <you>` (the client needs an argument to reach anyone other than
-yourself, so it has to be launched from a terminal, not double-clicked,
-unless you're just connecting to your own PC).
+**Linux**: download `RealmReforged-linux-x86_64.tar.gz`, then
+
+```
+tar -xzf RealmReforged-linux-x86_64.tar.gz
+cd RealmReforged-linux
+./play.sh                      # solo
+./host.sh                      # host a co-op server (port 50777)
+./join.sh 100.64.0.7 Alex      # join a server
+```
+
+**Cross-platform co-op works**: a Linux client can join a Windows server and
+vice versa - it's the same plain TCP protocol. Everyone just needs builds
+from the **same release** (mixing versions isn't supported).
+
+**Saves** (characters, accounts, vaults, friends, crews, `settings.json`,
+the music cache) are written **next to the executable/scripts**. In co-op,
+characters live on the **host's** PC - always use the same host, and keep
+that folder when you update to a new release.
+
+### Playing with a friend from different homes
+
+1. **Easiest - a free virtual LAN (no router setup):** both install
+   [Tailscale](https://tailscale.com) (or ZeroTier / Radmin VPN) and join the
+   same network. The host's PC gets an address like `100.x.y.z` (see the
+   Tailscale tray/`tailscale ip -4`).
+2. **Or port forwarding:** on the host's router forward **TCP 50777** to the
+   host PC, and give your friend your public IP. (Doesn't work behind CGNAT;
+   exposes the port publicly - the server has no passwords.)
+3. Host starts the server (`RealmReforged-Server.exe` / `./host.sh`) and
+   allows it through the firewall (Windows asks on first run; on Ubuntu with
+   ufw: `sudo ufw allow 50777/tcp`).
+4. Everyone, including the host, joins with the client: host uses
+   `127.0.0.1`, friends use the Tailscale/public address.
+
+The first trip into the Realm downloads the ~5 MB world map once, so it can
+take a few seconds over the internet.
 
 ## Play solo (from source)
 
 ```
-.venv\Scripts\python.exe main.py
+.venv\Scripts\python.exe main.py          # Windows
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && .venv/bin/python main.py   # Linux/macOS
 ```
 
 That's it - single-player needs nothing else running.

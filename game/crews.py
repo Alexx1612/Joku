@@ -9,9 +9,11 @@ pattern as accounts.py/friends.py/vault/achievements.
 import json
 import os
 
+from game import paths as _paths
+
 from game.accounts import sanitize_name
 
-CREWS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "crews")
+CREWS_DIR = _paths.data_path("crews")
 _MEMBERS_PATH = os.path.join(CREWS_DIR, "_members.json")
 
 

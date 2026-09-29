@@ -12,6 +12,8 @@ README for the honest scope of what was and wasn't hand-verified.
 import json
 import math
 import os
+
+from game import paths as _paths
 import random
 from dataclasses import dataclass, field
 from game.constants import TIER_COLORS, BAG_COLORS
@@ -966,7 +968,7 @@ def wish_fountain(player):
 # RotMG's real vault is a row of separate chests (8 slots each) you flip
 # between, not one giant grid - VAULT_CHEST_SIZE/VAULT_SLOTS below mirror that
 # (7 chests, matching the real game's default vault chest count).
-VAULT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "vaults")
+VAULT_DIR = _paths.data_path("vaults")
 VAULT_CHEST_SIZE = 8
 VAULT_CHEST_COUNT = 12  # 12 permanent chests in the vault room (Batch 15; was 10)
 VAULT_SLOTS = VAULT_CHEST_SIZE * VAULT_CHEST_COUNT
