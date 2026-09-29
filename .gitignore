@@ -7,7 +7,7 @@ __pycache__/
 # (binary downloads), never committed into git history/repo size
 build/
 dist/
-*.spec
+# *.spec - NOT ignored: the three RealmReforged*.spec files are the build configs CI uses
 
 # IDE
 .idea/
