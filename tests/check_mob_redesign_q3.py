@@ -31,7 +31,7 @@ def check_all_render_valid_nonempty_surfaces():
     for kind in Q3_KINDS:
         surf = sprites.enemy_sprite(kind)
         assert isinstance(surf, pygame.Surface), f"{kind}: not a Surface"
-        assert surf.get_size() == (48, 48), f"{kind}: unexpected size {surf.get_size()}"
+        assert max(surf.get_size()) == 48, f"{kind}: unexpected size {surf.get_size()}"  # aspect preserved (sprite audit)
         raw = _bytes(kind)
         assert any(b != 0 for b in raw), f"{kind}: fully empty/transparent surface"
 

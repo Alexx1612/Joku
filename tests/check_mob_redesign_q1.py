@@ -43,7 +43,7 @@ def check_all_five_render_valid_surfaces():
     for kind in Q1_KINDS:
         surf = sprites.enemy_sprite(kind)
         assert isinstance(surf, pygame.Surface), f"{kind}: not a Surface"
-        assert surf.get_size() == (sprites.FINAL_SIZE, sprites.FINAL_SIZE), (
+        assert max(surf.get_size()) == sprites.FINAL_SIZE, (
             f"{kind}: expected {(sprites.FINAL_SIZE, sprites.FINAL_SIZE)}, got {surf.get_size()}"
         )
         px = _pixels(surf)

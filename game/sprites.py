@@ -34,7 +34,13 @@ def _load_art(filename, size):
     try:
         img = pygame.image.load(path).convert_alpha()
         if img.get_size() != target:
-            img = pygame.transform.scale(img, target)
+            # shrinking pixel art with nearest-neighbour by a non-integer factor
+            # (128 -> 48) drops rows/columns unevenly; averaging keeps it even.
+            # Enlarging stays nearest-neighbour so the pixels stay crisp.
+            if target[0] < img.get_width() or target[1] < img.get_height():
+                img = pygame.transform.smoothscale(img, target)
+            else:
+                img = pygame.transform.scale(img, target)
         return img
     except Exception:
         return None
@@ -1507,6 +1513,564 @@ def _validate_grids(named_grids):
             raise ValueError(f"sprite '{name}': grid uses char(s) {sorted(missing)} with no palette entry")
 
 
+
+# ---------------------------------------------------------------------------
+# Sprite-audit redraws (2026-09-29): the island mini-bosses were wide flat
+# "construct body" boxes and the generic dungeon boss / Mad God reused an
+# abstract framed-eye emblem - none read as a creature at a glance. These are
+# symmetric silhouettes drawn as a LEFT HALF and mirrored (the centre column is
+# doubled), in each kind's existing palette. NPCs got their own sprites instead
+# of tinted copies of the class sprites (two warriors / two necromancers were
+# indistinguishable). All original art.
+def _mirror(half_rows):
+    w = max(len(r) for r in half_rows)
+    return [r.ljust(w) + r.ljust(w)[::-1] for r in half_rows]
+
+
+def _pad(rows, width=16):
+    return [r.ljust(width) for r in rows]
+
+
+# horned demon lord (dungeon boss) - orange horns, purple hide, cream/red eyes, gold belt
+_DEMON_LORD = _mirror([
+    " OO        ",
+    " OOO       ",
+    "  OOO   KKK",
+    "   OOOKKooo",
+    "    OKooooo",
+    "    KoEE9oo",
+    "    KooooKK",
+    "  KKKoorrrr",
+    " KoooKKoooo",
+    "KoooooKKooo",
+    "Kooo KoooKr",
+    "Koo  KoooKr",
+    "999  Koooor",
+    " 9   KKoooo",
+    "      Kooo ",
+    "     KooK  ",
+    "     KKK   ",
+])
+
+# robed Mad God - crown spikes, glowing eyes, arms spread wide, flowing robe
+_MAD_GOD_FIGURE = _mirror([
+    "       O  O",
+    "       OOOO",
+    "      OrOrO",
+    "      KKKKK",
+    "      KEEKK",
+    "      KKKKK",
+    "O     ooooo",
+    "OO   ooOOoo",
+    " OOooooOOoo",
+    "  Oooo KOoo",
+    "      KoOoo",
+    "      KoOoo",
+    "     KooOoo",
+    "     KooOoo",
+    "    KoooOoo",
+    "    K99999o",
+    "   KKKKKKKK",
+])
+
+# magma golem: rock head with gold eye slits, huge shoulders, glowing fists
+_CINDER_COLOSSUS_NEW = _mirror([
+    "       tttt",
+    "      tCCCC",
+    "      tCEEC",
+    "      tCCCM",
+    "   tttttCCC",
+    "  tCCCCCttt",
+    " tCwwwCCwww",
+    "tCwwwCCwwwM",
+    "tCwwCCwwwMM",
+    "tCwwCtCwwww",
+    "tCwCt tCwww",
+    "tMMMt tCCCC",
+    "tMEMt  tCCC",
+    " ttt   tCCt",
+    "       tCCt",
+    "      tsss ",
+    "      tttt ",
+])
+_CINDER_COLOSSUS_NEW_PAL = dict(_CINDER_COLOSSUS_PAL, M=(255, 120, 30))
+
+# rock-armoured warlord: horned helm, spiked pauldrons, heavy stance
+_RUBBLE_WARLORD_NEW = _mirror([
+    "  f        ",
+    "  Df   DDDD",
+    "   DD DdddD",
+    "    DDdEEdd",
+    "     DddddD",
+    "  fffDDDDDD",
+    " fDDDfddddd",
+    "fDdddfDDddd",
+    "fDddDfdDDdd",
+    " fDDf dDddd",
+    "  dd  dDDdd",
+    "  dd  ddddd",
+    "      DD dd",
+    "     DDd dd",
+    "     ffff f",
+])
+
+# hooded ember wraith: tattered robe, burning eyes, clawed hands, ragged hem
+_ASHREACH_REVENANT_NEW = _mirror([
+    "      dddd",
+    "     dCCCC",
+    "    dCvvvv",
+    "    dCvEvv",
+    "    dCvvvv",
+    "   ddCCvvC",
+    "  dCCCoCCC",
+    " tCd oCooC",
+    "tt   oCoCC",
+    "     oCoCo",
+    "     dCooC",
+    "    dCCoCo",
+    "    d Cd C",
+    "   d  d  d",
+])
+
+# siren queen: tall spiked crown, flowing hair, raised arms, fish tail
+_CHOIR_SOVEREIGN_NEW = _mirror([
+    "     G G  G",
+    "     GGGGGG",
+    "     hvvvvv",
+    "    hhEvvEh",
+    "    hhhhhhh",
+    "   hhhoCCCC",
+    " G hhoCCCCC",
+    " GGhoCCGCCC",
+    "   hoCCCCCC",
+    "   h oCCCCo",
+    "      oCCCo",
+    "       oCCd",
+    "       ddCd",
+    "      dd dd",
+    "     dd   d",
+])
+
+# sea serpent rising from the water: finned head, toothy maw, coiled body
+_CORAL_LEVIATHAN_NEW = _mirror([
+    "  s    sss ",
+    "  ss  sooo ",
+    "   sssooooo",
+    "    soEoooo",
+    "    soooooo",
+    "     sttttt",
+    "     svvvvv",
+    "    s sooos",
+    "   ss sooos",
+    "  sso soooo",
+    " ssoo  sooo",
+    " soo   sCCo",
+    " soo  sCoCo",
+    "  sooosCooC",
+    "   ssssCCCC",
+])
+
+# mossy boulder giant covered in thorn spikes
+_THORNROCK_COLOSSUS_NEW = _mirror([
+    "     G  G  ",
+    "     tGttGt",
+    "    twwwwww",
+    "    twEwwwE",
+    "  G twwwwww",
+    " GttttGGwww",
+    " twwwwtwwww",
+    "twwCwwwtGww",
+    "twwCCwwtwww",
+    "GwwC twwwww",
+    " GG  twwCww",
+    "     twCCww",
+    "    twwC ww",
+    "    tttt tt",
+])
+
+# giant devourer toad: wide maw of teeth, bulging eyes, stubby legs
+_ASHENREACH_DEVOURER_NEW = _mirror([
+    "    DDD    ",
+    "   DeEeD   ",
+    "   DEEED DD",
+    "  DDDDDDDdd",
+    " DdddddddDD",
+    "DdddddddddT",
+    "DDDDDDDDDDD",
+    "DEEEEEEEEEE",
+    "DDDDDDDDDDT",
+    "DdddddddddD",
+    " DdddddddDD",
+    "  DD   DDD ",
+    " DDD    DD ",
+])
+_ASHENREACH_DEVOURER_NEW_PAL = dict(_ASHENREACH_DEVOURER_PAL, T=(245, 240, 225))
+
+# --- NPC people (16 wide, same scale as the class sprites) -------------------
+_NPC_BARKEEP = (_pad([
+    "      hhhh      ",
+    "     hhhhhh     ",
+    "     hEhhEh     ",
+    "     mmmmmm     ",
+    "      hhhh      ",
+    "    bbbbbbbb yy ",
+    "   bbwwwwwwbbyyy",
+    "   hbwwwwwwb yy ",
+    "   h wwwwww     ",
+    "     wwwwww     ",
+    "     wwwwww     ",
+    "     bb  bb     ",
+    "     ll  ll     ",
+    "     kk  kk     ",
+]), {"h": (240, 195, 160), "E": (30, 25, 25), "m": (110, 70, 40), "b": (120, 80, 50), "w": (235, 230, 215),
+     "y": (230, 190, 60), "l": (60, 45, 35), "k": (35, 28, 20)})
+_NPC_MOSSBEARD = (_pad([
+    "      gggg      ",
+    "     gggggg     ",
+    "    gghhhhgg    ",
+    "  t ghEhhEhg    ",
+    "  t gWWWWWWg    ",
+    "  t gWWWWWWgg   ",
+    "  thgWWWWWWggg  ",
+    "  t gWWWWWWgg   ",
+    "  t ggWWWWggg   ",
+    "  t gggWWggg    ",
+    "  t ggggggggg   ",
+    "  t gggggggg    ",
+    "    kk    kk    ",
+]), {"g": (70, 110, 60), "h": (220, 185, 150), "E": (30, 25, 25), "W": (235, 235, 230), "t": (110, 75, 40),
+     "k": (45, 35, 25)})
+_NPC_SANDY_SAL = (_pad([
+    "     TTTTTT     ",
+    "    TTTTTTTT    ",
+    "    TThhhhTT    ",
+    "     hEhhEh     ",
+    "     hhhhhh     ",
+    "   ppssssssp    ",
+    "  pppaaaaaapp   ",
+    "  pppaaaaaappp  ",
+    "  pphaaaaaahpp  ",
+    "   p aaaaaa p   ",
+    "     aaaaaa     ",
+    "     aa  aa     ",
+    "     kk  kk     ",
+]), {"T": (240, 230, 200), "h": (200, 150, 105), "E": (30, 25, 25), "s": (200, 80, 50), "a": (215, 180, 120),
+     "p": (130, 90, 50), "k": (70, 50, 30)})
+_NPC_FROSTINE = (_pad([
+    "     FFFFFF    r",
+    "    FFFFFFFF  r ",
+    "    FFhhhhFF r  ",
+    "    FhEhhEhFr   ",
+    "    FFhhhhFr    ",
+    "    PPPPPPPr    ",
+    "   PPPPPPPhr    ",
+    "   PPPPPPPP     ",
+    "   hPPPPPPh     ",
+    "    PPPPPP      ",
+    "    PPPPPP      ",
+    "    ll  ll      ",
+    "    kk  kk      ",
+]), {"F": (240, 245, 250), "h": (235, 200, 175), "E": (40, 60, 90), "P": (110, 160, 210), "r": (150, 110, 70),
+     "l": (60, 70, 90), "k": (40, 40, 50)})
+_NPC_DRIFTWOOD = (_pad([
+    "  yKKKKKKKKy    ",
+    "   KKKKKKKK     ",
+    "    KKKKKK      ",
+    "     hEhhEh     ",
+    "     bbbbbb     ",
+    "      bbbb      ",
+    "    RRyyyyRR    ",
+    "   RRRRRRRRRR   ",
+    "   hRRRRRRRRs   ",
+    "    RRRRRRRRs   ",
+    "    RR    RR    ",
+    "    ll    tt    ",
+    "    kk    tt    ",
+]), {"K": (35, 30, 35), "y": (230, 190, 60), "h": (220, 175, 135), "E": (30, 25, 25), "b": (100, 65, 35),
+     "R": (150, 40, 40), "s": (190, 190, 200), "l": (60, 45, 35), "k": (35, 28, 20), "t": (140, 100, 60)})
+_NPC_MURK = (_pad([
+    "       V        ",
+    "      VVV       ",
+    "     VVVVV      ",
+    "   VVVVVVVVV    ",
+    "     GEGGEG     ",
+    "     GGGGGG     ",
+    "    vvvvvvvv  y ",
+    "   vvvvvvvvvvy  ",
+    "   Gvvvvvvvvy   ",
+    "    vvvvvvvv    ",
+    "    vvvvvvvv    ",
+    "   vvvvvvvvvv   ",
+    "     kk  kk     ",
+]), {"V": (90, 50, 120), "G": (120, 170, 110), "E": (230, 220, 60), "v": (60, 35, 80), "y": (170, 140, 90),
+     "k": (35, 25, 35)})
+_NPC_TIPSY = (_pad([
+    "     bbhhbb     ",
+    "    bhhhhhhb    ",
+    "     hEhhEh     ",
+    "     hhRRhh     ",
+    "      hhhh      ",
+    "    MMMMMMMM    ",
+    "   MMMMMMMMMM G ",
+    "   hMMMMMMMMMGG ",
+    "    yyyyyyyy GG ",
+    "    MMMMMMMM    ",
+    "    MMMMMMMM    ",
+    "   MMMMMMMMMM   ",
+    "     kk  kk     ",
+]), {"b": (110, 75, 45), "h": (235, 190, 150), "E": (30, 25, 25), "R": (220, 90, 80), "M": (130, 90, 55),
+     "y": (220, 200, 130), "G": (70, 150, 80), "k": (60, 40, 25)})
+_NPC_CINDER_PETE = (_pad([
+    "     RRRRRR     ",
+    "     hhhhhh     ",
+    "     hEhhEh     ",
+    "     hddddh     ",
+    "      hhhh      ",
+    "   hhLLLLLLhh ss",
+    "   hhLLLLLLhhsss",
+    "   h LLLLLL  tt ",
+    "   h LLLLLL  t  ",
+    "     LLLLLL  t  ",
+    "     ll  ll     ",
+    "     ll  ll     ",
+    "     kk  kk     ",
+]), {"R": (200, 60, 40), "h": (215, 160, 120), "E": (30, 25, 25), "d": (60, 45, 40), "L": (110, 70, 40),
+     "s": (130, 130, 140), "t": (100, 70, 40), "l": (70, 50, 40), "k": (35, 28, 20)})
+_NPC_FERNLEAF = (_pad([
+    "      gggg      ",
+    "    gggggggg    ",
+    "     hhhhhh     ",
+    "     oEooEo     ",
+    "     hhhhhh     ",
+    "    wwwwwwww    ",
+    "   wwwwwwwwww   ",
+    "   hwwwwwwwBB   ",
+    "    wwwwwwwBB   ",
+    "    wwwwwwww    ",
+    "    wwwwwwww    ",
+    "     ll  ll     ",
+    "     kk  kk     ",
+]), {"g": (80, 160, 70), "h": (230, 195, 160), "E": (30, 25, 25), "o": (200, 200, 210), "w": (235, 240, 235),
+     "B": (140, 60, 40), "l": (70, 90, 60), "k": (40, 35, 25)})
+_NPC_GLIMMER = (_pad([
+    "   pppppppppp   ",
+    "     pppppp     ",
+    "     hhhhhh     ",
+    "     hEhhEh     ",
+    "      hhhh      ",
+    "    ccsssscc    ",
+    "   cccccccccc   ",
+    "  mmmmcccccc    ",
+    "  mmmmcccccc    ",
+    "  mmmm cccc     ",
+    "     cccccc     ",
+    "     cc  cc     ",
+    "     kk  kk     ",
+]), {"p": (205, 180, 120), "h": (225, 185, 150), "E": (60, 40, 110), "s": (170, 140, 255), "c": (90, 80, 130),
+     "m": (240, 225, 180), "k": (35, 30, 40)})
+
+ENEMY_GRIDS.update({
+    "boss": (_DEMON_LORD, _BOSS_PAL), "boss_phase2": (_DEMON_LORD, _BOSS_PHASE2_PAL),
+    "mad_god": (_MAD_GOD_FIGURE, _MAD_GOD_PAL), "mad_god_phase2": (_MAD_GOD_FIGURE, _MAD_GOD_PHASE2_PAL),
+    "cinder_colossus": (_CINDER_COLOSSUS_NEW, _CINDER_COLOSSUS_NEW_PAL),
+    "rubble_warlord": (_RUBBLE_WARLORD_NEW, _RUBBLE_WARLORD_PAL),
+    "ashreach_revenant": (_ASHREACH_REVENANT_NEW, _ASHREACH_REVENANT_PAL),
+    "choir_sovereign": (_CHOIR_SOVEREIGN_NEW, _CHOIR_SOVEREIGN_PAL),
+    "coral_leviathan": (_CORAL_LEVIATHAN_NEW, _CORAL_LEVIATHAN_PAL),
+    "thornrock_colossus": (_THORNROCK_COLOSSUS_NEW, _THORNROCK_COLOSSUS_PAL),
+    "ashenreach_devourer": (_ASHENREACH_DEVOURER_NEW, _ASHENREACH_DEVOURER_NEW_PAL),
+    "npc_barkeep": _NPC_BARKEEP, "npc_mossbeard": _NPC_MOSSBEARD, "npc_sandy_sal": _NPC_SANDY_SAL,
+    "npc_frostine": _NPC_FROSTINE, "npc_driftwood": _NPC_DRIFTWOOD, "npc_murk": _NPC_MURK,
+    "npc_tipsy": _NPC_TIPSY, "npc_cinder_pete": _NPC_CINDER_PETE, "npc_fernleaf": _NPC_FERNLEAF,
+    "npc_glimmer": _NPC_GLIMMER,
+})
+
+
+
+# island guardians / wide mobs that were generic "box" bodies (same audit)
+_RUBBLE_CRAWLER_NEW = _mirror([          # rock beetle, top-down: plated dome, six legs
+    "   kk    ",
+    "    k bbb",
+    " k  bBBBB",
+    "  k bBeBB",
+    "kk bbBBBB",
+    "   bbbbbb",
+    "kk bBlBBl",
+    "   bbBBBB",
+    "  kbbbBBB",
+    " k  bbbbb",
+    "k    kkk ",
+])
+_SHARD_SENTINEL_NEW = _mirror([          # stone pillar with a shard crown and one glowing eye band
+    "   t   tt",
+    "   tt thh",
+    "    ttohh",
+    "     oooo",
+    "    oCEEE",
+    "    oCCCC",
+    " t  oohhh",
+    "tht oohhh",
+    " t  ooCCC",
+    "    oohhh",
+    "    ooCCC",
+    "   vvvvvv",
+    "  vvv  vv",
+])
+_ECHO_KNIGHT_NEW = _mirror([             # plumed helm with a glowing visor, pauldrons, greaves
+    "       tt",
+    "      ttt",
+    "    vvvvv",
+    "   vhhhhh",
+    "   vhvvvv",
+    "   vhvEEv",
+    "   vhhhhh",
+    " vvvooooo",
+    "vhhhoCCoo",
+    "vhhhoCCoo",
+    " vv oCCoo",
+    "    oo  o",
+    "    CC  C",
+    "   dddd d",
+])
+_PEARL_ACOLYTE_NEW = _mirror([           # hooded acolyte cradling a glowing pearl
+    "     oooo",
+    "    ohhhh",
+    "   ohvEvv",
+    "   ohvvvv",
+    "    ohhhh",
+    "   oohhhh",
+    "  oohhhhh",
+    " ohh tttt",
+    " oh  tEEt",
+    "   ohhhhh",
+    "   ohhhhh",
+    "  oohhhhh",
+    "  CCCCCCC",
+])
+_BRINE_CRAWLER_NEW = _mirror([           # crab: raised claws, eye stalks, jointed legs
+    " BB      ",
+    "BbbB  e  ",
+    "BbbB  s  ",
+    " bb  bbbb",
+    "  bbbBBBB",
+    "   bBBBBB",
+    "   bbBBBB",
+    " l  bbbbb",
+    "l  l bbbb",
+    "  l  l ll",
+])
+_FRACTURE_HOUND_NEW = [                  # side-on hound mid-lope (asymmetric on purpose)
+    "           DD   ",
+    "          DDDE  ",
+    "   D     DDDDDD ",
+    "  DD DDDDDDDDd  ",
+    "  DdDDDDDDDDd   ",
+    "   dDDDDDDDd    ",
+    "    DD  DD      ",
+    "    Dd  Dd      ",
+    "    ff  ff      ",
+]
+_KELP_STALKER_NEW = _mirror([            # seaweed humanoid trailing long kelp fronds
+    " D     dd",
+    " DD   dDD",
+    "  DD dDDD",
+    "   DddDEE",
+    "   dddDDD",
+    "  D ddDDD",
+    " DD  dDDD",
+    "DD   dDDd",
+    "D    dDDd",
+    "    ddDDd",
+    "    dd dd",
+    "   ff  ff",
+])
+_DROWNED_CUSTODIAN_NEW = _mirror([       # drowned knight: barnacled helm, glowing eyes
+    "    CCCCC",
+    "   CPPPPP",
+    "   CPEPPE",
+    "   CPPPPP",
+    " CCCppppp",
+    "CPPPpPPPP",
+    "CPP pPPPP",
+    "CP  pPPPP",
+    "    pPPPP",
+    "    pP  P",
+    "   CC   C",
+])
+_STONE_REVENANT_NEW = _mirror([          # floating stone skull ringed by orbiting shards
+    " P      P",
+    "PP       ",
+    "     CCCC",
+    "    CPPPP",
+    "   CPPPPP",
+    "   CPEEPP",
+    "   CPEEPP",
+    "   CPPPPp",
+    "    CPPpp",
+    " P   CPPp",
+    "PP   pPpp",
+    "      pp ",
+])
+_CINDER_WARDEN_NEW = _mirror([           # flame-crowned guardian with burning hands
+    "   o  o  ",
+    "   oo oo ",
+    "    ooooo",
+    "    dDDDD",
+    "    dEDDE",
+    "    dDDDD",
+    " o  ddddd",
+    "ooddDDDDD",
+    "ootdDDoDD",
+    " o tdDDDD",
+    "    tdDDD",
+    "    tt tt",
+])
+_DESERT_LIZARD_NEW = _mirror([           # top-down lizard: head, four splayed legs, long tail
+    "    gg",
+    "   gbB",
+    "   ebB",
+    "    gb",
+    " l  gb",
+    " ll gb",
+    "  lgbB",
+    "   gbB",
+    " llgbB",
+    " l  gb",
+    "    gb",
+    "     g",
+    "     g",
+])
+_SHATTERED_GOLEM_NEW = _mirror([         # cracked stone golem with a glowing core
+    "    wwww ",
+    "   wCCCC ",
+    "   wCEEC ",
+    "  uuwwwww",
+    " uwwwuCCC",
+    "uwwwwuCtt",
+    "uww uwCCC",
+    "uw  uwwww",
+    "tt  uwCCC",
+    "    uw  C",
+    "   uww  w",
+    "   sss  s",
+])
+
+ENEMY_GRIDS.update({
+    "rubble_crawler": (_RUBBLE_CRAWLER_NEW, ENEMY_GRIDS["rubble_crawler"][1]),
+    "shard_sentinel": (_SHARD_SENTINEL_NEW, ENEMY_GRIDS["shard_sentinel"][1]),
+    "echo_knight": (_ECHO_KNIGHT_NEW, ENEMY_GRIDS["echo_knight"][1]),
+    "pearl_acolyte": (_PEARL_ACOLYTE_NEW, ENEMY_GRIDS["pearl_acolyte"][1]),
+    "brine_crawler": (_BRINE_CRAWLER_NEW, ENEMY_GRIDS["brine_crawler"][1]),
+    "fracture_hound": (_FRACTURE_HOUND_NEW, ENEMY_GRIDS["fracture_hound"][1]),
+    "kelp_stalker": (_KELP_STALKER_NEW, ENEMY_GRIDS["kelp_stalker"][1]),
+    "drowned_custodian": (_DROWNED_CUSTODIAN_NEW, ENEMY_GRIDS["drowned_custodian"][1]),
+    "stone_revenant": (_STONE_REVENANT_NEW, ENEMY_GRIDS["stone_revenant"][1]),
+    "cinder_warden": (_CINDER_WARDEN_NEW, ENEMY_GRIDS["cinder_warden"][1]),
+    "desert_lizard": (_DESERT_LIZARD_NEW, ENEMY_GRIDS["desert_lizard"][1]),
+    "shattered_golem": (_SHATTERED_GOLEM_NEW, ENEMY_GRIDS["shattered_golem"][1]),
+})
+
+
 _validate_grids(CLASS_GRIDS)
 _validate_grids(ENEMY_GRIDS)
 
@@ -1537,38 +2101,36 @@ BOSS_KINDS = {"boss", "frost_monarch", "ash_behemoth", "void_reaper", "thorn_war
               "driftbell_matriarch", "abyssal_choirmaster", "mad_god", "mad_god_phase2"}
 
 
+def _fit(size_wh, longest):
+    """(w, h) scaled so its longest side is `longest`, aspect ratio preserved."""
+    w, h = size_wh
+    f = longest / max(w, h)
+    return max(1, round(w * f)), max(1, round(h * f))
+
+
 def enemy_sprite(kind: str, scale: float = 1.0) -> pygame.Surface:
-    """scale != 1 (Batch 15 E4 - big bosses/guardians): the normal sprite smoothscaled
-    by that factor, cached separately per (kind, scale)."""
-    if scale and abs(scale - 1.0) > 1e-3:
-        skey = ("enemy", kind, round(scale, 2))
-        if skey not in _cache:
-            base = enemy_sprite(kind)
-            _cache[skey] = pygame.transform.smoothscale(
-                base, (max(1, round(base.get_width() * scale)), max(1, round(base.get_height() * scale))))
+    """Aspect ratio is ALWAYS preserved (the longest side is FINAL_SIZE, or
+    BOSS_FINAL_SIZE for BOSS_KINDS) - non-square grids/PNGs used to be squashed
+    into a 48x48 square. scale != 1 (big bosses/guardians) re-renders from the
+    high-resolution source at the larger size instead of blowing the 48px result
+    up with smoothscale, so scaled sprites stay crisp."""
+    scale = scale or 1.0
+    skey = ("enemy", kind, round(scale, 2))
+    if skey in _cache:
         return _cache[skey]
-    key = ("enemy", kind)
-    if key not in _cache:
-        grid, pal = ENEMY_GRIDS[kind]
-        if kind in BOSS_KINDS:
-            base = _autline_and_render(grid, pal, PX)
-            native = _art_native_size(f"enemies/enemy_{kind}.png")
-            if native is not None:
-                nw, nh = native
-                scale = BOSS_FINAL_SIZE / max(nw, nh)
-                target = (max(1, round(nw * scale)), max(1, round(nh * scale)))
-            else:
-                w, h = base.get_size()
-                target = (BOSS_FINAL_SIZE, int(BOSS_FINAL_SIZE * h / w))
-        else:
-            base = _autline_and_render(grid, pal, PX)
-            target = (FINAL_SIZE, FINAL_SIZE)
+    grid, pal = ENEMY_GRIDS[kind]
+    longest = (BOSS_FINAL_SIZE if kind in BOSS_KINDS else FINAL_SIZE) * scale
+    native = _art_native_size(f"enemies/enemy_{kind}.png")
+    if native is not None:
+        target = _fit(native, longest)
         art = _load_art(f"enemies/enemy_{kind}.png", target)
         if art is not None:
-            _cache[key] = art
-        else:
-            _cache[key] = _upscale(base, UPSCALE_PASSES, final_size=target)
-    return _cache[key]
+            _cache[skey] = art
+            return art
+    base = _autline_and_render(grid, pal, PX)
+    target = _fit(base.get_size(), longest)
+    _cache[skey] = _upscale(base, UPSCALE_PASSES, final_size=target)
+    return _cache[skey]
 
 
 def _radial_shade(surf, center, radius, base_color, steps=None):

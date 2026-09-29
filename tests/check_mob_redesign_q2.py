@@ -37,7 +37,7 @@ def check_all_five_render_valid_surfaces():
     for kind in Q2_KINDS:
         surf = sprites.enemy_sprite(kind)
         assert isinstance(surf, pygame.Surface), f"{kind}: enemy_sprite did not return a Surface"
-        assert surf.get_size() == (sprites.FINAL_SIZE, sprites.FINAL_SIZE), \
+        assert max(surf.get_size()) == sprites.FINAL_SIZE, \
             f"{kind}: expected {sprites.FINAL_SIZE}x{sprites.FINAL_SIZE}, got {surf.get_size()}"
         # a real drawn sprite has more than a handful of non-transparent pixels
         opaque = sum(1 for y in range(surf.get_height()) for x in range(surf.get_width())

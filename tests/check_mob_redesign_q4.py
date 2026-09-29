@@ -45,7 +45,7 @@ def check_q4_sprites_render_and_are_valid_surfaces():
     for kind in Q4_KINDS:
         surf = sprites.enemy_sprite(kind)
         assert isinstance(surf, pygame.Surface), f"{kind}: enemy_sprite did not return a Surface"
-        assert surf.get_size() == (sprites.FINAL_SIZE, sprites.FINAL_SIZE), (
+        assert max(surf.get_size()) == sprites.FINAL_SIZE, (
             f"{kind}: expected {sprites.FINAL_SIZE}x{sprites.FINAL_SIZE}, got {surf.get_size()}")
         # not a blank/fully-transparent surface
         raw = _pixels(surf)

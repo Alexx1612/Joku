@@ -31,7 +31,7 @@ def _offer(offer, accept, remind, thanks, label="Got any work for me?"):
 NPCS = {
     # ------------------------------------------------------------------ people --
     "bitterwick": dict(
-        name="Barkeep Bitterwick", kind="person", sprite=("player", "warrior"), tint=(210, 160, 120),
+        name="Barkeep Bitterwick", kind="person", sprite=("enemy", "npc_barkeep"), tint=None,
         zone="nexus", area="nexus:tavern", wander=2,
         greeting="Welcome to the Nexus's only tavern! It's a tavern because I said so and there's a barrel.",
         again="Anything else, friend? The barrel's listening too.",
@@ -51,7 +51,7 @@ NPCS = {
             label="Need help running the tavern?")},
         barks=["Tavern's open! It's always open. There's no door.", "Who ordered the mystery barrel?"]),
     "mossbeard": dict(
-        name="Old Mossbeard", kind="person", sprite=("player", "necromancer"), tint=(120, 170, 110),
+        name="Old Mossbeard", kind="person", sprite=("enemy", "npc_mossbeard"), tint=None,
         zone="realm", area="area:tavern_town", wander=3,
         greeting="Eh? Visitor! Mind the moss. It's been growing on me for forty years. We're very close.",
         again="What else, sprout?",
@@ -68,7 +68,7 @@ NPCS = {
             "Glowcaps! Oh, they glow. They glow so much. Take this, before I get sentimental.")},
         barks=["Hmm. Moss.", "The trees are gossiping about you again."]),
     "sal": dict(
-        name="Sandy Sal", kind="person", sprite=("player", "rogue"), tint=(230, 200, 130),
+        name="Sandy Sal", kind="person", sprite=("enemy", "npc_sandy_sal"), tint=None,
         zone="realm", area="area:oasis_bazaar", wander=3,
         greeting="Sand in your boots? Sand in your soul? Sandy Sal has deals on everything except sand.",
         again="Another question? First one's free. Also the second.",
@@ -85,7 +85,7 @@ NPCS = {
             "My bell! *ding* ...Listen. Hear that? That's the sound of a camel NOT coming back. Anyway, thanks!")},
         barks=["Sand! Get your fresh sand!", "No refunds on directions."]),
     "frostine": dict(
-        name="Frostine the Ice Fisher", kind="person", sprite=("player", "archer"), tint=(180, 220, 255),
+        name="Frostine the Ice Fisher", kind="person", sprite=("enemy", "npc_frostine"), tint=None,
         zone="realm", area="area:frozen_lake_camp", wander=2,
         greeting="Shh! You'll scare the fish. They're frozen, but they're still very jumpy.",
         again="Still here? You're letting the cold in. Somehow. Outside.",
@@ -101,7 +101,7 @@ NPCS = {
             "Five! A true Ice Fisher. Here, a prize. Don't lick it, it's frozen.")},
         barks=["...bite. Bite. BITE. ...no.", "The ice is thin today. It's always thin. That's the fun part."]),
     "driftwood": dict(
-        name="Captain Driftwood", kind="person", sprite=("player", "paladin"), tint=(170, 130, 90),
+        name="Captain Driftwood", kind="person", sprite=("enemy", "npc_driftwood"), tint=None,
         zone="realm", area="spawn", wander=3,
         greeting="Ahoy! Welcome to the Godlands' finest dock. It's the only dock. I built it from a shipwreck. My shipwreck.",
         again="Anything else, landlubber?",
@@ -126,7 +126,7 @@ NPCS = {
             label="Any jobs for a sailor?")},
         barks=["Mind the planks!", "Land ho! ...oh, we're already on land."]),
     "murk": dict(
-        name="Madame Murk", kind="person", sprite=("player", "necromancer"), tint=(150, 110, 190),
+        name="Madame Murk", kind="person", sprite=("enemy", "npc_murk"), tint=None,
         zone="realm", area="area:witchs_hollow", wander=2,
         greeting="Welcome to my hollow, dearie. Don't touch the cauldron. Don't smell the cauldron. Don't look at it.",
         again="More questions, dearie? The cauldron has questions too.",
@@ -142,7 +142,7 @@ NPCS = {
             "Perfect essence! The brew is ready. You don't want any. Here's something nicer.")},
         barks=["Double, double... hm, I forgot the rest.", "Eye of newt, ear of goblin, pinch of salt..."]),
     "tipsy": dict(
-        name="Brother Tipsy", kind="person", sprite=("player", "priest"), tint=(230, 180, 140),
+        name="Brother Tipsy", kind="person", sprite=("enemy", "npc_tipsy"), tint=None,
         zone="realm", area="area:mountain_monastery", wander=4,
         greeting="Peace be with you! And also with me. Mostly with me. Hic.",
         again="Yes, my child? Speak up, the mountains are spinning.",
@@ -159,7 +159,7 @@ NPCS = {
             "Four! My pilgrimage is complete and I never left this rock. Take my blessing. And this.")},
         barks=["Hic.", "Blessed are the thirsty."]),
     "pete": dict(
-        name="Cinder Pete", kind="person", sprite=("player", "warrior"), tint=(240, 140, 90),
+        name="Cinder Pete", kind="person", sprite=("enemy", "npc_cinder_pete"), tint=None,
         zone="realm", area="area:forge_camp", wander=2,
         greeting="Oi! Welcome to my forge camp. Mind the lava. And the other lava. And that bit's also lava.",
         again="What now? My hammer's getting cold. It's never cold.",
@@ -175,7 +175,7 @@ NPCS = {
             "Ooh, that's the good stuff! Here, something I forged earlier. It's only a little bit on fire.")},
         barks=["*CLANG*", "Hot enough for ya? Ha. It's always hot enough."]),
     "fernleaf": dict(
-        name="Professor Fernleaf", kind="person", sprite=("player", "wizard"), tint=(140, 210, 140),
+        name="Professor Fernleaf", kind="person", sprite=("enemy", "npc_fernleaf"), tint=None,
         zone="realm", area="area:botanists_glade", wander=3,
         greeting="Ah, a research assistant! Excellent. The last one was eaten by a plant. For science.",
         again="Yes, yes? Quickly, the ferns are listening.",
@@ -208,7 +208,7 @@ NPCS = {
             "SCRAP RECEIVED. HAPPINESS LEVEL: VERY SQUEAKY. HERE IS A GIFT. IT IS NOT A BOMB.")},
         barks=["BEEP.", "SQUEAK."]),
     "glimmer": dict(
-        name="Glimmer the Cartographer", kind="person", sprite=("player", "assassin"), tint=(190, 170, 255),
+        name="Glimmer the Cartographer", kind="person", sprite=("enemy", "npc_glimmer"), tint=None,
         zone="realm", area="area:crystal_caverns", wander=2,
         greeting="Oh! A light! No wait, that's your face. Hello! I'm mapping the caves. It's going... darkly.",
         again="Yes? Careful, I just put that stalactite on the map.",
