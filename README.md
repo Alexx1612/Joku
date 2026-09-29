@@ -43,6 +43,12 @@ cd RealmReforged-linux
 ./join.sh 100.64.0.7 Alex      # join a server
 ```
 
+**Linux compatibility**: the Linux binaries are built on Ubuntu 22.04, so they run on
+Ubuntu 22.04 or newer (and other x86_64 distros with glibc 2.35+; older ones such as
+Ubuntu 20.04 can run the game from source instead - see below). If a launcher says
+"Permission denied", run `chmod +x *.sh RealmReforged*` once. Every release build is
+smoke-tested on both Windows and Linux (server, game and co-op client must start).
+
 **Cross-platform co-op works**: a Linux client can join a Windows server and
 vice versa - it's the same plain TCP protocol. Everyone just needs builds
 from the **same release** (mixing versions isn't supported).
@@ -169,18 +175,21 @@ zone), `/accept` / `/decline` (trade invites) and
   nova -> nova -> chain / drain / freeze; Priest heals; Paladin heals ->
   shield; Warrior/Rogue/Assassin party haste. Abilities are telegraphed and
   never hit friendly creatures or NPCs.
-- **Enemy attacks** (`game/enemy_attacks.py`): every hostile mob has its own
-  named attack set instead of generic rings - aimed/predictive shots, shotgun
-  fans, bullet walls with a gap, telegraphed beams, sine/accelerating/homing/
-  splitting/boomerang bullets, mines, lobbed ground AoEs, dashes and leaps with
-  a wind-up, summons, shells and root pulses. Island mini-bosses have 3-4 named
-  moves and dungeon bosses 4-5 (e.g. the Vault Guardian's Aimed Shotgun /
-  Grenade Barrage / Gapped Spin / Crystal Rage); below 50% HP they enrage
-  (short roar, new moves, faster cooldowns) and phase-2 rooms add a final move.
-- **Telegraphs**: every attack winds up with a glow on the mob plus a
-  colour-coded warning - **red** aim lines and dash lanes, **orange** ground
-  circles/cones for area attacks, **purple** for homing. Full rings only come
-  after a telegraph and always have gaps.
+- **Enemy attacks** (`game/enemy_attacks.py`): **common fodder (trash) only
+  fires plain shots** - aimed, predictive, small 3-fans, 2-shot volleys, heavy
+  bolts, sine shots, boomerangs - with no warning. **Special mobs** (elites,
+  island mini-bosses, bosses, the world boss, the Mad God) carry named attack
+  sets and are genuinely hard: faster, denser patterns (gaps always kept),
+  shotgun fans, bullet walls with a gap, beams, homing/accelerating/splitting
+  bullets, mines, lobbed ground AoEs, dashes and leaps, summons, root pulses.
+  Mini-bosses have 3-4 named moves, dungeon bosses 4-6 (e.g. the Vault
+  Guardian's Aimed Shotgun / Grenade Barrage / Gapped Spin / Crystal Rage);
+  below 50% HP they enrage (roar, new moves incl. the **Crossfire** combo,
+  cooldowns x0.6) and phase-2 rooms add a final move.
+- **Telegraphs only for dangerous attacks**: ground AoEs, slams/novas, beams
+  and lance lines, dashes/leaps and boss specials show a colour-coded warning -
+  **red** aim lines and dash lanes, **orange** ground circles/cones/ring
+  warnings. Ordinary shots (from anyone) come with no hint - keep moving.
 - **Juice**: impact particles, damage numbers, hit flash, idle/walk/attack
   animation, a per-light-source night lightmap. **Screen shake is reserved for
   what matters**: getting hit yourself (scaled by damage; bigger for boss

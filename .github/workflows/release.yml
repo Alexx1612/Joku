@@ -58,6 +58,20 @@ jobs:
               raise SystemExit("server never listened")
           PY
           kill $PID || true
+      - name: Smoke test (game + co-op client start headless and stay up)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then EXT=.exe; else EXT=; fi
+          mkdir -p smoke && cd smoke
+          for BIN in RealmReforged RealmReforged-CoopClient; do
+            "../dist/$BIN$EXT" > "$BIN.log" 2>&1 & PID=$!
+            sleep 10
+            if kill -0 $PID 2>/dev/null; then
+              echo "$BIN is still running after 10s - OK"; kill $PID || true
+            else
+              echo "$BIN exited early:"; cat "$BIN.log"; exit 1
+            fi
+          done
       - name: Package (Linux)
         if: runner.os == 'Linux'
         run: |
