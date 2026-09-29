@@ -1,12 +1,11 @@
 """
 Regression check for two Batch-12 combat-feel additions:
 
-1. Ranged-mob attack telegraph: a purely-visual `Enemy._pretelegraph` flag
-   that turns on in the ~0.2s window right before an aggro'd ranged mob's
-   `_fire_cd` reaches 0 and it actually shoots - never gates/changes fire
-   timing itself, and must round-trip correctly through `net_state()` into
-   `coop_client.GhostEnemy` (server calls `e.net_state()` directly and
-   relays it verbatim - see server.py's `_snapshot_for`).
+1. Mob attack telegraph: `Enemy._pretelegraph` is on for the whole WIND-UP of
+   a move (game/enemy_attacks.py - every move is telegraphed before it fires,
+   dashes with a red lane), off once it fires, and round-trips through
+   `net_state()` into `coop_client.GhostEnemy` together with its colour
+   (`wk`: aim/aoe/homing).
 2. Buffered fire input: an early "fire" request (mouse click in
    single-player, or a `fire` input flag in co-op) that lands while the
    weapon is still on cooldown now fires automatically once the cooldown
@@ -26,70 +25,80 @@ import pygame
 pygame.init()
 screen = pygame.display.set_mode((800, 600))
 
-from game.entities import Enemy, PRETELEGRAPH_WINDOW
+from game.entities import Enemy
 from coop_client import GhostEnemy
 
 
-def _mk_ranged_enemy(fire_cd, aggro=True, pattern_override=None):
-    e = Enemy("imp", pygame.Vector2(100, 100))  # imp: rank=trash, pattern="aimed" (ranged)
+def _mk_ranged_enemy(ready=True, aggro=True, kind="imp"):
+    """imp: rank=trash, moves = Ember Flick (aimed/predictive) + Cinder Triplet.
+    Since the combat-feel rework every attack starts with a WIND-UP (the
+    telegraph) instead of a hidden _fire_cd window - `ready` makes its next
+    move available immediately."""
+    e = Enemy(kind, pygame.Vector2(100, 100))
     e.aggro = aggro
-    e._fire_cd = fire_cd
-    if pattern_override is not None:
-        e.pattern = pattern_override
+    if ready:
+        e._atk_gap = 0.0
+        for k in e._atk_cds:
+            e._atk_cds[k] = 0.0
+    else:
+        e._atk_gap = 5.0
     return e
 
 
 def check_pretelegraph_on_within_window():
-    e = _mk_ranged_enemy(fire_cd=0.15)
+    e = _mk_ranged_enemy()
     e.update(0.001, pygame.Vector2(400, 100), [], tile_map=None)
-    assert 0 < e._fire_cd <= PRETELEGRAPH_WINDOW
-    assert e._pretelegraph is True, "must glow inside the pre-fire window"
+    assert e._windup is not None and e._pretelegraph is True, "a starting move must glow (wind-up)"
+    assert e._windup_kind in ("aim", "aoe", "homing")
     e.draw(screen, lambda pos: (pos.x, pos.y))  # real draw, must not crash
     print("check_pretelegraph_on_within_window: PASSED")
 
 
 def check_pretelegraph_off_outside_window():
-    e = _mk_ranged_enemy(fire_cd=0.6)
+    e = _mk_ranged_enemy(ready=False)
     e.update(0.001, pygame.Vector2(400, 100), [], tile_map=None)
-    assert e._fire_cd > PRETELEGRAPH_WINDOW
-    assert e._pretelegraph is False, "must not glow far from firing"
+    assert e._pretelegraph is False, "must not glow while no move is winding up"
     e.draw(screen, lambda pos: (pos.x, pos.y))
     print("check_pretelegraph_off_outside_window: PASSED")
 
 
 def check_pretelegraph_off_when_not_aggro():
-    e = _mk_ranged_enemy(fire_cd=0.15, aggro=False)
+    e = _mk_ranged_enemy(aggro=False)
     e.update(0.001, pygame.Vector2(400, 100), [], tile_map=None)
     assert e._pretelegraph is False, "an idle (non-aggro) mob never telegraphs a shot"
     print("check_pretelegraph_off_when_not_aggro: PASSED")
 
 
 def check_pretelegraph_off_for_melee_pattern():
-    e = _mk_ranged_enemy(fire_cd=0.15, pattern_override="charge")
+    # renamed intent: melee DASHES are telegraphed too now - a red lane shows where it will lunge
+    e = _mk_ranged_enemy(kind="panther")
     e.update(0.001, pygame.Vector2(400, 100), [], tile_map=None)
-    assert e._pretelegraph is False, "melee 'charge' pattern has no ranged shot to telegraph"
-    print("check_pretelegraph_off_for_melee_pattern: PASSED")
+    assert e._pretelegraph is True and e._windup["move"]["tele"] == "dash"
+    assert any(z["shape"] == "line" for z in e._new_zones), "a dash wind-up must push its lane telegraph"
+    print("check_pretelegraph_off_for_melee_pattern (dash lane telegraph): PASSED")
 
 
 def check_pretelegraph_off_right_after_firing():
-    # the tick fire_cd actually crosses <= 0 and the shot is released - the enemy
-    # should NOT still show the glow on that exact tick (it just fired, no longer "about to")
-    e = _mk_ranged_enemy(fire_cd=0.02)
-    e.update(0.05, pygame.Vector2(400, 100), [], tile_map=None)
-    assert e._fire_cd > 0, "firing must have reset the cooldown to a new positive interval"
+    # the tick the wind-up completes and the shot is released - no longer "about to"
+    e = _mk_ranged_enemy()
+    e.update(0.001, pygame.Vector2(400, 100), [], tile_map=None)
+    total = e._windup["total"]
+    bullets = []
+    e.update(total + 0.01, pygame.Vector2(400, 100), bullets, tile_map=None)
+    assert bullets, "the move must fire when its wind-up ends"
     assert e._pretelegraph is False
     print("check_pretelegraph_off_right_after_firing: PASSED")
 
 
 def check_pretelegraph_survives_net_roundtrip():
-    e = _mk_ranged_enemy(fire_cd=0.15)
+    e = _mk_ranged_enemy()
     e.update(0.001, pygame.Vector2(400, 100), [], tile_map=None)
     assert e._pretelegraph is True
     state = e.net_state()
-    assert state["pretelegraph"] is True
+    assert state["pretelegraph"] is True and state["wk"] == e._windup_kind
 
     ghost_on = GhostEnemy(state)
-    assert ghost_on._pretelegraph is True
+    assert ghost_on._pretelegraph is True and ghost_on._windup_kind == e._windup_kind
     ghost_on.draw(screen, lambda pos: (pos.x, pos.y))  # shared Enemy.draw, must not crash on a Ghost
 
     # an older/plain snapshot dict missing the key entirely must default safely to False,

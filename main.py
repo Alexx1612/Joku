@@ -388,7 +388,6 @@ class Game:
             pos = p.pos
             vfx.spawn_burst(pos, (255, 120, 220), count=40, speed=(60, 230), life=(0.5, 1.0), radius=(2, 5))
             vfx.spawn_ring(pos, (255, 200, 255), max_radius=90, life=0.6)
-            vfx.trigger_shake(0.25, 4)
             audio.play_levelup()
 
     def push_feed(self, msg, color):
@@ -1207,7 +1206,7 @@ class Game:
         target = self.cam.inverse(pygame.mouse.get_pos())
         ok, msg = sim.use_ability(self.player, target, [self.player])
         if ok:
-            audio.play_ability()
+            pass  # the cast sound (per ability style) arrives via sim.sound_events ("ability")
         elif msg:
             self.push_feed(msg, (220, 120, 120))
 
@@ -1658,6 +1657,7 @@ class Game:
         for pid, msg, color in sim.events:
             self.push_feed(msg, color)
         self._drain_story_completions()
+        vfx.set_listener(p.pos, p.pid)  # shake only for things that happen to YOU (see vfx shake policy)
         vfx.dispatch(sim.vfx_events)
         for kind, family, sx, sy in sim.sound_events:
             # a continent-sized realm can have combat/idle-barks happening anywhere -
@@ -1671,6 +1671,10 @@ class Game:
                 audio.play_mob_death(family)
             elif kind == "mob_bark":
                 audio.play_mob_bark(family)
+            elif kind == "enemy_attack":
+                audio.play_enemy_attack(family)
+            elif kind == "ability":
+                audio.play_ability(family)
         for kind, text in audible_mob_speech(sim.mob_speech_events, self.player.pos):
             self.chat_log.append({"name": kind.replace("_", " ").title(), "text": text, "age": 0.0})
             self.chat_log = self.chat_log[-ui.CHAT_LOG_STORE_CAP:]
@@ -1918,6 +1922,7 @@ class Game:
         fog = mm.explored if sim.is_bonus_room else None
         sim.realm_map.canopy_overlay = True  # trunks in the floor pass, canopies drawn over entities below
         world.render_rotated_world(s, self.cam, lambda surf, cam: sim.realm_map.draw(surf, cam, surf.get_size(), fog=fog))
+        vfx.draw_enemy_zones(s, self.cam, sim.enemy_zones)  # attack telegraphs, under everything that moves
         for g in sim.ground_items:
             g.draw(s, self.cam)
         for pt in sim.portals:

@@ -1082,6 +1082,7 @@ def _snapshot_core(state, s):
         "boss": sim.boss is not None, "kill_count": sim.kill_count, "feed": feed,
         "popups": [list(p) for p in sim.damage_popups],
         "vfx": [list(v) for v in sim.vfx_events],
+        "zones": sim.zone_snapshot(p_pos, INTEREST_RADIUS),
         "sound": [list(sd) for sd in sim.sound_events],
         "mob_speech": [list(sp) for sp in audible_mob_speech(sim.mob_speech_events, p_pos)],
         "difficulty": sim.difficulty["name"] if sim.difficulty else None,

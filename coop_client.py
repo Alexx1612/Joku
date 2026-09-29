@@ -78,6 +78,11 @@ class GhostEnemy:
         self.neutral = d.get("neutral", False)
         self.scale = d.get("scale")  # per-instance sprite/hitbox scale (e.g. landmark guardians)
         self.visible = d.get("visible", True)  # server-computed real LOS - see server.py::_snapshot_for
+        # attack tells (game/enemy_attacks.py): wind-up colour/progress, dashing, shelled
+        self._windup_kind = d.get("wk")
+        self._windup_frac = d.get("wf", 0.0)
+        self._dashing_vis = d.get("ds", False)
+        self._shelled_vis = d.get("sh", False)
 
 
 class GhostBullet:
@@ -1579,7 +1584,6 @@ class CoopClient:
                 pos = self.you.pos
                 vfx.spawn_burst(pos, (255, 120, 220), count=40, speed=(60, 230), life=(0.5, 1.0), radius=(2, 5))
                 vfx.spawn_ring(pos, (255, 200, 255), max_radius=90, life=0.6)
-                vfx.trigger_shake(0.25, 4)
                 audio.play_levelup()
 
         sr = self.link.pop_socket_result()
@@ -1714,6 +1718,7 @@ class CoopClient:
                 weather_kind = world.weather_for_tile(self.tilemap.tile_at(you.pos.x, you.pos.y))
                 mm.reveal(you.pos, radius=weather.reveal_radius_for(weather_kind, minimap.REVEAL_RADIUS_TILES))
             self.enemies = [GhostEnemy(d) for d in snap["enemies"]]
+            self.enemy_zones = snap.get("zones", [])
             self.bullets = [GhostBullet(d) for d in snap["bullets"]]
             self.ground_items = [GhostBag(d) for d in snap["ground_items"]]
             self.portals = [GhostPortal(d) for d in snap["portals"]]
@@ -1741,6 +1746,8 @@ class CoopClient:
             for msg, color in snap.get("feed", []):
                 self.feed.insert(0, [msg, color, 4.0])
             self.feed = self.feed[:4]
+            # hits on OTHER players arrive here too - only the local player's shake
+            vfx.set_listener(you.pos, getattr(self, "welcome_pid", None))
             vfx.dispatch(snap.get("vfx", []))
             for kind, family, sx, sy in snap.get("sound", []):
                 # distance-cull, same fix/reasoning as main.py's single-player consumption -
@@ -1754,6 +1761,10 @@ class CoopClient:
                     audio.play_mob_death(family)
                 elif kind == "mob_bark":
                     audio.play_mob_bark(family)
+                elif kind == "enemy_attack":
+                    audio.play_enemy_attack(family)
+                elif kind == "ability":
+                    audio.play_ability(family)
             for kind, text in snap.get("mob_speech", []):
                 self.chat_log.append({"name": kind.replace("_", " ").title(), "text": text, "age": 0.0})
             self.chat_log = self.chat_log[-ui.CHAT_LOG_STORE_CAP:]
@@ -2068,6 +2079,7 @@ class CoopClient:
         fog = mm.explored if (self.zone == "bonus" and mm is not None) else None
         self.tilemap.canopy_overlay = True  # trunks in the floor pass, canopies drawn over entities below
         world.render_rotated_world(s, self.cam, lambda surf, cam: self.tilemap.draw(surf, cam, surf.get_size(), fog=fog))
+        vfx.draw_enemy_zones(s, self.cam, getattr(self, "enemy_zones", []))  # server-sent attack telegraphs
         for g in self.ground_items:
             g.draw(s, self.cam)
         for pt in self.portals:

@@ -169,9 +169,29 @@ zone), `/accept` / `/decline` (trade invites) and
   nova -> nova -> chain / drain / freeze; Priest heals; Paladin heals ->
   shield; Warrior/Rogue/Assassin party haste. Abilities are telegraphed and
   never hit friendly creatures or NPCs.
-- **Juice**: hit-stop, directional screen shake, impact particles, damage
-  numbers, hit flash; every enemy has idle/walk/attack animation; ranged mobs
-  glow before firing; a per-light-source night lightmap.
+- **Enemy attacks** (`game/enemy_attacks.py`): every hostile mob has its own
+  named attack set instead of generic rings - aimed/predictive shots, shotgun
+  fans, bullet walls with a gap, telegraphed beams, sine/accelerating/homing/
+  splitting/boomerang bullets, mines, lobbed ground AoEs, dashes and leaps with
+  a wind-up, summons, shells and root pulses. Island mini-bosses have 3-4 named
+  moves and dungeon bosses 4-5 (e.g. the Vault Guardian's Aimed Shotgun /
+  Grenade Barrage / Gapped Spin / Crystal Rage); below 50% HP they enrage
+  (short roar, new moves, faster cooldowns) and phase-2 rooms add a final move.
+- **Telegraphs**: every attack winds up with a glow on the mob plus a
+  colour-coded warning - **red** aim lines and dash lanes, **orange** ground
+  circles/cones for area attacks, **purple** for homing. Full rings only come
+  after a telegraph and always have gaps.
+- **Juice**: impact particles, damage numbers, hit flash, idle/walk/attack
+  animation, a per-light-source night lightmap. **Screen shake is reserved for
+  what matters**: getting hit yourself (scaled by damage; bigger for boss
+  hits), nearby slams/landings (fades with distance) and boss phase changes /
+  deaths - never for your own shots, abilities or pet fusion, never for other
+  players' hits in co-op, and no shake when a far-away world boss spawns.
+- **Sound**: original synthesized SFX per weapon type (staff, scepter, wand,
+  bow, dagger, katar, sword, mace), per ability style (17) and per enemy
+  attack kind (shot, shotgun, spray, beam, lob, slam, leap, dash wind-up,
+  homing, wall, summon, shell, root, boss phase, ...), rate-limited so big
+  fights don't clip.
 - **Permadeath** - a dead character is deleted; account unlocks, Echoes,
   achievements, the vault and completed story acts survive.
 

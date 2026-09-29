@@ -17,6 +17,7 @@ from game import achievements
 from game.story import StoryProgress
 from game.sidequests import SideQuestProgress
 from game.audio import sound_family  # pure classification lookup, no pygame.mixer side effects
+from game import enemy_attacks as EA
 from game.items import (make_starter_weapon, make_starter_ability, Item, SLOT_WEAPON, SLOT_ARMOR,
                          SLOT_RING, SLOT_ABILITY, SLOT_EGG, SLOT_SHARD, SLOT_TEMP_POTION,
                          PERMANENT_POTION_CAP, TEMP_POTION_DURATION, STAT_KEYS, PET_KINDS,
@@ -1210,6 +1211,29 @@ class Enemy:
         self._is_moving = False
         self._move_dir = pygame.Vector2(0, 1)
         self._fire_pose_t = 0.0  # >0 briefly after a real shot - brief squash/stretch anticipation pose
+        # --- per-kind attack sets (game/enemy_attacks.py) ---
+        self._attacks = EA.moves_for(self.kind)
+        self._atk_cds = ({m["name"]: random.uniform(0.3, max(0.4, m["cd"] * 0.7)) for m in self._attacks}
+                         if self._attacks else {})
+        self._atk_gap = random.uniform(0.4, 1.2)
+        self._windup = None          # {"move", "t", "total", "tele_dir", "tele_point"} while telegraphing
+        self._windup_kind = None     # "aim" (red) / "aoe" (orange) / "homing" (purple) - draw + net
+        self._windup_frac = 0.0
+        self._dash = None            # {"dir", "t", "mult", "end", "stop_at"} while dashing/leaping
+        self._repeat = None          # remaining shots of a burst / sweep / stream move
+        self.phase = 1               # bosses / mini-bosses: 2 after dropping below 50% HP
+        self._phase_pending = False  # one-tick flag RealmSim reads (roar vfx/sound/shake)
+        self._phase_invuln = 0.0
+        self._shell_t = 0.0          # shell / fade / burrow feint invulnerability
+        self._shell_then = None
+        self._summon_pending = None  # (kind, n) one-tick flag RealmSim reads
+        self._new_zones = []         # telegraph / ground-AoE zones for RealmSim to take over
+        self._sfx_pending = []       # attack sound keys for RealmSim.sound_events
+        self._last_tpos = None
+        self._tvel = pygame.Vector2(0, 0)  # target velocity estimate for predictive aim
+        self._last_player_pos = pygame.Vector2(self.pos)
+        self._is_phase2_room = EA.is_phase2_room(self.kind)
+        self._dash_out = None
 
     def _move(self, delta, tile_map):
         """Applies a movement delta, resolved per-axis against SOLID tiles (rock
@@ -1231,6 +1255,7 @@ class Enemy:
             self.pos.y = new_y
 
     def update(self, dt, player_pos, bullets_out, tile_map=None):
+        self._dash_out = bullets_out
         self._t += dt
         self.contact_cd = max(0.0, self.contact_cd - dt)
         self._hit_flash = max(0.0, self._hit_flash - dt)
@@ -1326,6 +1351,12 @@ class Enemy:
             self._is_moving = heading.length_squared() > 0
             if heading.length_squared() > 0:
                 self._move_dir = heading.normalize()
+        elif self._attacks and self._dash is not None:
+            self._update_dash(dt, tile_map)
+        elif self._attacks and (self._shell_t > 0 or self._phase_invuln > 0 or (
+                self._windup is not None and self._windup["move"].get(
+                    "root", self._windup["move"]["tele"] != "glow"))):
+            self._is_moving = False  # planted for a telegraphed wind-up / shell / phase roar
         elif self.aggro:
             if self.pattern == "erratic":
                 # swoop at the player, blended with jitter so it's not a beeline
@@ -1335,7 +1366,7 @@ class Enemy:
                 self._is_moving = heading.length_squared() > 0
                 if heading.length_squared() > 0:
                     self._move_dir = heading.normalize()
-            elif self.pattern == "charge":
+            elif self.pattern == "charge" and not self._attacks:
                 self._update_charge(dt, to_player_n, dist, bullets_out, tile_map)
             elif self.pattern == "boss_burrow":
                 self._update_burrow(dt, to_player_n, dist, bullets_out, tile_map)
@@ -1372,17 +1403,153 @@ class Enemy:
                 self._move(heading.normalize() * self.speed * 0.3 * dt, tile_map)
             self._is_moving = False
 
-        can_ranged_fire = (self.aggro and self.pattern not in ("charge", "boss_burrow")
-                           and (tile_map is None or tile_map.has_line_of_sight(
-                               self.pos.x, self.pos.y, player_pos.x, player_pos.y)))
-        # purely visual read of the same cooldown the fire check below uses - never
-        # gates or changes fire timing itself, just tells draw() to show a brief
-        # pre-fire glow in the window right before a shot actually goes out
-        self._pretelegraph = can_ranged_fire and 0 < self._fire_cd <= PRETELEGRAPH_WINDOW
-        if can_ranged_fire and self._fire_cd <= 0:
-            self._fire_cd = self._pattern_interval() * self.fire_rate_mult
-            self._shoot(to_player_n, bullets_out)
-            self._fire_pose_t = ANIM_ATTACK_POSE_DURATION  # Track 13.P: brief squash/stretch anticipation pose
+        n_before = len(bullets_out)
+        if self._attacks:
+            self._update_attacks(dt, player_pos, to_player_n, dist, bullets_out, tile_map)
+        else:
+            can_ranged_fire = (self.aggro and self.pattern not in ("charge", "boss_burrow")
+                               and (tile_map is None or tile_map.has_line_of_sight(
+                                   self.pos.x, self.pos.y, player_pos.x, player_pos.y)))
+            # purely visual read of the same cooldown the fire check below uses - never
+            # gates or changes fire timing itself, just tells draw() to show a brief
+            # pre-fire glow in the window right before a shot actually goes out
+            self._pretelegraph = can_ranged_fire and 0 < self._fire_cd <= PRETELEGRAPH_WINDOW
+            if can_ranged_fire and self._fire_cd <= 0:
+                self._fire_cd = self._pattern_interval() * self.fire_rate_mult
+                self._shoot(to_player_n, bullets_out)
+                self._fire_pose_t = ANIM_ATTACK_POSE_DURATION  # Track 13.P: brief squash/stretch anticipation pose
+        for b in bullets_out[n_before:]:
+            b.src_rank = self.rank  # boss bullets hit (and shake) harder - see vfx hit_player_by_boss
+
+    # ------------------------------------------------ attack sets (enemy_attacks) --
+    def _ctx(self, player_pos, to_player_n, out, tele_dir=None, tele_point=None, step=0, speed_mult=1.2):
+        dist = (player_pos - self.pos).length()
+        lead = player_pos + self._tvel * (dist / (EA.BASE_SPEED * speed_mult))
+        return EA.AttackCtx(pygame.Vector2(to_player_n), pygame.Vector2(player_pos), lead, tele_dir,
+                            tele_point, out, step)
+
+    def _cd_mult(self):
+        return (EA.PHASE2_CD_MULT if self.phase == 2 else 1.0) * self.fire_rate_mult
+
+    def _fire_move(self, m, ctx, first=True):
+        EA.execute(self, m, ctx)
+        if first and m.get("sfx"):
+            self._sfx_pending.append(m["sfx"])
+        self._fire_pose_t = ANIM_ATTACK_POSE_DURATION
+
+    def _update_attacks(self, dt, player_pos, to_player_n, dist, bullets_out, tile_map):
+        """The per-kind move rotation: pick a ready move, telegraph it (sprite glow +
+        ground zone / aim line pushed to RealmSim), fire it when the wind-up ends,
+        then run any burst/sweep repeats. Bosses break into phase 2 below 50% HP."""
+        self._last_player_pos = pygame.Vector2(player_pos)
+        if self._last_tpos is not None and dt > 0:
+            inst = (player_pos - self._last_tpos) / dt
+            if inst.length() < 600:  # ignore teleports
+                self._tvel = self._tvel.lerp(inst, min(1.0, dt * 6))
+        self._last_tpos = pygame.Vector2(player_pos)
+        self._atk_gap -= dt
+        for k in self._atk_cds:
+            self._atk_cds[k] -= dt
+        self._phase_invuln = max(0.0, self._phase_invuln - dt)
+        if self.rank == "boss" and self.phase == 1 and self.hp <= self.hp_max * EA.PHASE_BREAK_FRAC:
+            self.phase = 2
+            self._phase_pending = True
+            self._phase_invuln = EA.PHASE_BREAK_INVULN
+            self._windup = None
+            self._repeat = None
+            self._atk_gap = EA.PHASE_BREAK_INVULN + 0.2
+        if self._shell_t > 0:
+            self._shell_t -= dt
+            if self._shell_t <= 0 and self._shell_then:
+                then = dict(self._shell_then)
+                then.setdefault("name", "shell_then")
+                self._fire_move(then, self._ctx(player_pos, to_player_n, bullets_out), first=False)
+                self._sfx_pending.append(EA._DEFAULT_SFX.get(then["fn"], "shot"))
+                self._shell_then = None
+        if self._repeat is not None:
+            r = self._repeat
+            r["timer"] -= dt
+            if r["timer"] <= 0:
+                m = r["move"]
+                if m["fn"] == "dash":
+                    tele_dir = pygame.Vector2(to_player_n)
+                else:
+                    tele_dir = r["tele_dir"]
+                ctx = self._ctx(player_pos, to_player_n, bullets_out, tele_dir, r["tele_point"], r["step"])
+                self._fire_move(m, ctx, first=(m["fn"] == "dash"))
+                r["step"] += 1
+                r["left"] -= 1
+                r["timer"] = m.get("gap", 0.15)
+                if r["left"] <= 0:
+                    self._repeat = None
+        if self._windup is not None:
+            w = self._windup
+            w["t"] += dt
+            self._windup_frac = min(1.0, w["t"] / max(0.01, w["total"]))
+            if w["t"] >= w["total"]:
+                m = w["move"]
+                self._windup = None
+                ctx = self._ctx(player_pos, to_player_n, bullets_out, w["tele_dir"], w["tele_point"])
+                self._fire_move(m, ctx)
+                reps = m.get("repeat", 1)
+                if reps > 1:
+                    self._repeat = dict(move=m, left=reps - 1, timer=m.get("gap", 0.15), step=1,
+                                        tele_dir=w["tele_dir"], tele_point=w["tele_point"])
+                self._atk_cds[m["name"]] = m["cd"] * self._cd_mult()
+                self._atk_gap = random.uniform(*EA.GLOBAL_GAP) * self._cd_mult()
+        elif (self.aggro and self._atk_gap <= 0 and self._repeat is None and self._dash is None
+              and self._shell_t <= 0 and self._phase_invuln <= 0 and not self.invulnerable
+              and dist <= EA.ATTACK_RANGE
+              and (self.pattern != "boss_burrow" or self._burrow_state == "surfaced")
+              and (tile_map is None or tile_map.has_line_of_sight(self.pos.x, self.pos.y, player_pos.x,
+                                                                   player_pos.y))):
+            ready = [m for m in self._attacks
+                     if self._atk_cds.get(m["name"], 0) <= 0 and m.get("phase", 1) <= self.phase
+                     and (not m.get("p2") or self._is_phase2_room)]
+            if ready:
+                m = random.choices(ready, weights=[x.get("weight", 1.0) for x in ready])[0]
+                ctx = self._ctx(player_pos, to_player_n, bullets_out)
+                tele_dir, tele_point = EA.tele_for(self, m, ctx.target, ctx.lead, ctx.aim)
+                self._windup = dict(move=m, t=0.0, total=max(0.05, m.get("windup", 0.25)),
+                                    tele_dir=tele_dir, tele_point=tele_point)
+                self._windup_frac = 0.0
+                self._windup_kind = ("homing" if m["fn"] == "homing" else
+                                     "aoe" if m.get("tele") in ("zone", "ring", "cone") else "aim")
+                if m.get("tele") == "dash":
+                    self._sfx_pending.append("dash_windup")
+                elif m.get("windup", 0) >= 0.5:
+                    self._sfx_pending.append("windup")
+        self._pretelegraph = self._windup is not None
+        if self._windup is None:
+            self._windup_frac = 0.0
+            if self._dash is None:
+                self._windup_kind = None
+
+    def _update_dash(self, dt, tile_map):
+        d = self._dash
+        self._is_moving = True
+        self._move_dir = pygame.Vector2(d["dir"])
+        step = d["dir"] * self.speed * d["mult"] * dt
+        stop_at = d.get("stop_at")
+        if stop_at is not None and (stop_at - self.pos).length() <= step.length():
+            if tile_map is None or not tile_map.is_solid(stop_at.x, stop_at.y):
+                self.pos = pygame.Vector2(stop_at)
+            d["t"] = 0
+        else:
+            self._move(step, tile_map)
+        d["t"] -= dt
+        if d["t"] <= 0:
+            self._dash = None
+            end = d.get("end")
+            if end and self._dash_out is not None:
+                end = dict(end)
+                end.setdefault("name", "dash_end")
+                to_p = self._last_player_pos - self.pos
+                aim = to_p.normalize() if to_p.length_squared() > 1 else pygame.Vector2(0, 1)
+                self._fire_move(end, self._ctx(self._last_player_pos, aim, self._dash_out), first=False)
+                for b in self._dash_out[-12:]:
+                    if b.src_rank is None and b.owner == "enemy":
+                        b.src_rank = self.rank
 
     def _update_charge(self, dt, to_player_n, dist, bullets_out, tile_map=None):
         """A dash-in melee-burst mob: sits back strafing like the others, then
@@ -1449,17 +1616,20 @@ class Enemy:
                 self._move_dir = to_target.normalize()
             if self._burrow_cd <= 0:
                 self._burrow_state = "surfacing"
-                self._burrow_cd = 0.5
+                self._burrow_cd = 0.6
+                # a dust ring on the ground where it's about to burst out
+                EA._zone(self, "circle", self.pos, 0.6, EA.ORANGE, r=95, sfx=None)
         elif self._burrow_state == "surfacing":
             if self._burrow_cd <= 0:
                 self.invulnerable = False
                 self._burrow_state = "surfaced"
                 self._burrow_cd = random.uniform(2.0, 3.0)
-                dmg = random.randint(*self.dmg)
-                for i in range(10):
-                    ang = (360 / 10) * i
-                    bullets_out.append(_mk_bullet(self.pos, pygame.Vector2(1, 0).rotate(ang), 200, dmg,
-                                                   (230, 190, 90), radius=self._bullet_radius()))
+                to_p = self._last_player_pos - self.pos
+                aim = to_p.normalize() if to_p.length_squared() > 1 else pygame.Vector2(0, 1)
+                EA.p_ring(self, EA.AttackCtx(aim, self._last_player_pos, self._last_player_pos, None, None,
+                                             bullets_out), dict(n=12, gaps=2, gap_w=2, speed=0.9,
+                                                                color=(230, 190, 90)))
+                self._sfx_pending.append("slam")
 
     def _pattern_interval(self):
         return {"aimed": 1.4, "erratic": 2.0, "spread": 1.6, "burst": 2.2, "boss": 0.35,
@@ -1561,7 +1731,7 @@ class Enemy:
         mitigated result as a smooth float instead of rounding up to a minimum
         of 1 whole point every tick - see constants.apply_defense's own
         `whole` doc for why that matters for a per-frame dps*dt fraction."""
-        if self.invulnerable:
+        if self.invulnerable or self._phase_invuln > 0 or self._shell_t > 0:
             self._last_hit_damage = 0
             return False
         if self.vulnerable_time > 0:
@@ -1623,7 +1793,7 @@ class Enemy:
         if self.moonlit:
             pulse = 1.0 + 0.12 * math.sin(pygame.time.get_ticks() / 200.0)
             pygame.draw.circle(surf, (220, 225, 255), r.center, int(r.width * 0.7 * pulse), 2)
-        if self.invulnerable:
+        if self.invulnerable and not getattr(self, "_shelled_vis", False):
             # burrowed - a faint dust-ring at its feet instead of the full sprite,
             # so it clearly reads as "underground and untouchable" not just dim
             pygame.draw.ellipse(surf, (120, 100, 70), (r.centerx - 16, r.bottom - 8, 32, 12))
@@ -1646,12 +1816,31 @@ class Enemy:
             draw_img = pygame.transform.smoothscale(img, (new_w, new_h))
             r = draw_img.get_rect(center=r.center)
 
-        surf.blit(draw_img, r)
+        if getattr(self, "_dashing_vis", False) or getattr(self, "_dash", None) is not None:
+            # dash afterimages trailing behind the lunge
+            back = (-move_dir.normalize()) if (move_dir is not None and move_dir.length_squared() > 0) \
+                else pygame.Vector2(0, 0)
+            for k in (1, 2):
+                ghost = draw_img.copy()
+                ghost.set_alpha(90 // k)
+                surf.blit(ghost, r.move(back.x * 12 * k, back.y * 12 * k))
+        if getattr(self, "_shelled_vis", False) or getattr(self, "_shell_t", 0) > 0:
+            faint = draw_img.copy()
+            faint.set_alpha(110)
+            surf.blit(faint, r)
+            pygame.draw.circle(surf, (200, 200, 230), r.center, int(r.width * 0.6), 2)
+        else:
+            surf.blit(draw_img, r)
         if getattr(self, "_pretelegraph", False):
-            # additive rim-light: brightens the sprite silhouette for readability,
-            # never changes when the shot actually fires (see update())
+            # wind-up glow, colour-coded by threat: red = aimed / dash lane,
+            # orange = ground AoE, purple = homing - pulses faster as it's about to fire
+            kind = getattr(self, "_windup_kind", None)
+            frac = getattr(self, "_windup_frac", 0.0) or 0.0
+            tint = {"aoe": (150, 80, 0), "homing": (110, 40, 150)}.get(kind, (150, 30, 20))
+            pulse = 0.55 + 0.45 * math.sin(pygame.time.get_ticks() / (70.0 - 40.0 * frac))
+            k = 0.45 + 0.55 * frac * pulse
             glow = draw_img.copy()
-            glow.fill((90, 90, 60, 0), special_flags=pygame.BLEND_RGBA_ADD)
+            glow.fill((int(tint[0] * k), int(tint[1] * k), int(tint[2] * k), 0), special_flags=pygame.BLEND_RGBA_ADD)
             surf.blit(glow, r)
         if self._hit_flash > 0:
             flash = draw_img.copy()
@@ -1670,13 +1859,16 @@ class Enemy:
     def net_state(self):
         return dict(kind=self.kind, x=round(self.pos.x, 1), y=round(self.pos.y, 1),
                     hp=self.hp, hp_max=self.hp_max, rank=self.rank, aggro=self.aggro,
-                    frozen=self.frozen_time > 0, moonlit=self.moonlit, invulnerable=self.invulnerable,
+                    frozen=self.frozen_time > 0, moonlit=self.moonlit,
+                    invulnerable=self.invulnerable or self._shell_t > 0 or self._phase_invuln > 0,
                     speech=self.speech, speech_age=round(self.speech_age, 2), neutral=self.neutral,
-                    pretelegraph=self._pretelegraph, scale=self.scale)
+                    pretelegraph=self._pretelegraph, scale=self.scale,
+                    wk=self._windup_kind if (self._pretelegraph or self._dash is not None) else None,
+                    wf=round(self._windup_frac, 2), ds=self._dash is not None, sh=self._shell_t > 0)
 
 
 def _mk_bullet(pos, direction, speed, dmg, color, owner="enemy", pierce=0, radius=5, lifetime=2.4,
-               motion="straight", status_effect=None, shape="bolt"):
+               motion="straight", status_effect=None, shape="bolt", **motion_kw):
     # lifetime default was 3.0 (e.g. an archer bolt at speed 420 traveled 1260px,
     # well past the visible screen even at the bigger 1366x820 resolution) - trimmed
     # ~20% so ranged attacks (players and mobs alike, since most don't override this)
@@ -1687,7 +1879,10 @@ def _mk_bullet(pos, direction, speed, dmg, color, owner="enemy", pierce=0, radiu
         direction = pygame.Vector2(0, 1)
     else:
         direction = direction.normalize()
-    return Bullet(pos, direction * speed, dmg, owner, color, pierce, radius, lifetime, motion, status_effect, shape)
+    b = Bullet(pos, direction * speed, dmg, owner, color, pierce, radius, lifetime, motion, status_effect, shape)
+    for k, v in motion_kw.items():  # sine/accel/homing/split parameters - see Bullet.update
+        setattr(b, k, v)
+    return b
 
 
 # a real new projectile TYPE, not just a new look: travels outward for the
@@ -1703,7 +1898,11 @@ class Bullet:
     # player bullets - that pid is how co-op attributes kill credit/XP/loot.
     # `prev_pos` supports swept (segment) collision - see hit_test() below.
     __slots__ = ("pos", "prev_pos", "vel", "dmg", "owner", "color", "pierce", "radius", "life",
-                 "motion", "origin", "total_life", "speed", "status_effect", "shape")
+                 "motion", "origin", "total_life", "speed", "status_effect", "shape",
+                 # enemy-attack motions (game/enemy_attacks.py): sine sway, accelerate/brake,
+                 # capped-turn homing, split-on-expiry, plus who fired it (boss hits shake more)
+                 "age", "wave_amp", "wave_freq", "wave_phase", "base_dir", "accel", "max_speed", "min_speed",
+                 "home_turn", "target", "split", "split_speed", "split_aimed", "src_rank")
 
     def __init__(self, pos, vel, dmg, owner, color, pierce, radius, life, motion="straight", status_effect=None,
                  shape="bolt"):
@@ -1727,9 +1926,50 @@ class Bullet:
         # return-vector shrink toward zero right along with it, so the bullet
         # would stall out near the turn point instead of actually reversing
         self.speed = self.vel.length()
+        self.age = 0.0
+        self.wave_amp = 0.0
+        self.wave_freq = 0.0
+        self.wave_phase = 0.0
+        self.base_dir = self.vel.normalize() if self.speed > 0 else pygame.Vector2(1, 0)
+        self.accel = 0.0
+        self.max_speed = 9999.0
+        self.min_speed = 0.0
+        self.home_turn = 0.0     # rad/sec cap for "homing"
+        self.target = None       # homing target (set each tick by RealmSim for enemy homers)
+        self.split = 0           # >0: spawn this many child bullets when life runs out
+        self.split_speed = 0.0
+        self.split_aimed = False
+        self.src_rank = None     # enemy bullets: the shooter's rank ("boss" hits shake harder)
 
     def update(self, dt):
         self.prev_pos = pygame.Vector2(self.pos)
+        self.age += dt
+        if self.motion == "sine":
+            # travel straight along base_dir, swaying sideways - position is analytic
+            # (origin + along + perp*sin) so the wave never drifts, vel is its derivative
+            perp = self.base_dir.rotate(90)
+            along = self.base_dir * self.speed * self.age
+            w = self.wave_freq
+            sway = perp * self.wave_amp * math.sin(self.age * w + self.wave_phase)
+            new_pos = self.origin + along + sway
+            if dt > 0:
+                self.vel = (new_pos - self.pos) / dt
+            self.pos = new_pos
+            self.life -= dt
+            return self.life > 0
+        if self.motion == "accel":
+            spd = max(self.min_speed, min(self.max_speed, self.vel.length() + self.accel * dt))
+            d = self.vel.normalize() if self.vel.length_squared() > 1e-6 else self.base_dir
+            self.vel = d * spd
+        elif self.motion == "homing" and self.target is not None:
+            to_t = pygame.Vector2(self.target) - self.pos
+            if to_t.length_squared() > 1 and self.vel.length_squared() > 1e-6:
+                cur = math.atan2(self.vel.y, self.vel.x)
+                want = math.atan2(to_t.y, to_t.x)
+                diff = (want - cur + math.pi) % math.tau - math.pi
+                step = max(-self.home_turn * dt, min(self.home_turn * dt, diff))
+                spd = self.vel.length()
+                self.vel = pygame.Vector2(math.cos(cur + step), math.sin(cur + step)) * spd
         if self.motion == "boomerang" and self.total_life > 0:
             elapsed_frac = 1.0 - (self.life / self.total_life)
             if elapsed_frac >= BOOMERANG_TURN_FRAC:
@@ -1792,6 +2032,24 @@ class Bullet:
         return dict(x=round(self.pos.x, 1), y=round(self.pos.y, 1), owner=self.owner,
                     color=list(self.color), radius=self.radius, shape=self.shape,
                     vel=[round(self.vel.x, 1), round(self.vel.y, 1)])
+
+    def split_children(self, target_pos=None):
+        """The child bullets a "split" bullet (seed mine, splitting stone) bursts
+        into when its life runs out - evenly spaced, optionally aimed at the player."""
+        out = []
+        base = 0.0
+        if self.split_aimed and target_pos is not None:
+            to_t = pygame.Vector2(target_pos) - self.pos
+            if to_t.length_squared() > 1:
+                base = to_t.as_polar()[1] - (self.split - 1) * 15 / 2 if self.split <= 3 else to_t.as_polar()[1]
+        for i in range(self.split):
+            ang = (base + i * 15) if (self.split_aimed and self.split <= 3) else (base + 360 * i / self.split
+                                                                                  + random.uniform(0, 30))
+            b = _mk_bullet(self.pos, pygame.Vector2(1, 0).rotate(ang), self.split_speed or 180,
+                           max(1, int(self.dmg * 0.6)), self.color, radius=max(3, self.radius - 2), lifetime=1.4)
+            b.src_rank = self.src_rank
+            out.append(b)
+        return out
 
 
 _id_counter = itertools.count(1)

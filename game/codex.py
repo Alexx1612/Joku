@@ -56,6 +56,24 @@ def cap(text):
     return text[:1].upper() + text[1:]
 
 
+_TELE_WORDS = {"zone": "ground zone", "line": "aim line", "cone": "cone", "ring": "ring warning",
+               "dash": "dash lane", "glow": "glow"}
+
+
+def attack_moves(kind):
+    """'Rock Lob (ground zone)' style labels for a kind's attack set (game/enemy_attacks.py)."""
+    from game import enemy_attacks
+    moves = enemy_attacks.moves_for(kind) or []
+    out = []
+    for m in moves:
+        if m.get("p2") and not kind.endswith("_phase2"):
+            continue
+        tag = _TELE_WORDS.get(m.get("tele", "glow"), "glow")
+        extra = ", enraged" if m.get("phase", 1) == 2 else (", phase-2 room" if m.get("p2") else "")
+        out.append(f"{m['name']} ({tag}{extra})")
+    return out
+
+
 def _pretty(kind):
     return kind.replace("_phase2", " (phase 2)").replace("_", " ").title()
 
@@ -103,15 +121,24 @@ def _enemy_entry(kind, d, biomes, extra):
              ("Defense", d.get("deF", 0)), ("XP", entities.RANK_XP.get(rank, 0))]
     if not neutral:
         stats.insert(2, ("Damage", f"{lo}-{hi}"))
-        stats.append(("Attack", d.get("pattern", "?")))
+        moves = attack_moves(kind)
+        stats.append(("Attacks", len(moves) if moves else d.get("pattern", "?")))
     where_names = [BIOME_LABELS.get(b, b) for b in biomes] + [area_label(a) for a in extra]
     if neutral:
         text = ("Harmless wildlife - it can't be shot, and it runs from gunfire. Walk up and press F to "
                 "talk to it (some side quests want you to stand near a group of them).")
     else:
-        text = f"It {PATTERN_TEXT.get(d.get('pattern'), 'attacks you')}."
+        moves = attack_moves(kind)
+        if moves:
+            text = "Attacks: " + "; ".join(moves) + "."
+        else:
+            text = f"It {PATTERN_TEXT.get(d.get('pattern'), 'attacks you')}."
+        text += (" Every attack is telegraphed: a glow on the mob, plus a red lane (aimed / dash), an"
+                 " orange ground zone (area attack) or purple (homing).")
+        if rank == "boss":
+            text += " Below half HP it enrages: new moves, and everything comes faster."
         if kind.endswith("_phase2"):
-            text += " A tougher second phase: more HP, harder hits and faster fire."
+            text += " The phase-2 room adds its final move."
         if rank == "boss":
             text += " Bosses don't leash - they chase you anywhere."
     if where_names:

@@ -24,11 +24,16 @@ All synthesized at runtime - no audio files are loaded.
 | `play_pickup()` / `play_drop()` | Picking up / dropping an item |
 | `play_death()` | The player dies |
 | `play_levelup()` | Leveling up |
-| `play_ability()` | Casting your ability |
+| weapon types for `play_shoot(cls_name)` | `audio.WEAPON_TYPE`: wizard staff, necromancer scepter, priest wand, archer bow, rogue dagger, assassin katar, warrior sword, paladin mace - each its own sound |
+| `play_ability(style)` | Casting your ability - one sound per `vfx.ABILITY_STYLES` style (`audio.ABILITY_SOUND`: shatter, ruin, void, blight, corruption, reaper, thunder, storms, gale, mending, restoration, rebirth, aegis, ward, horn, smoke, shadow) |
+| `play_enemy_attack(key)` | Enemy attack sounds (`audio.ENEMY_ATTACK_SOUND`): shot, shotgun, spray, burst, beam, wall, wave, homing, bubble, fire, throw, lob, slam, leap, dash, dash_windup, windup, summon, shell, root, boss_phase |
 | `play_boss_spawn()` | A boss appears |
 | `play_wish(jackpot)` | Wishing-fountain reroll (fanfare on a jackpot) |
 | `play_theme(zone)` / `update_music()` | Start / crossfade the zone's music track (see Music) |
 | `set_volumes(master, music, sfx, muted)` | Applies the options-menu volumes live |
+
+SFX are rate-limited: the same sound at most every 0.045 s and at most 10 sounds per 0.12 s window
+(`SFX_MIN_INTERVAL`, `SFX_WINDOW`, `SFX_WINDOW_BUDGET`).
 
 Mob flavor lines have a 20 s `MIN_REBARK_INTERVAL` and only reach chat for
 players within 600 px (`realm_sim.MOB_SPEECH_HEAR_RADIUS`).
@@ -160,19 +165,47 @@ wildlife, NPCs or unshootable mobs.
 dungeon Totem), 33 elite and 24 boss-rank kinds (incl. phase-2 variants). Damage values
 below already include the global x1.22 enemy damage multiplier.
 
-| Boss | HP | Damage | Pattern | Draw/hit scale |
-|---|---|---|---|---|
-| boss (Mad God's Avatar pool) | 1440 | 7-17 | boss | 2.0 |
-| frost_monarch | 1600 | 9-18 | boss | 2.0 |
-| ash_behemoth | 1300 | 10-21 | boss | 2.0 |
-| void_reaper | 1500 | 7-16 | boss | 2.0 |
-| thorn_warden | 1700 | 7-16 | boss_root | 2.0 |
-| sand_wyrm | 1350 | 10-20 | boss_burrow | 2.0 |
-| mad_god (Forge, phase 1) | 2200 | 6-12 | mad_god (ring + armor-piercing volley + nova) | 2.0 |
-| mad_god_phase2 | 3850 | 6-13 | mad_god + counter-ring, faster fire | 2.0 |
+| Boss | HP | Damage | Draw/hit scale |
+|---|---|---|---|
+| boss (Mad God's Avatar pool / Vault Guardian) | 1440 | 7-17 | 2.0 |
+| frost_monarch | 1600 | 9-18 | 2.0 |
+| ash_behemoth | 1300 | 10-21 | 2.0 |
+| void_reaper | 1500 | 7-16 | 2.0 |
+| thorn_warden | 1700 | 7-16 | 2.0 |
+| sand_wyrm | 1350 | 10-20 | 2.0 |
+| mad_god (Forge, phase 1) | 2200 | 6-12 | 2.0 |
+| mad_god_phase2 | 3850 | 6-13 | 2.0 |
 
-Phase-2 variants of the six bosses: x1.75 HP, x1.4 damage, fire interval
-x0.6. Island mini-bosses (x1.8 scale, 560-640 HP): cinder_colossus,
+**Attack sets** (`game/enemy_attacks.py` `ATTACKS`; `*` = added when enraged below 50% HP, `+` = phase-2 room only;
+telegraph in brackets: line/dash = red, zone/cone = orange, homing = purple, no bracket = glow on the mob only):
+
+| Kind | Moves |
+|---|---|
+| boss (Vault Guardian) | Aimed Shotgun, Grenade Barrage [zone], Gapped Spin* [ring], Crystal Rage+ [ring] |
+| frost_monarch | Ice Lances [line], Blizzard, Frozen Floor* [zone], Glacial Nova+ [ring] |
+| ash_behemoth | Behemoth Flame [cone], Magma Meteors [zone], Molten Charge* [dash], Eruption+ [zone] |
+| void_reaper | Scythe Boomerangs, Blink Slash [dash], Summon Shades*, Void Spiral+ [ring] |
+| thorn_warden | Root Pulse [zone], Thorn Walls [line], Thorn Shot, Seed Mines*, Vine Lash+ |
+| sand_wyrm | Sand Spit, Tail Sweep, Sandstorm* [ring], Dune Collapse+ [zone] |
+| mad_god | Star Shotgun, Minion Grenades [zone], Blade Burst [ring], Gathering Power* [ring], Madness Spiral+ [ring] |
+| cinder_colossus | Magma Slam [zone], Flame Sweep [cone], Cinder Fist, Ember Rain* [zone] |
+| choir_sovereign | Choir Wall [line], Echo Volley, Crescendo* [ring] |
+| rubble_warlord | Triple Charge [dash], Boulder Toss [zone], Rally* (summon) |
+| coral_leviathan | Tidal Beam [line], Bubble Mines, Surge Charge* [dash] |
+| ashreach_revenant | Soul Spiral, Grave Hands [zone], Ash Orbit* [ring] |
+| tideglass_warden | Mirror Lances [line], Glass Orbit [ring], Shatter Nova* [ring] |
+| thornrock_colossus | Quake [zone], Thorn Wall [line], Pebble Fan, Root Burst* [zone] |
+| driftbell_matriarch | Bell Toll [ring], Call the Tide (summon), Bell Chime, Drift Homers* |
+| ashenreach_devourer | Lunge Chain [dash], Maw Cone [cone], Split Spit* |
+| abyssal_choirmaster | Dirge Wall [line], Abyss Pull, Low Note, Silence* [zone] |
+| Realm elites & trash | goblin Rock Throw / Rock Lob [zone]; imp Ember Flick / Cinder Triplet; bat Screech Swoop [dash]; thornling Seed Pods / Thorn; scorpion Pincer Spray / Stinger [line]; dune_stalker Sand Burrow / Dune Lunge [dash]; yeti Snowball / Avalanche Slam [zone]; frost_sprite Icicle Weave / Frost Blink; ghost Wisp Pair / Fade; troll Club Bolt / Boulder Lob [zone]; bog_crawler Poison Glob [zone] / Bog Spiral; skeleton Bone Boomerangs / Rattle Burst; harpy Feather Strafe / Talon Dive [dash]; cliff_strider Cliff Leap [zone] / Rock Chip; salamander Flamethrower [cone] / Spit; cinder_wisp Kindling / Flare Fan; panther Pounce [dash]; vine_serpent Serpent Stream / Vine Snare [line]; ghoul Rot Orbs / Vomit [cone]; husk_wanderer Husk Wall [line] / Shamble Charge [dash]; frost_wraith Frost Sweep / Chill; glacier_shard Ice Lance [line] / Shard Split; cave_lurker Ambush / Lurker Lunge [dash]; deep_stalker Sniper Shot [line] |
+| Island elites & trash | cinder_warden Warden Flame [cone] / Cinder Grenade [zone] / Call the Embers; choir_warden Choir Charge [dash] / Wave Arc / Call the Tide; shard_sentinel Cross Beam; echo_knight Echo Strike; shattered_golem Golem Slam [zone] / Splitting Stone; fracture_hound Zigzag Charge [dash]; stone_revenant Orbit Shards / Grave Chip; coral_sentinel Coral Buckshot / Reef Spiral; drowned_custodian Anchor Toss; kelp_stalker Kelp Stream / Snare Bolt [line]; shellback_guardian Shell Up / Shell Shot; siren_wraith Siren Waves; ember_wisp Ember Trail / Wisp Dart [dash]; fury_shard Shard Triplet; rubble_crawler Grenade [zone] / Pebble; spite_spirit Spite Orb; tide_wisp Drift Shot; pearl_acolyte Pearl Stop; brine_crawler Bubble Lob [zone] / Brine Spit; abyssal_chorister Sound Wall [line] / Hum |
+
+Bullet motions: straight, boomerang, sine, accel (speed up / slow to a stop / stop-and-re-aim mines), homing (capped
+turn rate), split (bursts into shards when its life ends). Bosses and mini-bosses enrage below 50% HP with a 0.8 s
+roar (no damage taken), then faster cooldowns.
+
+Phase-2 variants of the six bosses: x1.75 HP, x1.4 damage, faster cooldowns, plus their `+` move. Island mini-bosses (x1.8 scale, 560-640 HP): cinder_colossus,
 choir_sovereign, rubble_warlord, coral_leviathan, ashreach_revenant,
 tideglass_warden, thornrock_colossus, driftbell_matriarch,
 ashenreach_devourer, abyssal_choirmaster. Landmark guardians are drawn and

@@ -455,6 +455,8 @@ class RealmSim:
             self.realm_info = dict(world.LAST_REALM_INFO)
         self.enemies = []
         self.bullets = []
+        self.enemy_zones = []  # telegraphed ground zones / aim lines from enemy attacks (enemy_attacks.py)
+        self._summon_queue = []  # minions summoned this tick (enemy_attacks "summon" moves)
         self.ground_items = []
         self.portals = []
         self.islands = []  # [{"idx","pos","theme","label","cooldown","alive_guardians"}, ...] -
@@ -1295,6 +1297,7 @@ class RealmSim:
             # tiles - see is_solid()/has_line_of_sight() below, which duck-type the
             # same interface Enemy._move()/update() already expect from a TileMap
             e.update(dt, target.pos, self.bullets, tile_map=self)
+            self._drain_enemy_attack_outputs(e)
             if e.alive and e.bleed_time > 0:
                 tick_dmg = e.bleed_dps * dt
                 killed = e.take_damage(tick_dmg, whole=False)
@@ -1348,7 +1351,8 @@ class RealmSim:
                         self.events.append((p.pid, f"-{real} hp", (230, 90, 90)))
                         self.damage_popups.append((p.pos.x, p.pos.y, real, (255, 90, 90)))
                         hit_kind = "hit_player_by_boss" if e.rank == "boss" else "hit_player"
-                        self.vfx_events.append((hit_kind, p.pos.x, p.pos.y, (255, 90, 90)))
+                        self.vfx_events.append((hit_kind, p.pos.x, p.pos.y, (255, 90, 90), p.pid, real,
+                                                p.hp_max))
                         if e.speed > 0:
                             # a small nudge alongside the damage - "a little bit of
                             # movement for aggressive mobs too" - never applied to
@@ -1360,9 +1364,13 @@ class RealmSim:
                             e._push_total = AGGRO_PUSH_DURATION
                             e.push_time = AGGRO_PUSH_DURATION
 
+        if self._summon_queue:
+            self.enemies.extend(self._summon_queue)
+            self._summon_queue = []
         self.tick_pets(dt, players)
         self._resolve_pending_ability_effects(dt)
-        self.bullets = [b for b in self.bullets if b.update(dt)]
+        self._update_bullets(dt, alive)
+        self._tick_enemy_zones(dt, alive)
         self._trigger_wildlife_flee()
         self._resolve_bullet_hits(players)
         self._maybe_spawn_boss(alive)
@@ -1374,6 +1382,133 @@ class RealmSim:
         # for you to actually choose to open it (right-click), showing what's inside via
         # a drag-and-drop window, same idea as RotMG's loot bags
         self._check_portal_entry(alive)
+
+    # ------------------------------------------------ enemy attacks (enemy_attacks.py) --
+    SUMMON_CAP = 4  # a summoner never has more than this many of its own minions alive
+
+    def _drain_enemy_attack_outputs(self, e):
+        if e._new_zones:
+            self.enemy_zones.extend(e._new_zones)
+            e._new_zones = []
+        if e._sfx_pending:
+            for key in e._sfx_pending:
+                self.sound_events.append(("enemy_attack", key, e.pos.x, e.pos.y))
+            e._sfx_pending = []
+        if e._phase_pending:
+            e._phase_pending = False
+            self.vfx_events.append(("boss_phase", e.pos.x, e.pos.y, (255, 120, 60)))
+            self.sound_events.append(("enemy_attack", "boss_phase", e.pos.x, e.pos.y))
+            from game.codex import _pretty
+            name = _pretty(e.kind[:-7] if e.kind.endswith("_phase2") else e.kind)
+            name = "The Vault Guardian" if name == "Boss" else name
+            self.events.append((None, f"{name} is enraged!", (255, 140, 90)))
+        if e._summon_pending:
+            kind, n = e._summon_pending
+            e._summon_pending = None
+            mine = sum(1 for x in self.enemies if getattr(x, "summoned_by", None) is e and x.alive)
+            for i in range(max(0, min(n, self.SUMMON_CAP - mine))):
+                if kind not in ENEMY_KINDS:
+                    break
+                ang = random.uniform(0, 360)
+                pos = e.pos + pygame.Vector2(1, 0).rotate(ang) * random.uniform(40, 80)
+                if self.is_solid(pos.x, pos.y):
+                    pos = pygame.Vector2(e.pos)
+                m = Enemy(kind, pos, level_scale=getattr(self, "story_scale", 1.0))
+                m.aggro = True
+                m.summoned_by = e
+                m.home_pos = pygame.Vector2(e.pos)
+                self._summon_queue.append(m)  # added after the enemy loop (never mid-iteration)
+                self.vfx_events.append(("death", pos.x, pos.y, (200, 160, 255)))  # a puff where it appears
+
+    def _update_bullets(self, dt, alive):
+        """Advances every bullet; enemy homers steer at the nearest player and
+        "split" bullets (seed mines, splitting stones) burst into children on expiry."""
+        kept, children = [], []
+        for b in self.bullets:
+            if b.motion == "homing" and b.owner == "enemy" and alive:
+                b.target = min(alive, key=lambda q: q.pos.distance_squared_to(b.pos)).pos
+            if b.update(dt):
+                kept.append(b)
+            elif b.split and b.owner == "enemy":
+                tgt = min(alive, key=lambda q: q.pos.distance_squared_to(b.pos)).pos if alive else None
+                children.extend(b.split_children(tgt))
+        self.bullets = kept + children
+
+    @staticmethod
+    def _in_zone(z, pos, pad):
+        dx, dy = pos.x - z["x"], pos.y - z["y"]
+        if z["shape"] == "circle":
+            return dx * dx + dy * dy <= (z["r"] + pad) ** 2
+        ang = math.radians(z["ang"])
+        ux, uy = math.cos(ang), math.sin(ang)
+        along = dx * ux + dy * uy
+        side = -dx * uy + dy * ux
+        if z["shape"] == "line":
+            return 0 <= along <= z["length"] and abs(side) <= z["width"] / 2 + pad
+        if z["shape"] == "cone":
+            d = math.hypot(dx, dy)
+            if d > z["r"] + pad:
+                return False
+            a = math.degrees(math.atan2(side, along))
+            return abs(a) <= z["width"] / 2
+        return False
+
+    def _tick_enemy_zones(self, dt, alive):
+        """Ground telegraphs: a zone shows for its whole life, then (if it carries
+        damage) hurts every player inside it and optionally bursts a gapped ring."""
+        keep = []
+        for z in self.enemy_zones:
+            src = z.get("src")
+            if z["dmg"] <= 0 and src is not None and not src.alive:
+                continue  # an aim line / cone warning from a mob that just died
+            z["t"] += dt
+            if z["t"] < z["life"]:
+                keep.append(z)
+                continue
+            if z["dmg"] > 0:
+                for p in alive:
+                    if self._in_zone(z, p.pos, p.radius * 0.6):
+                        real = p.take_damage(z["dmg"])
+                        self.events.append((p.pid, f"-{real} hp", (230, 90, 90)))
+                        self.damage_popups.append((p.pos.x, p.pos.y, real, (255, 90, 90)))
+                        kind = "hit_player_by_boss" if z.get("src_rank") == "boss" else "hit_player"
+                        self.vfx_events.append((kind, p.pos.x, p.pos.y, (255, 90, 90), p.pid, real, p.hp_max))
+                self.vfx_events.append(("enemy_slam", z["x"], z["y"], tuple(z["color"]),
+                                        int(z["r"]), 1 if z.get("shake") else 0))
+            if z.get("sfx"):
+                self.sound_events.append(("enemy_attack", z["sfx"], z["x"], z["y"]))
+            burst = z.get("burst")
+            if burst and src is not None:
+                from game import enemy_attacks as EA
+                center = pygame.Vector2(z["x"], z["y"])
+                tgt = min(alive, key=lambda q: q.pos.distance_squared_to(center)).pos if alive else center
+                aim = (tgt - center)
+                aim = aim.normalize() if aim.length_squared() > 1 else pygame.Vector2(0, 1)
+                n0 = len(self.bullets)
+                old = src.pos
+                src.pos = center  # burst from the landing point, not wherever the mob is now
+                try:
+                    ctx = EA.AttackCtx(aim, tgt, tgt, aim, center, self.bullets)
+                    if burst.get("kind") == "half":
+                        EA.p_half_ring(src, ctx, burst)
+                    else:
+                        EA.p_ring(src, ctx, burst)
+                finally:
+                    src.pos = old
+                for b in self.bullets[n0:]:
+                    b.src_rank = src.rank
+        self.enemy_zones = keep
+
+    def zone_snapshot(self, center=None, radius=None):
+        """Compact zones for co-op clients: [shape, x, y, r, length, width, ang, frac, color]."""
+        out = []
+        for z in self.enemy_zones:
+            if center is not None and (z["x"] - center.x) ** 2 + (z["y"] - center.y) ** 2 > radius * radius:
+                continue
+            out.append([z["shape"][0], round(z["x"]), round(z["y"]), round(z["r"]), round(z["length"]),
+                        round(z["width"]), round(z["ang"], 1), round(min(1.0, z["t"] / max(0.01, z["life"])), 2),
+                        list(z["color"]), 1 if z["dmg"] > 0 else 0])
+        return out
 
     def _spawn_enemy(self, alive):
         # bonus rooms no longer ambient-spawn here at all (see update()'s spawn
@@ -1529,7 +1664,7 @@ class RealmSim:
         self.enemies.append(self.world_boss)
         self.events.append((None, "A shadow gathers over the Wastelands... a great terror stirs.",
                              WORLD_BOSS_ANNOUNCE_COLOR))
-        self.vfx_events.append(("boss_appear", pos.x, pos.y, WORLD_BOSS_ANNOUNCE_COLOR))
+        self.vfx_events.append(("world_boss_appear", pos.x, pos.y, WORLD_BOSS_ANNOUNCE_COLOR))
 
     # ------------------------------------------------------------ story --
     def _refresh_story_scale(self, alive):
@@ -1674,10 +1809,12 @@ class RealmSim:
                         real = p.take_damage(b.dmg, pierce_armor=b.status_effect == "armor_pierce")
                         self.events.append((p.pid, f"-{real} hp", (230, 90, 90)))
                         self.damage_popups.append((p.pos.x, p.pos.y, real, (255, 90, 90)))
-                        # no per-bullet shooter reference is tracked (b.owner is just the
-                        # literal string "enemy" for every enemy shot), so this can't tell
-                        # a boss's bullet apart from trash - use the plain hit_player kind
-                        self.vfx_events.append(("hit_player", p.pos.x, p.pos.y, (255, 90, 90)))
+                        if b.status_effect in ("slow", "root"):  # stingers / vine + kelp snares
+                            p.root_time = max(p.root_time, 0.8 if b.status_effect == "slow" else 1.2)
+                        # the shooter's rank rides on the bullet (Enemy.update tags it), so a
+                        # boss's shot hits - and shakes - harder than a trash mob's
+                        hit_kind = "hit_player_by_boss" if getattr(b, "src_rank", None) == "boss" else "hit_player"
+                        self.vfx_events.append((hit_kind, p.pos.x, p.pos.y, (255, 90, 90), p.pid, real, p.hp_max))
                         consumed = True
                         break
             else:
@@ -1886,6 +2023,8 @@ class RealmSim:
         self.kill_count += 1
         death_color = (255, 140, 0) if enemy.rank == "boss" else (255, 200, 120)
         self.vfx_events.append(("death", enemy.pos.x, enemy.pos.y, death_color))
+        if enemy.rank == "boss":
+            self.vfx_events.append(("boss_death", enemy.pos.x, enemy.pos.y, death_color))
         self.sound_events.append(("mob_death", sound_family(enemy.kind), enemy.pos.x, enemy.pos.y))
         self._room_cleared_check(getattr(enemy, "room_idx", None))
         cls_for_loot = killer.cls_name if killer else "wizard"
@@ -2092,7 +2231,7 @@ class RealmSim:
         self.boss = Enemy(f"{self._phase1_boss_kind}_phase2", boss_pos,
                           level_scale=self.difficulty["enemy_scale"] * self.story_scale)
         self.enemies.append(self.boss)
-        self.vfx_events.append(("boss_appear", boss_pos.x, boss_pos.y, (255, 90, 60)))
+        self.vfx_events.append(("boss_phase", boss_pos.x, boss_pos.y, (255, 90, 60)))
         self.events.append((None, "A passage rumbles open - the way to the boss's lair is clear!",
                              (255, 120, 90)))
 
@@ -2367,6 +2506,8 @@ class RealmSim:
         if caster.mp < it.mp_cost:
             return False, "Not enough MP"
         caster.mp -= it.mp_cost
+        # per-style cast sound for everyone nearby (SP + co-op play it from sound_events)
+        self.sound_events.append(("ability", vfx_style_for(it.name) or it.effect, caster.pos.x, caster.pos.y))
         caster.ability_cd = self.ABILITY_GCD
 
         if it.effect in ("nova", "chain", "drain", "freeze"):

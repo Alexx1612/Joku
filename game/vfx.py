@@ -161,6 +161,35 @@ def draw_fishing_bobber(surf, cam, player_pos, fishing_state):
         pygame.draw.circle(surf, (255, 70, 70), (int(bx), int(by - 3)), 1)
 
 
+# ------------------------------------------------------------ shake policy --
+# Screen shake is reserved for things that happen TO the local player or are big,
+# telegraphed moments (the Vlambeer / "trauma" rule: scale with importance, never
+# on every hit you deal). The listener is the local player: co-op clients receive
+# every vfx event in the zone, so hits on OTHER players must not shake your screen.
+_listener_pos = None
+_listener_pid = None
+SLAM_SHAKE_RANGE = 450.0
+BOSS_SHAKE_RANGE = 800.0
+
+
+def set_listener(pos, pid=None):
+    """Call once per frame with the local player's position and pid."""
+    global _listener_pos, _listener_pid
+    _listener_pos = None if pos is None else (float(pos[0]), float(pos[1]))
+    _listener_pid = pid
+
+
+def _listener_dist(x, y):
+    if _listener_pos is None:
+        return 0.0
+    return math.hypot(x - _listener_pos[0], y - _listener_pos[1])
+
+
+def _is_local(pid):
+    """None pid (old-style event) or no listener set -> treat as local."""
+    return pid is None or _listener_pid is None or pid == _listener_pid
+
+
 def trigger_shake(duration, magnitude):
     global _shake_mag, _shake_time, _shake_total
     if not _shake_enabled:
@@ -380,13 +409,11 @@ def spawn_ability_style(style, pos, color, extra=()):
             _add_shape("shard", pos, (200, 170, 255), random.uniform(0.4, 0.6), r=random.randint(10, 15),
                        ang=ang, vel=pygame.Vector2(math.cos(ang), math.sin(ang)) * random.uniform(160, 260))
         spawn_ring(pos, (230, 210, 255), max_radius=R * 0.8, life=0.3)
-        trigger_shake(0.2, 5)
     elif style == "ruin":  # a dark implosion that then cracks outward
         spawn_converge(pos, (70, 30, 90), count=22, radius=R, life=(0.25, 0.4), pradius=(3, 5))
         _add_shape("dome", pos, (60, 20, 70), 0.45, r=int(R * 0.7))
         spawn_burst(pos, (170, 90, 255), count=24, speed=(160, 300), life=(0.25, 0.45), radius=(2, 5))
         spawn_ring(pos, (120, 60, 180), max_radius=R, life=0.45)
-        trigger_shake(0.3, 8)
     elif style == "void":  # purple chain lightning between hops
         if other is not None:
             _add_shape("bolt", pos, (190, 110, 255), 0.35, points=_jagged(other, pos, 8, 12))
@@ -418,7 +445,6 @@ def spawn_ability_style(style, pos, color, extra=()):
             spawn_burst(ground, (255, 240, 160), count=5, speed=(60, 140), life=(0.15, 0.3), radius=(1, 3))
         if style == "storms":
             spawn_ring(pos, (180, 200, 255), max_radius=R, life=0.4)
-        trigger_shake(0.25, 6 if style == "thunder" else 9)
     elif style == "gale":  # a howling wind spiral that frosts over
         for i in range(18):
             ang = i * 0.7
@@ -477,7 +503,32 @@ def dispatch(vfx_events):
             spawn_ring(pos, color, max_radius=170, life=0.75)
             spawn_ring(pos, color, max_radius=220, life=0.95)  # a second, slower outer glow ring layered
             # behind the first - reads as a bigger shockwave, reusing spawn_ring, no new primitives
-            trigger_shake(0.8, 16)
+            if _listener_dist(x, y) <= BOSS_SHAKE_RANGE:  # only when it's actually near you
+                trigger_shake(0.5, 10)
+        elif kind == "world_boss_appear":
+            # announced in the feed; it spawns far away, so no shake at all
+            spawn_ring(pos, color, max_radius=170, life=0.75)
+        elif kind == "boss_phase":
+            # a boss / mini-boss enrages (below 50% HP) or the phase-2 fight begins
+            spawn_burst(pos, color, count=50, speed=(90, 280), life=(0.5, 1.0), radius=(3, 7))
+            spawn_ring(pos, color, max_radius=160, life=0.6)
+            spawn_ring(pos, (255, 230, 180), max_radius=110, life=0.45)
+            if _listener_dist(x, y) <= BOSS_SHAKE_RANGE:
+                trigger_shake(0.6, 12)
+        elif kind == "boss_death":
+            spawn_ring(pos, color, max_radius=200, life=0.8)
+            if _listener_dist(x, y) <= BOSS_SHAKE_RANGE:
+                trigger_shake(0.5, 10)
+        elif kind == "enemy_slam":
+            # a ground AoE / slam / meteor resolving: ring at its real radius +
+            # dust, and a shake that falls off with distance (none past ~450px)
+            r = ev[4] if len(ev) > 4 else 60
+            spawn_ring(pos, color, max_radius=max(20, int(r)), life=0.35)
+            spawn_burst(pos, color, count=12, speed=(50, 160), life=(0.2, 0.4), radius=(2, 4))
+            shake = ev[5] if len(ev) > 5 else 1
+            d = _listener_dist(x, y)
+            if shake and d < SLAM_SHAKE_RANGE:
+                trigger_shake(0.2, 5 * (1 - d / SLAM_SHAKE_RANGE))
         elif kind == "levelup":
             spawn_burst(pos, color, count=40, speed=(50, 180), life=(0.55, 1.0), radius=(2, 5))
             spawn_ring(pos, color, max_radius=80, life=0.7)
@@ -518,7 +569,6 @@ def dispatch(vfx_events):
             spawn_burst(pos, color, count=22, speed=(140, 260), life=(0.22, 0.4), radius=(2, 4))
             spawn_ring(pos, color, max_radius=_ABILITY_RING_RADIUS["nova"], life=0.35)
             spawn_ring(pos, color, max_radius=_ABILITY_RING_RADIUS["nova"] * 0.6, life=0.5)
-            trigger_shake(0.25, 6)  # a real (if brief) impact kick - previously silent
         elif kind == "freeze":
             # slower, lingering icy shards + a single wide frost ring - reads as
             # "everything just got heavy and cold", not another quick pop
@@ -536,24 +586,31 @@ def dispatch(vfx_events):
             # "the cheapest weight you'll ever add" per the juice research; deliberately
             # smaller than every other kind below so regular trash hits don't overpower them
             spawn_burst(pos, color, count=6, speed=(60, 140), life=(0.15, 0.3), radius=(1, 3))
-            trigger_shake(0.08, 2)
-            trigger_hitstop(30)
+            # no shake / hitstop for hits YOU deal - on every shot that read as goofy jitter
         elif kind == "hit_boss":
             # same impact feedback as hit_enemy, scaled up - landing a hit on a boss
             # should read as heavier than landing one on a trash mob
             spawn_burst(pos, color, count=14, speed=(80, 200), life=(0.2, 0.4), radius=(2, 4))
-            trigger_shake(0.15, 5)
-            trigger_hitstop(55)
         elif kind == "hit_player":
             # taking damage should feel weightier than dealing it - bigger than hit_enemy
             spawn_burst(pos, color, count=10, speed=(70, 160), life=(0.2, 0.35), radius=(2, 4))
-            trigger_shake(0.18, 7)
-            trigger_hitstop(60)
+            # ("hit_player", x, y, color[, pid, real, hp_max]) - shake only the LOCAL
+            # player's screen, scaled by how big a chunk of their HP the hit took
+            pid = ev[4] if len(ev) > 4 else None
+            if _is_local(pid):
+                frac = (ev[5] / max(1, ev[6])) if len(ev) > 6 else 0.1
+                if frac >= 0.04:
+                    k = min(1.0, frac / 0.15)
+                    trigger_shake(0.12 + 0.08 * k, 3 + 4 * k)
+                if frac >= 0.10:
+                    trigger_hitstop(40)
         elif kind == "hit_player_by_boss":
             # taking a hit FROM a boss - the biggest of the four juice-trio kinds
             spawn_burst(pos, color, count=20, speed=(90, 220), life=(0.25, 0.5), radius=(3, 5))
-            trigger_shake(0.3, 10)
-            trigger_hitstop(90)
+            pid = ev[4] if len(ev) > 4 else None
+            if _is_local(pid):
+                trigger_shake(0.25, 8)
+                trigger_hitstop(70)
         elif kind == "shield":
             spawn_ring(pos, color, max_radius=45, life=0.35)
         elif kind == "bird_flyby":
@@ -696,3 +753,67 @@ class NexusAmbience(AmbientEvents):
 
     def __init__(self):
         super().__init__(NEXUS_AMBIENT_KINDS, cooldown_range=(15, 45))
+
+
+# ------------------------------------------------------ enemy telegraph zones --
+ZONE_FILL_ALPHA = 55
+ZONE_EDGE_ALPHA = 200
+
+
+def _zone_fields(z):
+    """Accepts a RealmSim zone dict or a compact co-op list
+    [shape, x, y, r, length, width, ang, frac, color, has_dmg]."""
+    if isinstance(z, dict):
+        frac = min(1.0, z["t"] / max(0.01, z["life"]))
+        return (z["shape"], z["x"], z["y"], z["r"], z["length"], z["width"], z["ang"], frac,
+                tuple(z["color"]), z["dmg"] > 0)
+    shape = {"c": "circle", "l": "line", "o": "cone"}.get(z[0], "circle")
+    return shape, z[1], z[2], z[3], z[4], z[5], z[6], z[7], tuple(z[8]), bool(z[9])
+
+
+def draw_enemy_zones(surf, cam, zones):
+    """Ground telegraphs, drawn UNDER entities: an outline at the real danger
+    area with a fill that grows toward it as the attack gets closer - a circle
+    for ground AoEs (orange), a lane for aimed lines / dashes (red), a cone for
+    sprays. The last 20% flashes brighter: move NOW."""
+    for z in zones:
+        shape, x, y, r, length, width, ang, frac, color, has_dmg = _zone_fields(z)
+        cx, cy = cam((x, y))
+        # the camera can be rotated (Q/E): derive the on-screen angle from two
+        # transformed points instead of using the world angle directly
+        ex, ey = cam((x + math.cos(math.radians(ang)) * 100, y + math.sin(math.radians(ang)) * 100))
+        ang = math.degrees(math.atan2(ey - cy, ex - cx))
+        hot = frac > 0.8 and (pygame.time.get_ticks() // 70) % 2 == 0
+        edge_a = 255 if hot else ZONE_EDGE_ALPHA
+        if shape == "circle":
+            rr = max(4, int(r))
+            layer = pygame.Surface((rr * 2 + 4, rr * 2 + 4), pygame.SRCALPHA)
+            c = (rr + 2, rr + 2)
+            pygame.draw.circle(layer, (*color, ZONE_FILL_ALPHA // 2), c, rr)
+            pygame.draw.circle(layer, (*color, ZONE_FILL_ALPHA + 40), c, max(2, int(rr * frac)))
+            pygame.draw.circle(layer, (*color, edge_a), c, rr, 2)
+            surf.blit(layer, (cx - rr - 2, cy - rr - 2))
+        elif shape == "line":
+            L = max(10, int(length))
+            W = max(4, int(width))
+            layer = pygame.Surface((L, W), pygame.SRCALPHA)
+            wide = W > 30  # a bullet-wall swath: keep it light so it doesn't hide the floor
+            layer.fill((*color, 16 if wide else ZONE_FILL_ALPHA))
+            pygame.draw.rect(layer, (*color, 40 if wide else ZONE_FILL_ALPHA + 60), (0, 0, int(L * frac), W))
+            pygame.draw.rect(layer, (*color, edge_a), layer.get_rect(), 1)
+            rot = pygame.transform.rotate(layer, -ang)
+            # rotate about the line's start point (the attacker)
+            off = pygame.Vector2(L / 2, 0).rotate(ang)
+            surf.blit(rot, rot.get_rect(center=(cx + off.x, cy + off.y)))
+        elif shape == "cone":
+            rr = max(10, int(r))
+            layer = pygame.Surface((rr * 2 + 4, rr * 2 + 4), pygame.SRCALPHA)
+            c = pygame.Vector2(rr + 2, rr + 2)
+            half = width / 2
+            pts = [c] + [c + pygame.Vector2(rr, 0).rotate(ang - half + width * i / 8) for i in range(9)]
+            pygame.draw.polygon(layer, (*color, ZONE_FILL_ALPHA), pts)
+            inner = [c] + [c + pygame.Vector2(rr * frac, 0).rotate(ang - half + width * i / 8) for i in range(9)]
+            if frac > 0.05:
+                pygame.draw.polygon(layer, (*color, ZONE_FILL_ALPHA + 50), inner)
+            pygame.draw.polygon(layer, (*color, edge_a), pts, 2)
+            surf.blit(layer, (cx - rr - 2, cy - rr - 2))

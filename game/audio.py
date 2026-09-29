@@ -14,6 +14,7 @@ import math
 import os
 import random
 import struct
+import time
 
 import pygame
 
@@ -127,10 +128,38 @@ def _cached(key, factory):
     return _cache[key]
 
 
+# rate limiting: dense fights can fire dozens of identical sounds in one frame,
+# which just clips into noise - a per-key minimum interval plus a small global
+# budget per window keeps the mix readable
+SFX_MIN_INTERVAL = 0.045       # seconds between two plays of the SAME sound
+SFX_WINDOW = 0.12              # ...and at most SFX_WINDOW_BUDGET sounds per window overall
+SFX_WINDOW_BUDGET = 10
+_last_played = {}
+_window_start = 0.0
+_window_count = 0
+
+
+def _rate_ok(key, now=None):
+    """True if `key` may play right now (and records the play)."""
+    global _window_start, _window_count
+    now = time.monotonic() if now is None else now
+    if now - _last_played.get(key, -1.0) < SFX_MIN_INTERVAL:
+        return False
+    if now - _window_start > SFX_WINDOW:
+        _window_start, _window_count = now, 0
+    if _window_count >= SFX_WINDOW_BUDGET:
+        return False
+    _window_count += 1
+    _last_played[key] = now
+    return True
+
+
 def _play(key, factory):
     if not _enabled:
         return
     if _sfx_gain <= 0:
+        return
+    if not _rate_ok(key):
         return
     try:
         channel = _cached(key, factory).play()
@@ -148,12 +177,45 @@ _SHOT_TONE = {
 }
 
 
+# each class's weapon TYPE gets its own shot sound (all tiers of that weapon share it)
+WEAPON_TYPE = {"wizard": "staff", "necromancer": "scepter", "priest": "wand", "archer": "bow",
+               "rogue": "dagger", "assassin": "katar", "warrior": "sword", "paladin": "mace"}
+
+
+def _weapon_sound(wtype):
+    """Original procedural shot sounds, one timbre per weapon type."""
+    if wtype == "staff":    # arcane zap + a small sparkle on top
+        return _mix(_samples(660, 0.07, 0.2, "square", 380, envelope="exp_decay", decay_rate=18),
+                    _samples(1500, 0.05, 0.08, "sine", 2100, envelope="exp_decay", decay_rate=30))
+    if wtype == "scepter":  # low dark whoosh
+        return _mix(_samples(300, 0.09, 0.2, "triangle", 170, envelope="exp_decay", decay_rate=14),
+                    _samples(0, 0.08, 0.07, "noise", envelope="exp_decay", decay_rate=20))
+    if wtype == "wand":     # bright chime
+        return _mix(_samples(1040, 0.08, 0.16, "sine", 1180, envelope="exp_decay", decay_rate=16),
+                    _samples(1560, 0.07, 0.08, "sine", 1760, envelope="exp_decay", decay_rate=22))
+    if wtype == "bow":      # string twang: a plucked drop + a soft air whoosh
+        return _mix(_samples(420, 0.09, 0.2, "triangle", 210, envelope="exp_decay", decay_rate=22),
+                    _samples(0, 0.06, 0.06, "noise", envelope="exp_decay", decay_rate=35))
+    if wtype == "dagger":   # quick high swish
+        return _mix(_samples(0, 0.045, 0.14, "noise", envelope="exp_decay", decay_rate=55),
+                    _samples(1800, 0.03, 0.06, "square", 2400, envelope="exp_decay", decay_rate=60))
+    if wtype == "katar":    # double swish
+        one = _mix(_samples(0, 0.035, 0.13, "noise", envelope="exp_decay", decay_rate=60),
+                   _samples(1400, 0.025, 0.05, "square", 1900, envelope="exp_decay", decay_rate=70))
+        gap = [0] * int(SAMPLE_RATE * 0.03)
+        return one + gap + [int(v * 0.8) for v in one]
+    if wtype == "sword":    # heavier swoosh + a short metallic ring
+        return _mix(_samples(0, 0.07, 0.16, "noise", envelope="exp_decay", decay_rate=30),
+                    _samples(880, 0.09, 0.06, "sine", 860, envelope="exp_decay", decay_rate=18))
+    if wtype == "mace":     # low whump
+        return _mix(_samples(170, 0.1, 0.24, "square", 90, envelope="exp_decay", decay_rate=20),
+                    _samples(0, 0.06, 0.1, "noise", envelope="exp_decay", decay_rate=35))
+    return _samples(600, 0.055, 0.22, "square", 420, envelope="exp_decay", decay_rate=16)
+
+
 def play_shoot(cls_name):
-    freq, freq_end = _SHOT_TONE.get(cls_name, (600, 420))
-    wave = "square" if cls_name not in ("warrior", "paladin") else "noise"
-    _play(f"shoot_{cls_name}", lambda: _sound_from(
-        _samples(freq, 0.055, volume=0.22, wave=wave, freq_end=freq_end,
-                 envelope="exp_decay", decay_rate=16)))
+    wtype = WEAPON_TYPE.get(cls_name, "staff")
+    _play(f"shoot_{wtype}", lambda: _sound_from(_weapon_sound(wtype)))
 
 
 def play_hit():
@@ -310,13 +372,85 @@ def play_levelup():
     _play("levelup", build)
 
 
-def play_ability():
-    def build():
-        rise = _samples(300, 0.18, volume=0.26, wave="sine", freq_end=900, envelope="linear")
-        sparkle = _samples(1200, 0.12, volume=0.14, wave="square", freq_end=1800,
-                            envelope="exp_decay", decay_rate=18)
-        return _sound_from(_mix(rise, sparkle))
-    _play("ability", build)
+# per ability STYLE (game/vfx.py ABILITY_STYLES): (base, end, dur, wave, noise_amt, sparkle, decay)
+ABILITY_SOUND = {
+    "shatter": (900, 300, 0.22, "square", 0.10, 2200, 10),     # glassy crack
+    "ruin": (220, 60, 0.35, "square", 0.18, 0, 6),             # dark implosion boom
+    "void": (500, 1400, 0.25, "sine", 0.06, 1800, 9),          # rising warp
+    "blight": (260, 200, 0.3, "triangle", 0.16, 0, 7),         # wet poison hiss
+    "corruption": (180, 120, 0.4, "triangle", 0.2, 0, 5),      # spreading rot rumble
+    "reaper": (700, 180, 0.3, "sine", 0.12, 0, 8),             # scythe sweep
+    "thunder": (120, 60, 0.35, "square", 0.3, 0, 7),           # thunderclap
+    "storms": (150, 50, 0.45, "square", 0.35, 0, 5),           # rolling thunder
+    "gale": (400, 900, 0.4, "sine", 0.25, 0, 5),               # howling wind
+    "mending": (520, 780, 0.3, "sine", 0.0, 1560, 7),          # soft holy chord
+    "restoration": (440, 880, 0.35, "sine", 0.0, 1320, 6),
+    "rebirth": (330, 990, 0.45, "sine", 0.0, 1980, 5),
+    "aegis": (600, 600, 0.3, "triangle", 0.0, 1200, 7),        # shield hum
+    "ward": (500, 520, 0.4, "triangle", 0.04, 1500, 5),
+    "horn": (196, 262, 0.4, "square", 0.02, 0, 4),             # war horn
+    "smoke": (0, 0, 0.3, "noise", 0.3, 0, 9),                  # smoke puff
+    "shadow": (300, 150, 0.3, "sine", 0.1, 0, 8),              # shadow whoosh
+}
+
+
+def _ability_sound(style):
+    base, end, dur, wave, noise, sparkle, decay = ABILITY_SOUND.get(style, (300, 900, 0.18, "sine", 0.0, 1200, 8))
+    layers = []
+    if wave != "noise":
+        layers.append(_samples(base, dur, 0.24, wave, end, envelope="exp_decay", decay_rate=decay))
+    if noise > 0:
+        layers.append(_samples(0, dur * 0.8, noise, "noise", envelope="exp_decay", decay_rate=decay * 1.3))
+    if sparkle:
+        layers.append(_samples(sparkle, dur * 0.6, 0.08, "sine", sparkle * 1.25, envelope="exp_decay",
+                               decay_rate=decay * 1.5))
+    return _mix(*layers)
+
+
+def play_ability(style=None):
+    key = style if style in ABILITY_SOUND else "generic"
+    _play(f"ability_{key}", lambda: _sound_from(_ability_sound(key)))
+
+
+# enemy attack kinds (game/enemy_attacks.py move "sfx" keys + wind-ups / phases)
+ENEMY_ATTACK_SOUND = {
+    "shot": (520, 380, 0.05, "square", 0.0, 22),
+    "shotgun": (300, 180, 0.09, "square", 0.25, 18),
+    "burst": (400, 250, 0.1, "square", 0.1, 14),
+    "wall": (240, 200, 0.14, "triangle", 0.1, 10),
+    "beam": (1200, 500, 0.18, "square", 0.05, 12),
+    "wave": (500, 700, 0.12, "sine", 0.0, 12),
+    "homing": (700, 900, 0.16, "sine", 0.0, 10),
+    "fire": (200, 120, 0.14, "noise", 0.25, 14),
+    "spray": (0, 0, 0.22, "noise", 0.2, 8),
+    "throw": (600, 300, 0.1, "triangle", 0.1, 18),
+    "lob": (340, 520, 0.14, "sine", 0.05, 12),
+    "slam": (90, 45, 0.3, "square", 0.3, 9),
+    "leap": (200, 400, 0.14, "triangle", 0.1, 12),
+    "dash": (0, 0, 0.16, "noise", 0.25, 12),
+    "dash_windup": (160, 320, 0.25, "square", 0.05, 6),
+    "windup": (300, 600, 0.3, "sine", 0.0, 5),
+    "summon": (260, 520, 0.35, "triangle", 0.1, 5),
+    "shell": (500, 250, 0.14, "triangle", 0.0, 14),
+    "root": (140, 100, 0.35, "triangle", 0.2, 6),
+    "bubble": (700, 1100, 0.1, "sine", 0.0, 20),
+    "boss_phase": (110, 40, 0.8, "square", 0.3, 3),
+}
+
+
+def _enemy_attack_sound(key):
+    base, end, dur, wave, noise, decay = ENEMY_ATTACK_SOUND.get(key, ENEMY_ATTACK_SOUND["shot"])
+    layers = []
+    if wave != "noise":
+        layers.append(_samples(base, dur, 0.2, wave, end, envelope="exp_decay", decay_rate=decay))
+    if noise > 0 or wave == "noise":
+        layers.append(_samples(0, dur, max(noise, 0.15), "noise", envelope="exp_decay", decay_rate=decay))
+    return _mix(*layers)
+
+
+def play_enemy_attack(key):
+    key = key if key in ENEMY_ATTACK_SOUND else "shot"
+    _play(f"enemy_{key}", lambda: _sound_from(_enemy_attack_sound(key)))
 
 
 def play_boss_spawn():

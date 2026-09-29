@@ -55,7 +55,8 @@ def check_dispatch_scales_by_severity():
     trash_particles = len(vfx._particles)
     trash_hitstop_active = vfx.apply_hitstop(1 / 30) == 0.0
     assert trash_particles > 0, "hit_enemy must spawn impact particles"
-    assert trash_hitstop_active, "hit_enemy must trigger a (small) hitstop"
+    # shake policy (combat-feel rework): hits YOU deal never shake or freeze the screen
+    assert not trash_hitstop_active and vfx._shake_time == 0, "hit_enemy must not shake/hitstop any more"
 
     _reset_vfx_state()
     vfx.dispatch([("hit_player_by_boss", 0, 0, (255, 90, 90))])
