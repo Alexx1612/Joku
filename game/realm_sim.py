@@ -1289,6 +1289,10 @@ class RealmSim:
         for e in self.enemies:
             if not alive:
                 break
+            if self.is_bonus_room and not e.special:
+                # everything inside a dungeon room fights with its named special moves;
+                # the same kinds roaming the open Realm / islands only use basic shots
+                e.set_special(True)
             target = min(alive, key=lambda p: p.pos.distance_to(e.pos))
             if not self.is_bonus_room and target.pos.distance_to(e.pos) > ACTIVE_SIM_RADIUS:
                 continue  # dormant - too far from every player to be worth simulating this tick
@@ -1712,6 +1716,7 @@ class RealmSim:
             g.radius = int(round(ENEMY_KINDS[kind]["radius"] * GUARDIAN_SCALE))
             g.aggro = True
             g.story_guardian = lm["biome"]
+            g.set_special(True)   # landmark guardians fight with their named special moves
             self.enemies.append(g)
             self._landmark_guardians[idx] = g
             for _ in range(LANDMARK_GUARDIAN_ESCORTS):

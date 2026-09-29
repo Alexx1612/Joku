@@ -85,6 +85,7 @@ def _sim_with(kind):
     sim = RealmSim(bonus=True, theme="forge", difficulty_name="Medium", story_act=0)
     center = pygame.Vector2(sim.boss.pos)
     e = Enemy(kind, center)
+    e.set_special(True)  # a dungeon-room / guardian elite - the open-Realm version only shoots basics
     e.aggro = True
     sim.enemies = [e]
     sim.boss = None
@@ -236,6 +237,7 @@ def check_sfx_distinct_cached_and_rate_limited():
 
 def check_dash_windup_then_lunge():
     e = Enemy("panther", pygame.Vector2(0, 0))
+    e.set_special(True)  # dashes are a special-mob move (dungeons / guardians)
     e.aggro = True
     e._atk_gap = 0
     e._atk_cds = {m["name"]: (0 if m["fn"] == "dash" else 99) for m in e._attacks}  # force the Pounce
@@ -299,6 +301,46 @@ def check_special_mobs_have_specials_and_only_dangerous_tells():
     print(f"check_special_mobs_have_specials_and_only_dangerous_tells: PASSED ({len(SPECIAL)} kinds)")
 
 
+def check_specials_only_for_special_mobs():
+    """Everyday mobs in the open Realm / on islands (any rank) use basic shots only;
+    the same kinds inside a dungeon room, landmark guardians, island anchors and
+    bosses/mini-bosses fight with their named special moves."""
+    for k in HOSTILE:
+        if k == "totem":
+            continue
+        e = Enemy(k, pygame.Vector2(0, 0))
+        boss_or_anchor = ENEMY_KINDS[k]["rank"] == "boss" or k in EA.SPECIAL_BY_KIND
+        assert e.special == boss_or_anchor, (k, e.special)
+        if not e.special:
+            assert 1 <= len(e._attacks) <= 2, (k, [m["name"] for m in e._attacks])
+            for m in e._attacks:
+                assert m["fn"] in BASIC_FNS and not EA.is_dangerous(m), f"{k}: basic {m['name']} ({m['fn']})"
+                assert m["fn"] != "fan" or (m.get("n", 1) <= 3 and m.get("spread", 0) <= 30), (k, m["name"])
+    # open-Realm elite = basic, the same kind in a dungeon room = specials (promoted by the sim)
+    e = Enemy("scorpion", pygame.Vector2(0, 0))
+    assert not e.special and all(not EA.is_dangerous(m) for m in e._attacks)
+    dung = RealmSim(bonus=True, theme="generic")
+    probe = Enemy("scorpion", dung.boss.pos + pygame.Vector2(120, 0))
+    dung.enemies.append(probe)
+    from game.entities import Player
+    p = Player("wizard", name="Spec", pid="spec")
+    p.pos = pygame.Vector2(probe.pos) + pygame.Vector2(80, 0)
+    dung.begin_tick()
+    dung.update(1 / 30, {p.pid: p})
+    assert probe.special and {m["name"] for m in probe._attacks} == {m["name"] for m in EA.moves_for("scorpion")}
+    # everyday realm mobs stay basic after being simulated
+    realm = RealmSim()
+    sp = realm.spawn_point()
+    q = Player("wizard", name="Basic", pid="basic")
+    q.pos = pygame.Vector2(sp)
+    wild = Enemy("yeti", sp + pygame.Vector2(150, 0))
+    realm.enemies.append(wild)
+    realm.begin_tick()
+    realm.update(1 / 30, {q.pid: q})
+    assert not wild.special
+    print("check_specials_only_for_special_mobs: PASSED")
+
+
 if __name__ == "__main__":
     check_every_hostile_kind_has_an_attack_set()
     check_no_untelegraphed_full_rings_for_regular_mobs()
@@ -310,4 +352,5 @@ if __name__ == "__main__":
     check_dash_windup_then_lunge()
     check_trash_has_only_plain_untelegraphed_basics()
     check_special_mobs_have_specials_and_only_dangerous_tells()
+    check_specials_only_for_special_mobs()
     print("PASSED: combat feel checks all green.")

@@ -1212,9 +1212,10 @@ class Enemy:
         self._move_dir = pygame.Vector2(0, 1)
         self._fire_pose_t = 0.0  # >0 briefly after a real shot - brief squash/stretch anticipation pose
         # --- per-kind attack sets (game/enemy_attacks.py) ---
-        self._attacks = EA.moves_for(self.kind)
-        self._atk_cds = ({m["name"]: random.uniform(0.3, max(0.4, m["cd"] * 0.7)) for m in self._attacks}
-                         if self._attacks else {})
+        # special mobs (bosses, mini-bosses, anchors, story guardians, dungeon elites - see
+        # EA.moves_for_enemy / set_special) get named hardened moves; everyday mobs basic shots
+        self.special = EA.special_by_default(self.kind)
+        self._set_attacks()
         self._atk_gap = random.uniform(0.4, 1.2)
         self._windup = None          # {"move", "t", "total", "tele_dir", "tele_point"} while telegraphing
         self._windup_kind = None     # "aim" (red) / "aoe" (orange) / "homing" (purple) - draw + net
@@ -1422,6 +1423,19 @@ class Enemy:
             b.src_rank = self.rank  # boss bullets hit (and shake) harder - see vfx hit_player_by_boss
 
     # ------------------------------------------------ attack sets (enemy_attacks) --
+    def _set_attacks(self):
+        self._attacks = EA.moves_for_enemy(self.kind, self.special)
+        self._atk_cds = ({m["name"]: random.uniform(0.3, max(0.4, m["cd"] * 0.7)) for m in self._attacks}
+                         if self._attacks else {})
+
+    def set_special(self, special=True):
+        """Promote/demote to the named special move set (RealmSim: dungeon rooms, guardians)."""
+        if bool(special) != self.special:
+            self.special = bool(special)
+            self._windup = None
+            self._repeat = None
+            self._set_attacks()
+
     def _ctx(self, player_pos, to_player_n, out, tele_dir=None, tele_point=None, step=0, speed_mult=1.2):
         dist = (player_pos - self.pos).length()
         lead = player_pos + self._tvel * (dist / (EA.BASE_SPEED * speed_mult))

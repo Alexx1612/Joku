@@ -23,6 +23,15 @@ Polish round on top of "Ends of V0.2" (still v0.2). Replaces the old one-pattern
   walls +2 bullets (the gap stays), dangerous wind-ups x0.9 (min 0.35 s). Bosses also get `Crossfire` (enraged
   only): an aimed predictive 3-fan x3 burst while 3 ground zones land around the target (`tele_fn="rain"`).
   Enrage cooldown multiplier `PHASE2_CD_MULT` = 0.6. Every elite has >= 2 moves, every boss >= 3.
+- **Special only where it matters** (second revision): `Enemy.special` decides which set a mob uses -
+  `moves_for_enemy(kind, special)` = the hardened named set when special, else `basic_moves_for(kind)`: the kind's
+  first 1-2 plain `fan`/`sine`/`boomerang` shots (fans capped at 3 bullets / 30 deg, volleys at 2), un-telegraphed,
+  `shot_small` sound, elites x1.08 speed / x0.9 cooldown; kinds with no plain shot get one derived from their old
+  `pattern` (e.g. burst -> a 3-fan, spiral -> a sine shot). `special_by_default(kind)` = rank `boss` (dungeon/phase-2/
+  world bosses, island mini-bosses, Mad God) or an island anchor (`SPECIAL_BY_KIND`); RealmSim promotes landmark
+  story guardians at spawn and every enemy inside a dungeon room (`is_bonus_room`) via `Enemy.set_special(True)`.
+  So a scorpion in the Desert just shoots; the same scorpion in a dungeon adds its telegraphed Stinger.
+  Server-side only - clients just draw the tells they are sent.
 - Full per-kind move lists: GAME_DATA.md "Attack sets".
 
 ## 2. Bullets (`game/entities.py` `Bullet`)
@@ -72,12 +81,17 @@ Before = the first combat-feel commit (aabeaa3), after = the trash/special revis
 | ash_behemoth | 16.5 / 0.5 | 27.2 / 3.2 | 11.6 / 0.5 | 18.7 / 2.2 |
 | mad_god | 19.9 / 7.7 | 45.7 / 10.8 | 22.9 / 6.9 | 39.0 / 10.7 |
 
+Open-Realm versions of elites now use basics (lvl-20 Wizard, still / strafe): scorpion 4.9 / 1.3, yeti 6.3 / 1.3,
+salamander 4.8 / 1.1; inside a dungeon: scorpion 19.4 / 3.1, yeti 15.0 / 2.2, salamander 21.1 / 2.8; bosses
+unchanged (Vault Guardian 52.9 / 11.1, frost_monarch 48.4 / 6.2).
+
 Trash got easier (plain shots, no specials); special mobs roughly 1.5-2.5x deadlier standing still and 1.5-2x
 while strafing (enrage moves like Crossfire are not in these numbers - the harness keeps HP full). A lvl-20 Wizard
 (~300 HP) standing still in front of a boss dies in ~5-6 s.
 
 ## 7. Tests
-`tests/check_combat_feel.py`: trash only has plain untelegraphed basics (and never glows/flags a tell in play);
+`tests/check_combat_feel.py`: open-Realm/island mobs (any rank) use basics only while the same kind in a dungeon
+room, guardians, anchors and bosses use their specials (`check_specials_only_for_special_mobs`); trash only has plain untelegraphed basics (and never glows/flags a tell in play);
 every elite has >= 2 and every boss >= 3 moves; dangerous primitives are always telegraphed, plain fans never glow;
 hardened sets are faster than the raw table and bosses have Crossfire; every hostile kind has an attack set; no regular mob relies on an untelegraphed full
 ring; every boss/mini-boss has >= 3 named moves and a phase change; AoE damage only after its telegraph; bullet

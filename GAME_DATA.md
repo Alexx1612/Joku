@@ -181,7 +181,10 @@ bullet speed, x0.75/x0.72 cooldowns (x0.9 for moves already under 1.5 s), +1 bul
 with the gaps kept, +2 on walls, a plain single shot becomes a tight double; bosses/mini-bosses also get the enraged
 **Crossfire** combo (a predictive 3x burst while 3 ground zones land around you). `*` = enraged below 50% HP
 (cooldowns x0.6 after the roar), `+` = phase-2 room only. Only DANGEROUS moves are telegraphed, shown in brackets:
-line/dash = red, zone/cone/ring = orange; no bracket = no warning at all. Trash has plain shots only):
+line/dash = red, zone/cone/ring = orange; no bracket = no warning at all. These full sets are only used by SPECIAL
+mobs - bosses, mini-bosses, island anchors, landmark guardians and anything fought inside a dungeon room; the same
+kinds roaming the open Realm / islands use `basic_moves_for()` instead: their first 1-2 plain shots only (no
+specials, no telegraphs, quiet sound; elites x1.08 speed / x0.9 cooldown). Trash has plain shots everywhere):
 
 | Kind | Moves |
 |---|---|

@@ -60,10 +60,13 @@ _TELE_WORDS = {"zone": "ground zone", "line": "aim line", "cone": "cone", "ring"
                "dash": "dash lane", "glow": "glow"}  # "none" (ordinary shots) has no tag
 
 
-def attack_moves(kind):
-    """'Rock Lob (ground zone)' style labels for a kind's attack set (game/enemy_attacks.py)."""
+def attack_moves(kind, special=None):
+    """'Rock Lob (ground zone)' style labels for a kind's attack set (game/enemy_attacks.py).
+    special=None -> the set it normally uses (special_by_default); True/False forces one."""
     from game import enemy_attacks
-    moves = enemy_attacks.moves_for(kind) or []
+    if special is None:
+        special = enemy_attacks.special_by_default(kind)
+    moves = enemy_attacks.moves_for_enemy(kind, special) or []
     out = []
     for m in moves:
         if m.get("p2") and not kind.endswith("_phase2"):
@@ -134,8 +137,14 @@ def _enemy_entry(kind, d, biomes, extra):
             text = "Attacks: " + "; ".join(moves) + "."
         else:
             text = f"It {PATTERN_TEXT.get(d.get('pattern'), 'attacks you')}."
-        if rank == "trash":
-            text += " Common fodder: plain shots only, no warning before it fires - just keep moving."
+        from game import enemy_attacks
+        if not enemy_attacks.special_by_default(kind):
+            text += (" Out in the Realm and on the islands it only fires plain shots, with no warning -"
+                     " just keep moving.")
+            specials = [m for m in attack_moves(kind, special=True) if m not in moves]
+            if specials:
+                text += (" Inside dungeons (and as a landmark guardian) it fights as a SPECIAL mob, fast"
+                         " and dense, adding: " + "; ".join(specials) + ".")
         else:
             text += (" A special mob - its moves are fast and dense. Only the DANGEROUS ones are"
                      " telegraphed: a red lane (aim line / dash), an orange ground zone (area attack)"

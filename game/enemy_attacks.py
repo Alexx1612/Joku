@@ -679,3 +679,80 @@ def full_ring_untelegraphed(move):
     if move["fn"] == "fan" and move.get("spread", 0) >= 300 and move.get("n", 1) >= 8:
         return move.get("tele", "glow") == "glow"
     return False
+
+
+# ------------------------------------------- special vs everyday mobs --
+# The named, hardened move sets above only belong to SPECIAL mobs: bosses (incl. phase 2,
+# world boss, Mad God), island mini-bosses, the island anchors, landmark story guardians and
+# every elite fought inside a dungeon room (RealmSim marks those via Enemy.set_special).
+# Everyday mobs roaming the open Realm and the islands - of ANY rank - only use plain,
+# un-telegraphed basic shots (still varied per kind so biomes feel different).
+SPECIAL_BY_KIND = ("cinder_warden", "choir_warden")
+BASIC_FNS = ("fan", "sine", "boomerang")
+
+# fallback basic shot from the kind's old `pattern` when its move list has no plain shot
+_BASIC_FROM_PATTERN = {
+    "aimed": dict(fn="fan", n=1),
+    "erratic": dict(fn="fan", n=1, cd=2.0),
+    "spread": dict(fn="fan", n=3, spread=20),
+    "burst": dict(fn="fan", n=3, spread=30),          # was an 8-bullet ring
+    "spiral": dict(fn="sine", amp=18),
+    "volley": dict(fn="fan", n=1, repeat=2, gap=0.14),
+    "charge": dict(fn="fan", n=1, lead=True),
+    "boss": dict(fn="fan", n=3, spread=24),
+    "boss_root": dict(fn="fan", n=3, spread=24),
+    "boss_burrow": dict(fn="fan", n=3, spread=24),
+    "mad_god": dict(fn="fan", n=3, spread=24),
+}
+_BASIC = {}
+
+
+def special_by_default(kind):
+    base = kind[:-7] if kind.endswith("_phase2") else kind
+    return base in SPECIAL_BY_KIND or _E().ENEMY_KINDS.get(base, {}).get("rank") == "boss"
+
+
+def _basicize(m, elite):
+    b = dict(m)
+    b["tele"], b["windup"] = "none", min(b.get("windup", 0.1), 0.12)
+    b["sfx"] = "shot_small"
+    for k in ("phase", "p2", "root"):
+        b.pop(k, None)
+    if b["fn"] == "fan":  # a plain aimed shot / small fan / short volley - never a spray
+        b["n"] = min(b.get("n", 1), 3)
+        b["spread"] = min(b.get("spread", 20), 30)
+        b["repeat"] = min(b.get("repeat", 1), 2)
+        b.pop("sweep_step", None)
+    if elite:  # elites shoot a little harder than trash, but nothing special
+        b["speed"] = round(b.get("speed", _PRIM_SPEED.get(b["fn"], 1.0)) * 1.08, 3)
+        b["cd"] = round(b["cd"] * 0.9, 2)
+    return b
+
+
+def basic_moves_for(kind):
+    """Plain everyday attacks for a kind (<= 2 moves, no telegraphs, no AoE/dash/ring)."""
+    base = kind[:-7] if kind.endswith("_phase2") else kind
+    if base in _BASIC:
+        return _BASIC[base]
+    moves = ATTACKS.get(base)
+    if moves is None:
+        return None
+    d = _E().ENEMY_KINDS.get(base, {})
+    elite = d.get("rank") != "trash"
+    plain = [m for m in moves if m["fn"] in BASIC_FNS and not is_dangerous(m) and not m.get("p2")
+             and m.get("phase", 1) == 1 and not (m["fn"] == "fan" and m.get("spread", 0) > 60)]
+    if not plain:
+        spec = dict(_BASIC_FROM_PATTERN.get(d.get("pattern"), dict(fn="fan", n=1)))
+        fn = spec.pop("fn")
+        plain = [M(f"{_pretty_kind(base)} Shot", fn, cd=spec.pop("cd", 1.6), **spec)]
+    out = [_basicize(m, elite) for m in plain[:2]]
+    _BASIC[base] = out
+    return out
+
+
+def _pretty_kind(kind):
+    return kind.replace("_", " ").title()
+
+
+def moves_for_enemy(kind, special):
+    return moves_for(kind) if special else basic_moves_for(kind)

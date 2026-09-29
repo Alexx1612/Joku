@@ -30,12 +30,14 @@ from game.entities import Enemy
 from coop_client import GhostEnemy
 
 
-def _mk_ranged_enemy(ready=True, aggro=True, kind="troll", only=None):
+def _mk_ranged_enemy(ready=True, aggro=True, kind="troll", only=None, special=True):
     """troll: an elite whose Boulder Lob is a telegraphed ground AoE. `ready`
     makes its next move available immediately; `only` = the primitive (fn) the
-    ready move must use (default: the first DANGEROUS move)."""
+    ready move must use (default: the first DANGEROUS move). special=True: the
+    dungeon-room / guardian version (open-Realm trolls only shoot basics)."""
     from game import enemy_attacks as EA
     e = Enemy(kind, pygame.Vector2(100, 100))
+    e.set_special(special)
     e.aggro = aggro
     if ready:
         e._atk_gap = 0.0

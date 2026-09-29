@@ -175,11 +175,13 @@ zone), `/accept` / `/decline` (trade invites) and
   nova -> nova -> chain / drain / freeze; Priest heals; Paladin heals ->
   shield; Warrior/Rogue/Assassin party haste. Abilities are telegraphed and
   never hit friendly creatures or NPCs.
-- **Enemy attacks** (`game/enemy_attacks.py`): **common fodder (trash) only
-  fires plain shots** - aimed, predictive, small 3-fans, 2-shot volleys, heavy
-  bolts, sine shots, boomerangs - with no warning. **Special mobs** (elites,
-  island mini-bosses, bosses, the world boss, the Mad God) carry named attack
-  sets and are genuinely hard: faster, denser patterns (gaps always kept),
+- **Enemy attacks** (`game/enemy_attacks.py`): **every everyday mob roaming
+  the open Realm and the islands - of any rank - only fires plain shots**
+  (aimed, predictive, small 3-fans, 2-shot volleys, heavy bolts, sine shots,
+  boomerangs; varied per kind, elites a little harder) with no warning.
+  **Special mobs** - bosses (dungeon, phase 2, world boss, Mad God), island
+  mini-bosses, the island anchors, landmark story guardians and every mob
+  fought INSIDE a dungeon room - carry named attack sets and are genuinely hard: faster, denser patterns (gaps always kept),
   shotgun fans, bullet walls with a gap, beams, homing/accelerating/splitting
   bullets, mines, lobbed ground AoEs, dashes and leaps, summons, root pulses.
   Mini-bosses have 3-4 named moves, dungeon bosses 4-6 (e.g. the Vault
