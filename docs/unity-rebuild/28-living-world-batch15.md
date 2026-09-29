@@ -3,7 +3,7 @@
 ## Context
 
 Batch 15 was planned in `~/.claude/plans/i-want-to-do-distributed-leaf.md` (user request, 2026-09-25).
-It is uncommitted at the time of writing, on top of the doc-27 round. Decisions the user made:
+It was uncommitted when written (on top of the doc-27 round) and shipped in "Ends of V0.2" (65552b4). Decisions the user made:
 - the map grows to ~1300x1300;
 - co-op uses personal loot with shared credit;
 - damage spells get x2.5;

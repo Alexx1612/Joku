@@ -395,7 +395,12 @@ def step(state, dt):
     for pid, action in actions:
         s = state.sessions.get(pid)
         if s is not None:
-            _apply_action(state, s, action)
+            try:
+                _apply_action(state, s, action)
+            except OSError:
+                # a reply to a client whose socket just died - its handle_client thread
+                # removes the session; don't let it abort this tick for everyone else
+                pass
 
     # 2) continuous movement + firing input, per current zone
     for s in state.sessions.values():

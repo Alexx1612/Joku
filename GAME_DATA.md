@@ -1,32 +1,71 @@
 # Game data reference (per version)
 
-A versioned snapshot of the audio sound effects, achievements, and per-class
-base stats - so there's a historical record as these change, not just
-whatever's currently in the code. Update this alongside README.md's own
-version changelog when any of the three lists below change.
+A versioned snapshot of the game's data tables - sound effects, music,
+achievements, class stats, abilities, pets, bosses, dungeons, story, side
+quests, NPCs and areas - so there's a historical record as these change,
+not just whatever's currently in the code. Numbers are read from the code
+(file named in each heading). Update this alongside README.md's version
+history when any of them change.
 
-## v0.2 (current - everything below is still v0.2, not a new version)
+## Ends of V0.2 (current - still v0.2, release tag `v0.2`)
 
-### Audio sound effects (`game/audio.py`)
+### Sound effects (`game/audio.py`)
 
-All procedurally synthesized at runtime - no audio files anywhere.
+All synthesized at runtime - no audio files are loaded.
 
 | Function | Used for |
 |---|---|
 | `play_shoot(cls_name)` | Firing your weapon - per-class tone |
 | `play_hit()` | Player takes damage |
-| `play_enemy_hit()` | An enemy takes damage (generic, pre-family-sound pass) |
+| `play_enemy_hit()` | An enemy takes damage (generic) |
 | `play_mob_hit(family)` | An enemy takes damage, family-tinted (beast/undead/elemental/construct) |
 | `play_mob_death(family)` | An enemy dies, family-tinted |
-| `play_mob_bark(family)` | A mob's idle/aggro flavor-line vocalization, family-tinted |
-| `play_pickup()` | Picking up an item |
-| `play_drop()` | Dropping an item |
+| `play_mob_bark(family)` | A mob's flavor-line vocalization (growl / moan / hiss / groan) |
+| `play_pickup()` / `play_drop()` | Picking up / dropping an item |
 | `play_death()` | The player dies |
 | `play_levelup()` | Leveling up |
-| `play_ability()` | Casting your equipped ability |
+| `play_ability()` | Casting your ability |
 | `play_boss_spawn()` | A boss appears |
-| `play_wish(jackpot)` | Wishing-fountain reroll (fanfare variant on a jackpot) |
-| `play_theme(zone)` | Per-zone background music (Nexus/Bazaar/Realm/Dungeon) |
+| `play_wish(jackpot)` | Wishing-fountain reroll (fanfare on a jackpot) |
+| `play_theme(zone)` / `update_music()` | Start / crossfade the zone's music track (see Music) |
+| `set_volumes(master, music, sfx, muted)` | Applies the options-menu volumes live |
+
+Mob flavor lines have a 20 s `MIN_REBARK_INTERVAL` and only reach chat for
+players within 600 px (`realm_sim.MOB_SPEECH_HEAR_RADIUS`).
+
+### Music (`game/music.py`)
+
+23 original tracks, each ~60 s, a whole number of bars and seamlessly
+loopable, rendered on a background thread and cached as `.wav` in
+`music_cache/`. Realm music follows the biome / big area / island you're in
+(switch after 2 s there, ~1.5 s crossfade). All compositions are original -
+no covers or borrowed melodies.
+
+| Zone | Title | Style | BPM |
+|---|---|---|---|
+| Nexus | Hearthlight | ballad | 92 |
+| Bazaar | Haggle Boogie | shuffle | 150 |
+| Vault room | Counting Room | half-time | 84 |
+| Forest | Greenwood Charge | rock | 124 |
+| Desert | Mirage Road | rock | 112 |
+| Tundra | Whiteout | half-time | 100 |
+| Swamp | Bog Blues | shuffle | 88 |
+| Highlands | Windcrest Gallop | gallop | 140 |
+| Ashlands | Cinder Sprint | punk | 168 |
+| Jungle | Canopy Drums | tribal | 118 |
+| Wasteland | Rust Belt | half-time | 96 |
+| Ice | Glass Cathedral | rock | 132 |
+| Cave | Deep Echo | doom | 76 |
+| Shard islands | Shard Surf | surf | 156 |
+| Choir islands | Choir Tide | off-beat | 104 |
+| Forgotten Vault (generic dungeon) | Forgotten Halls | rock | 108 |
+| Cave Warren | Warren Crawl | doom | 84 |
+| Frozen Crypt | Crypt Frost | half-time | 96 |
+| Jungle Ruins | Idol Run | tribal | 126 |
+| Ember Den | Magma Stomp | gallop | 150 |
+| Sunken Grotto | Drowned Bells | off-beat | 98 |
+| Wind Spire | Updraft | surf | 136 |
+| The Forge (finale) | Closing Time | punk | 176 |
 
 ### Achievements (`game/achievements.py`)
 
@@ -39,65 +78,239 @@ All procedurally synthesized at runtime - no audio files anywhere.
 | `dungeoneer` | the Dungeoneer | Clear a bonus dungeon's boss |
 | `veteran` | the Veteran | Reach level 10 |
 | `godslayer` | the Godslayer | Slay a Mad God's Avatar in the open Realm |
+| `reforger` | the Reforger | Help calm a flaring shard or singing spire |
 | `legend` | the Legend | Reach level 20 |
 
-### Class base stats (`game/entities.py`'s `CLASS_BASE`)
+### Class base stats (`game/entities.py` `CLASS_BASE`)
 
-| Class | HP | MP | ATT | DEF | SPD | DEX | VIT | WIS | Growth cycle (per level-up) |
-|---|---|---|---|---|---|---|---|---|---|
-| Wizard | 100 | 100 | 10 | 5 | 25 | 15 | 10 | 30 | wis, att, vit, wis, dex |
-| Archer | 90 | 70 | 15 | 10 | 35 | 25 | 15 | 10 | dex, att, spd, vit, dex |
-| Warrior | 130 | 50 | 15 | 25 | 20 | 15 | 25 | 5 | deF, vit, att, deF, spd |
-| Priest | 100 | 120 | 5 | 10 | 25 | 10 | 15 | 35 | wis, vit, wis, deF, dex |
-| Rogue | 85 | 60 | 12 | 8 | 40 | 30 | 12 | 8 | dex, spd, att, dex, vit |
-| Necromancer | 95 | 110 | 8 | 6 | 22 | 12 | 12 | 32 | wis, att, wis, vit, dex |
-| Paladin | 140 | 80 | 10 | 22 | 18 | 12 | 22 | 18 | deF, vit, wis, deF, vit |
-| Assassin | 80 | 65 | 14 | 6 | 38 | 32 | 10 | 8 | dex, att, dex, spd, vit |
+| Class | Armor | HP | MP | ATT | DEF | SPD | DEX | VIT | WIS | Signature growth stats |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Wizard | robe | 100 | 100 | 10 | 5 | 25 | 15 | 10 | 30 | wis, att, vit, wis, dex |
+| Archer | light | 90 | 70 | 15 | 10 | 35 | 25 | 15 | 10 | dex, att, spd, vit, dex |
+| Warrior | heavy | 130 | 50 | 15 | 25 | 20 | 15 | 25 | 5 | deF, vit, att, deF, spd |
+| Priest | robe | 100 | 120 | 5 | 10 | 25 | 10 | 15 | 35 | wis, vit, wis, spd, dex |
+| Rogue | light | 85 | 60 | 12 | 8 | 40 | 30 | 12 | 8 | dex, spd, att, dex, vit |
+| Necromancer | robe | 95 | 110 | 8 | 6 | 22 | 12 | 12 | 32 | wis, att, wis, vit, dex |
+| Paladin | heavy | 140 | 80 | 10 | 22 | 18 | 12 | 22 | 18 | deF, vit, wis, deF, vit |
+| Assassin | light | 80 | 65 | 14 | 6 | 38 | 32 | 10 | 8 | dex, att, dex, spd, vit |
 
-At v0.2, every level-up applies a flat `+14 hp_max / +10 mp_max` plus `+4` to
-one stat picked from the class's own growth cycle above (same flat amount
-for every class - not yet class-differentiated beyond which stat is picked).
+Level cap 20. Per level-up: HP +16-22 / +12-17 / +9-13 and MP +4-7 / +5-8 /
++7-11 for heavy / light / robe; each signature stat +1-3, every other stat
++0-1 (random rolls). Priest's growth list swapped `deF` for `spd` in this
+release (it used to out-grow every non-heavy class's defense).
 
-## Changes since the table above (still v0.2 - not bumped to v0.3 yet)
+Player damage taken = `dmg * 75 / (75 + DEF)` (`constants.player_defense`);
+e.g. DEF 15 -> 83%, DEF 63 -> 54% of the hit. Armor-piercing shots (the Mad
+God's volley and nova) skip it.
 
-The user has confirmed this is still v0.2; nothing here has been promoted to
-a new version number. Class base stats and achievements are unchanged so
-far. Audio has one change so far:
+### Abilities (`game/items.py` `ABILITIES`)
 
-- `play_mob_bark(family)` was rebuilt from a flat tone "blip" into a real
-  animal-vocalization shape per family (`_BARK_PROFILE`/`_bark_wave` in
-  `game/audio.py`) - a low carrier tone with fast/shallow pitch vibrato mixed
-  with noise, tuned per family so beast reads as a growl ("grr"), undead as a
-  long low moan/hiss, elemental as a crackling hiss, and construct as a slow
-  mechanical groan. Also: mob flavor lines now have a hard `MIN_REBARK_INTERVAL`
-  (20s, `game/entities.py`'s `Enemy`) between re-triggers, no longer mention
-  the mob's name in their speech bubble, and render in yellow instead of the
-  player-chat dark text.
+Base magnitude listed; at cast damage effects are x2.5 and heal/shield x1.5
+(`ABILITY_POWER_MULT`, applied by `ability_power()`), haste values are
+seconds and unscaled.
 
-Rendered audio exports of every sound effect above (see "Audio file exports"
-below) live in `assets/audio_export/` for reference/archival - the game
-itself still synthesizes every sound at runtime, these are just saved copies.
+| Class | T1 | T5 | T9 |
+|---|---|---|---|
+| Wizard | Orb of Shatter - nova 22 (55) | Orb of Ruin - nova 40 (100) | Orb of the Void - chain 56 (140), up to 4 targets |
+| Necromancer | Skull of Blight - nova 20 (50) | Skull of Corruption - nova 35 (88) | Skull of the Reaper - drain 50 (125), heals 50% of damage |
+| Archer | Quiver of Thunder - nova 17 (43) | Quiver of Storms - nova 32 (80) | Quiver of the Gale - freeze 37 (93), roots 2.5 s |
+| Priest | Tome of Mending - heal 20 (30) | Tome of Restoration - heal 35 (53) | Tome of Rebirth - heal 55 (83) |
+| Paladin | Aegis of Faith - heal 16 (24) | Aegis of Devotion - heal 28 (42) | Aegis of the Ward - shield 60 (90) for 8 s |
+| Warrior | Rally Horn - haste 6 s | War Horn - haste 6 s | Horn of the Vanguard - haste 8 s |
+| Rogue | Smoke Draught - haste 6 s | Shadow Draught - haste 6 s | Draught of the Void - haste 8 s |
+| Assassin | Cloak of Shadows - haste 6 s | Veil of Night - haste 6 s | Veil of the Abyss - haste 8 s |
 
-This section will keep growing as the rest of the in-progress batch (loot
-bags, vault, dungeons, bosses, quests, abilities, potions, leveling rework,
-social/chat features) lands - the per-class stat growth rework specifically
-(Section L of the batch plan) will replace the "flat +14/+10, one rotating
-stat" line above with real class-differentiated growth ranges, at which
-point this file's class-stats table will be filled in for real (and a
-version bump to v0.3 would happen in README.md, not silently here).
+Each has its own visual style (`vfx.ABILITY_STYLES`: shatter, ruin, void,
+blight, corruption, reaper, thunder, storms, gale, mending, restoration,
+rebirth, aegis, ward, horn, smoke, shadow). Abilities never hit neutral
+wildlife, NPCs or unshootable mobs.
+
+### Pets (`game/items.py` `PET_KINDS`)
+
+| Pet | Rarity | Specialty |
+|---|---|---|
+| Hatchling | common | heal |
+| Imp Pup | common | attack |
+| Wisp | uncommon | magic |
+| Sentient Fish | uncommon | magic (fishing catch) |
+| Griffin Cub | rare | attack |
+| Moon Sprite | rare | heal |
+| Spirit Fox | rare | magic |
+| Phoenix Chick | legendary | heal |
+| Tipsy Thunderbird | legendary | attack |
+| Sommelier Serpent | legendary | magic |
+| Hangover Hydra | mythic (fusion only) | heal |
+| Last-Call Leviathan | mythic (fusion only) | attack |
+| Brewmaster Djinn | mythic (fusion only) | magic |
+
+- Ability level caps / start levels: common 10/3, uncommon 15/5, rare 20/7,
+  legendary 30/10, mythic 40/14. Base at level 1: heal 8 hp / 6 s, magic
+  6 mp / 6 s, attack 6 dmg / 2.6 s; +15% magnitude and x0.95 cooldown per
+  level (a third as much past level 30).
+- Feeding: 6 feed-XP per item tier, split across the 3 abilities; 30 XP per
+  ability level. Egg drop weights: common 50, uncommon 25, rare 12,
+  legendary 2 (mythic never drops).
+- Bond level = `floor(sqrt(bond / 30))`, max 25: magnitude x(1 + 0.04 * level),
+  cooldown x(1 - 0.01 * level); heal/mana cooldowns never below 1.5 s.
+- Fusion: two maxed pets of the same rarity -> next rarity, bond summed.
+
+### Enemies and bosses (`game/entities.py` `ENEMY_KINDS`)
+
+28 trash-rank kinds (11 hostile + 17 neutral: 16 friendly wildlife and the
+dungeon Totem), 33 elite and 24 boss-rank kinds (incl. phase-2 variants). Damage values
+below already include the global x1.22 enemy damage multiplier.
+
+| Boss | HP | Damage | Pattern | Draw/hit scale |
+|---|---|---|---|---|
+| boss (Mad God's Avatar pool) | 1440 | 7-17 | boss | 2.0 |
+| frost_monarch | 1600 | 9-18 | boss | 2.0 |
+| ash_behemoth | 1300 | 10-21 | boss | 2.0 |
+| void_reaper | 1500 | 7-16 | boss | 2.0 |
+| thorn_warden | 1700 | 7-16 | boss_root | 2.0 |
+| sand_wyrm | 1350 | 10-20 | boss_burrow | 2.0 |
+| mad_god (Forge, phase 1) | 2200 | 6-12 | mad_god (ring + armor-piercing volley + nova) | 2.0 |
+| mad_god_phase2 | 3850 | 6-13 | mad_god + counter-ring, faster fire | 2.0 |
+
+Phase-2 variants of the six bosses: x1.75 HP, x1.4 damage, fire interval
+x0.6. Island mini-bosses (x1.8 scale, 560-640 HP): cinder_colossus,
+choir_sovereign, rubble_warlord, coral_leviathan, ashreach_revenant,
+tideglass_warden, thornrock_colossus, driftbell_matriarch,
+ashenreach_devourer, abyssal_choirmaster. Landmark guardians are drawn and
+hit at x1.5. Enemy HP also scales with distance to the continent centre (up
+to +120%) and x1.15 per completed story act (max x1.6).
+
+### Dungeons (`game/realm_sim.py` `DUNGEON_THEMES`, `BONUS_DIFFICULTIES`)
+
+| Theme | Boss pool |
+|---|---|
+| Forgotten Vault (generic) | all six bosses |
+| Cave Warren | void_reaper |
+| Frozen Crypt | frost_monarch |
+| Jungle Ruins | boss, ash_behemoth, thorn_warden |
+| Ember Den | ash_behemoth, sand_wyrm |
+| Sunken Grotto | boss, thorn_warden |
+| Wind Spire | boss, void_reaper, sand_wyrm |
+| The Forge (story finale) | mad_god |
+
+Difficulty: Easy HP x1.15 / cap 10 / 1 loot roll, Medium x1.6 / 13 / 2,
+Hard x2.3 / 16 / 3. Secret "???" quest chance 30% (not in the Forge).
+Dungeon Shards drop from 8% of elite kills (always from inner-biome
+Landmark Guardians).
+
+### Story (`game/story.py`)
+
+| Act | Objectives |
+|---|---|
+| Prologue: Welcome, Sucker | Talk to Father Given (F); step through the Realm portal |
+| Act I: The Rim Job | Defeat the Guardians of the Sunken Idol (forest), Buried Obelisk (desert), Frozen Watchpost (tundra), Drowned Shrine (swamp) |
+| Act II: Last Call | Calm any 7 islands |
+| Act III: The Deep End | Defeat 4 inner-biome Landmark Guardians; clear 3 dungeons |
+| Finale: Closing Time | Defeat the Mad God in the Forge |
+
+`act_scale`: 1.0, 1.15, 1.3, 1.45, 1.6 (then capped).
+
+### Side quests (`game/sidequests.py`)
+
+Board of 3 random quests drawn from the 15 giver-less ones; the other 15 are
+given by NPCs. Quest items: Glowcap Mushroom, Camel Bell, Driftwood Rum,
+Ember Core.
+
+| Quest | Goal | Giver | Reward |
+|---|---|---|---|
+| Herd Whisperer | Stand among 3+ deer for 10 s | board | 160 XP, 1 Echo, elite loot |
+| Hare Census | Stand near 2+ forest hares for 8 s | board | 120 XP, 1 Echo, elite loot |
+| Birdwatcher | Stand near songbirds in 2 biomes | board | 180 XP, 1 Echo, elite loot |
+| Pest Control | Slay 15 goblins | board | 220 XP, 1 Echo, elite loot |
+| Yeti Tag | Defeat 3 yetis without dying | board | 260 XP, 2 Echoes, elite loot |
+| Island Hopper | Set foot on 5 islands | board | 300 XP, 2 Echoes, elite loot |
+| Chest Raider | Open 3 island chests | board | 260 XP, 2 Echoes, elite loot |
+| Dungeon Crawl | Clear 2 dungeons | board | 400 XP, 2 Echoes, boss loot |
+| Snack Time | Feed your pet 5 items | board | 120 XP, 1 Echo, elite loot |
+| Night Watch | Survive a whole night in the Realm | board | 250 XP, 2 Echoes, elite loot |
+| Lizard Race | Stand near 2+ desert lizards for 6 s | board | 130 XP, 1 Echo, elite loot |
+| Heron Haiku | Talk to 3 marsh herons | board | 150 XP, 1 Echo, elite loot |
+| Mini-boss Menace | Defeat 2 island mini-bosses | board | 450 XP, 3 Echoes, boss loot |
+| Guardian Groupie | Defeat 2 Landmark Guardians | board | 400 XP, 2 Echoes, boss loot |
+| World Boss Witness | Be near when a world boss falls | board | 500 XP, 3 Echoes, boss loot |
+| Flamingo Gossip | Get gossip from the Gossiping Flamingos | Captain Driftwood | 140 XP, 1 Echo, elite loot |
+| Tortoise Wisdom | Hear all 3 of the Tortoise's tales | Philosopher Tortoise | 200 XP, 2 Echoes, elite loot |
+| Mossbeard's Mushrooms | Bring 6 Glowcaps from forest monsters | Old Mossbeard | 260 XP, 2 Echoes, elite loot |
+| Sal's Lost Camel Bell | Find the bell in an island chest | Sandy Sal | 280 XP, 2 Echoes, elite loot |
+| Ice Fishing Derby | Catch 5 things in tundra/ice | Frostine | 220 XP, 2 Echoes, elite loot |
+| Captain's Rum Run | Bring 3 Driftwood Rum from island chests | Captain Driftwood | 320 XP, 2 Echoes, elite loot |
+| Bog Brew | Slay 8 bog crawlers | Madame Murk | 240 XP, 2 Echoes, elite loot |
+| Monk's Pilgrimage | Visit 4 landmarks | Brother Tipsy | 300 XP, 2 Echoes, elite loot |
+| Hot Iron | Bring 3 Ember Cores (salamanders, cinder wisps) | Cinder Pete | 300 XP, 2 Echoes, elite loot |
+| Fern Samples | Visit 3 jungle spots | Professor Fernleaf | 260 XP, 2 Echoes, elite loot |
+| Scrap for Rusty | Defeat 10 husk wanderers | Rusty | 260 XP, 2 Echoes, elite loot |
+| Map the Deep | Chart 3 cave spots | Glimmer | 280 XP, 2 Echoes, elite loot |
+| Moth to a Flame | Stand near cave moths at night for 6 s | Mushroom Folk | 200 XP, 2 Echoes, elite loot |
+| Barkeep's Tab | Talk to 5 different people | Barkeep Bitterwick | 200 XP, 2 Echoes, elite loot |
+| Elk Escort | Walk with the Grand Elk Herd for 30 s | Grand Elk Herd | 240 XP, 2 Echoes, elite loot |
+
+### NPCs and areas (`game/npcs.py`, `game/areas.py`)
+
+| NPC | Where |
+|---|---|
+| Barkeep Bitterwick | Nexus tavern |
+| Old Mossbeard | Tavern Town |
+| Sandy Sal | Oasis Bazaar (desert) |
+| Frostine the Ice Fisher | Frozen Lake Camp (tundra) |
+| Captain Driftwood | the arrival beach |
+| Madame Murk | Witch's Hollow (swamp) |
+| Brother Tipsy | Mountain Monastery (highlands) |
+| Cinder Pete | Forge Camp (ashlands) |
+| Professor Fernleaf | Botanist's Glade (jungle) |
+| Rusty the Scrap Golem | Scrapyard (wasteland) |
+| Glimmer the Cartographer | Crystal Caverns (cave) |
+| Grand Elk Herd (creatures) | Elk Meadow (forest) |
+| Gossiping Flamingos (creatures) | a swamp vignette |
+| Philosopher Tortoise (creature) | Oasis Bazaar |
+| Mushroom Folk (creatures) | Crystal Caverns |
+
+If an area doesn't fit on a map, its NPC stands at the biome's landmark
+instead (`npcs.FALLBACK_LANDMARK`). Talk radius 72 px. Talkable wildlife:
+deer, forest hare, songbird, desert lizard, marsh heron, cave moth, elk,
+mountain goat, snow fox, scrap rat, tree frog, fire beetle, flamingo, ice
+penguin, mushroom folk, tortoise.
+
+Big areas (tiles): Tavern Town 50x46, Oasis Bazaar 46x44, Frozen Lake Camp
+46x44, Witch's Hollow 44x42, Mountain Monastery 46x44, Forge Camp 44x42,
+Botanist's Glade 44x42, Scrapyard 46x42, Crystal Caverns 44x42, Elk Meadow
+48x44. Nexus districts: tavern, park, dockside, arena.
+
+Islands (`realm_sim.ISLAND_NAMES`, ~100x100 tiles each): Emberball Shard,
+Coral Colada Choir, Frostquiri Shard, Pearlini Spire, Bonshine Shard,
+Tidricane Sanctum, Thorn-on-the-Rocks Shard, Driftai Cloister, Ashioned
+Shard, Abyssal Rumnal. Each island's wave re-arms every 300 s.
+
+### World, events and economy
+
+- Realm 1308x1308 tiles (900x900 continent + 204-tile ocean ring each
+  side), 200 lairs, day length 240 s, 30 Hz co-op tick.
+- World boss every 15-25 min, HP x(2.4 + 0.18 x average level); Mad God's
+  Avatar every 40 kills.
+- Live events (25-min slots): none, Double Loot Weekend, none, Happy Hour
+  (+50% XP), none, Blood Moon Week, none, Two-for-One Tuesday (double loot,
+  +25% XP).
+- Echoes: 1 per 1000 XP. Echo shop: +1 backpack slot 60 then 120 Echoes
+  (max 2 extra), starting-XP boost 30 Echoes.
+- Vault: 12 chests x 8 slots. Permanent potions: 20 per character;
+  temporary potions +6 for 60 s. Trade confirm countdown 3 s.
+
+## History of this file
+
+- **v0.2 (first snapshot)**: 8 achievements, flat `+14 HP / +10 MP / +4 one
+  stat` per level, four per-zone music themes.
+- **Changes since, all still v0.2**: family-tinted mob barks with a 20 s
+  re-bark limit; class-archetype growth ranges; the `reforger` achievement;
+  per-zone ~20 s themes (Batch 14), then the 23 one-minute tracks above;
+  pets, bosses, story, side quests, NPCs and areas added as listed.
 
 ## Audio file exports
 
-Every sound effect is normally synthesized at runtime (no audio files are
-loaded by the game - see `game/audio.py`'s module docstring). Per the user's
-request to also have the sounds saved as files, `tools/export_audio.py`
-renders every effect above to a real audio file under `assets/audio_export/`
-(one file per effect, plus one per family variant for the family-tinted
-mob sounds). **These are saved as `.wav`, not `.mp3`**: producing an actual
-MP3 needs a real encoder (`ffmpeg`/`lameenc`/etc.), and neither is installed
-in this environment - adding one would also be the project's first real
-external dependency (it's deliberately pygame-only today, see audio.py's
-docstring). WAV needs no extra dependency (Python's built-in `wave` module)
-and is lossless, so it's the honest substitute rather than silently
-mislabeling a `.wav` as `.mp3`. Re-run `tools/export_audio.py` any time the
-sound synthesis changes to refresh the exported files.
+Sound effects are synthesized at runtime. `tools/export_audio.py` renders
+every effect (plus one file per family variant of the mob sounds) to `.wav`
+under `assets/audio_export/` for reference. They are `.wav`, not `.mp3`:
+MP3 would need an external encoder, and the project is deliberately
+pygame-only. Re-run the tool whenever the synthesis changes.

@@ -2,7 +2,7 @@
 
 ## Context
 
-This is the round after `cafd86c`. It is uncommitted at the time of writing. It started from a "what's next" list:
+This is the round after `cafd86c`. It was uncommitted when written and shipped in "Ends of V0.2" (65552b4). It started from a "what's next" list:
 1. Defense balance.
 2. A story playthrough.
 3. Pets in hubs.

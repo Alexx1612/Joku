@@ -1655,6 +1655,10 @@ class CoopClient:
         self.you = you
         self.peers = [Player.from_net_state(d) for d in snap.get("players", [])]
         for pid, text in snap.get("chats", []):
+            if pid is None:  # a server notice ("[Ana and Ben are trading]") - it used to read "???: ..."
+                self.feed.insert(0, [text, (230, 210, 150), 4.0])
+                self.chat_log.append({"name": "Server", "text": text, "age": 0.0, "sender": None, "pid": None})
+                continue
             self._speech_bubbles.append({"pid": pid, "text": text, "age": 0.0})
             speaker = "You" if pid == you.pid else next((pe.name for pe in self.peers if pe.pid == pid), "???")
             self.feed.insert(0, [f"{speaker}: {text}", (190, 220, 255), 4.0])
@@ -1890,7 +1894,7 @@ class CoopClient:
             ui.draw_dialogue(s, self.dialogue_view, pygame.mouse.get_pos())
         if self.state == STATE_PLAY and self.journal.is_open():
             self.journal.draw(s, self._journal_ctx(), pygame.mouse.get_pos(), 1 / max(1, self.clock.get_fps() or 60))
-        if self.state == STATE_PLAY and self.zone != "dead":
+        if self.state == STATE_PLAY and self.zone != "dead" and not self.journal.is_open():  # the Quest Map's title used to sit under it
             ui.draw_zone_banners(s, self.zone_tracker.visible())
             if self.story_banner is not None:
                 ui.draw_story_banner(s, self.story_banner[0], self.story_banner[1])
@@ -2011,8 +2015,11 @@ class CoopClient:
         self._draw_speech_bubbles(s)
         vfx.draw(s, self.cam)
         self._draw_hover_tooltip()
-        hint = ui._FONT_M.render(hint_text, True, (220, 210, 230))
-        s.blit(hint, (C.SCREEN_W // 2 - hint.get_width() // 2, 82))
+        if not (self.help_open or self.journal.is_open() or self.dialogue_view is not None
+                or getattr(self, "echo_shop_open", False)):
+            # hidden under full windows: it showed through the options panel's title bar
+            hint = ui._FONT_M.render(hint_text, True, (220, 210, 230))
+            s.blit(hint, (C.SCREEN_W // 2 - hint.get_width() // 2, 82))
         if tmap is self.nexus_map:
             event_label = live_events.label_for(getattr(self, "live_event", None))  # the server's event
             if event_label:
@@ -2020,7 +2027,8 @@ class CoopClient:
                 s.blit(banner, (C.SCREEN_W // 2 - banner.get_width() // 2, 104))
         ui.draw_dock_frame(s, self.you)
         ui.draw_hud(s, name, None, False)  # hubs: no kill counter
-        if not (self.echo_shop_open or self.help_open or self.vault_chest_open is not None):  # a modal overlay owns that space
+        if not (self.echo_shop_open or self.help_open or self.vault_chest_open is not None
+                or self.dialogue_view is not None or self.journal.is_open()):  # a modal overlay owns that space
             ui.draw_story_log(s, self.quest_log, self.quest_log_expanded, side=self.sidequest_log)
         if settings.get("show_fps"):
             ui.draw_fps_counter(s, self.clock.get_fps())
@@ -2110,7 +2118,8 @@ class CoopClient:
             ui.draw_fps_counter(s, self.clock.get_fps())
         if self.portal_prompt:
             ui.draw_portal_prompt(s)
-        if (self.zone != "bonus" or self.theme_name == DUNGEON_THEMES["forge"]["label"]) and not self.help_open:
+        if ((self.zone != "bonus" or self.theme_name == DUNGEON_THEMES["forge"]["label"]) and not self.help_open
+                and self.dialogue_view is None and not self.journal.is_open()):
             ui.draw_story_log(s, self.quest_log, self.quest_log_expanded, side=self.sidequest_log)
         else:
             ui.draw_quest_panel(s, self.secret_quest, self.secret_quest_progress, self.secret_quest_timer,

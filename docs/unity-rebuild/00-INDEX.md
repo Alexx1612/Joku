@@ -48,8 +48,9 @@ pipeline history), both in
 | 24 | [24-game-feel-art-progression-overhaul.md](24-game-feel-art-progression-overhaul.md) | Batches 12-13: juice (hit-stop/shake/particles), world boss, UT sockets, crews, live events, dash/roll, 26 mob redesigns, universal enemy animation, fishing overhaul | "v0.2 end" | **done** (indexed late) |
 | 25 | [25-batch14-islands-gui-music-economy.md](25-batch14-islands-gui-music-economy.md) | Batch 14 (92c3086): drink-pun islands + mini-bosses + curated props/return portals, biome vignettes, wall outline, minimap clamp, right dock + Tab, Vault/per-dungeon music, Echo passive accrual, Bazaar chests, portal doors | "v0.2 final touch" | **done** |
 | 26 | [26-v02-final-options-trading-story-pets.md](26-v02-final-options-trading-story-pets.md) | v0.2 final fixes (cafd86c): settings/options menu, trade consent + no-loss offers, Inspect/crew invite, 5-act story + Forge/Mad God, pet bond/carriers/fusion/mythic | "v0.2 final touch" | **done** |
-| 27 | [27-balance-terrain-decorations-hud-round.md](27-balance-terrain-decorations-hud-round.md) | Post-v0.2 round (uncommitted at writing): player defense curve, story pacing, fuzz crash fixes, dock frame, terrain generator rewrite (noise/warp/Whittaker/rivers), decoration rework + art-loading fix, building doors, draggable panels, live-event rotation (in progress) | "v0.2 final touch" | **done** (section 10 in progress) |
-| 28 | [28-living-world-batch15.md](28-living-world-batch15.md) | Batch 15 living world (uncommitted at writing): 15 NPCs/creature groups + finite dialogue trees, 30 side quests + board, Quest Log/Dictionary/Quest Map, co-op personal loot + shared credit, island chests, spells x2.5 + per-ability VFX, mob chat radius, Esc/quit flow, chat cursor/selection/cross-zone /msg, 12-chest vault, wider HUD, 1308 map + 100x100 islands, 10 big areas, 96x72 Nexus, multi-tile props/canopies, 2x bosses | "v0.2 final touch" | **done** |
+| 27 | [27-balance-terrain-decorations-hud-round.md](27-balance-terrain-decorations-hud-round.md) | Balance/terrain/UI round (released in Ends of V0.2, 65552b4): player defense curve, story pacing, fuzz crash fixes, dock frame, terrain generator rewrite (noise/warp/Whittaker/rivers), decoration rework + art-loading fix, building doors, draggable panels, live-event rotation, co-op Echo shop, socket highlight | "v0.2 final touch" | **done** |
+| 28 | [28-living-world-batch15.md](28-living-world-batch15.md) | Batch 15 living world (released in Ends of V0.2, 65552b4): 15 NPCs/creature groups + finite dialogue trees, 30 side quests + board, Quest Log/Dictionary/Quest Map, co-op personal loot + shared credit, island chests, spells x2.5 + per-ability VFX, mob chat radius, Esc/quit flow, chat cursor/selection/cross-zone /msg, 12-chest vault, wider HUD, 1308 map + 100x100 islands, 10 big areas, 96x72 Nexus, multi-tile props/canopies, 2x bosses | "v0.2 final touch" | **done** |
+| 29 | [29-music-banners-saves-release.md](29-music-banners-saves-release.md) | Ends of V0.2 follow-ups (65552b4, 30fb143, d09df8d): 23 one-minute loopable rock tracks + background render/cache, zone-entry banners, save location next to the executable (`game/paths.py`), Windows + Linux GitHub Actions release pipeline and launch scripts, small-map draw crash fix | "v0.2 final touch" | **done** |
 
 **All batches 1-10 now have a doc, and rotmg-03's full assigned scope (Batch 1
 parts 1-4 + the art/VFX pipeline) is complete - no gaps remain in the
@@ -158,7 +159,13 @@ is expected and fine, per gap-note style below (reinforcement, not noise).
 **"v0.1 + start v0.2" reports nothing else outstanding on their end** - all 6
 of their assigned docs (10-15) are complete with no further action pending.
 
-## Status: documentation task complete
+## Status (updated for Ends of V0.2)
+
+Docs 00-29 cover every batch up to and including the "Ends of V0.2" release
+(tag `v0.2`, commit d09df8d). The paragraph below is the original 2026-09-23
+status note, kept for history.
+
+### Original status note
 
 As of this pass, every batch (1-9) has a doc, rotmg-03's full assigned scope
 (Batch 1 parts 1-4 + the art/VFX pipeline, docs 01-05) is done, "v0.1 + start

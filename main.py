@@ -392,6 +392,9 @@ class Game:
             audio.play_levelup()
 
     def push_feed(self, msg, color):
+        # an identical line already showing just moves to the top with a fresh timer, so
+        # repeats (re-entering dungeons, spammed actions) don't fill all 4 slots with copies
+        self.feed = [m for m in self.feed if m[0] != msg]
         self.feed.insert(0, [msg, color, 4.0])
         self.feed = self.feed[:4]
 
@@ -636,6 +639,10 @@ class Game:
                         self._trigger_portal_prompt()
                     elif pygame.K_1 <= event.key <= pygame.K_8:
                         self.use_backpack_slot(event.key - pygame.K_1)
+                elif (self.state in (STATE_NEXUS, STATE_BAZAAR, STATE_VAULT_ROOM)
+                      and pygame.K_1 <= event.key <= pygame.K_8):
+                    # hubs too, like co-op always did - drink/equip/hatch without leaving town
+                    self.use_backpack_slot(event.key - pygame.K_1)
                 elif self.state == STATE_NEXUS and event.key == pygame.K_f:
                     self._context_action()
                 elif self.state == STATE_DEAD:
@@ -1094,6 +1101,18 @@ class Game:
         chest specifically (never a different one), and dragging onto a specific
         occupied vault/backpack slot SWAPS the two items instead of failing,
         matching RotMG's own "drag onto a full slot to swap" convention."""
+        before = list(self.vault_items)
+        try:
+            self._vault_transfer(pos)
+        finally:
+            # saved on EVERY change (like the co-op server does) - it used to be written only
+            # when the chest window closed, so leaving via R / the /nexus command, dying or
+            # quitting with a chest open lost the deposited item (already gone from the backpack)
+            name = getattr(self, "player_name", None) or (self.player.name if self.player else None)
+            if self.vault_items != before and name:
+                save_vault(name, self.vault_items)
+
+    def _vault_transfer(self, pos):
         origin = self.drag_from
         self.drag_from = None
         if origin is None or self.player is None or self.drag_start_pos is None:
@@ -1770,7 +1789,7 @@ class Game:
             ui.draw_dialogue(s, self.dialogue.view(), pygame.mouse.get_pos())
         if self.journal.is_open():
             self.journal.draw(s, self._journal_ctx(), pygame.mouse.get_pos(), 1 / max(1, self.clock.get_fps() or 60))
-        if self.state not in (STATE_DEAD, STATE_INTRO, STATE_NAME_ENTRY, STATE_CLASS_SELECT) and self.player is not None:
+        if self.state not in (STATE_DEAD, STATE_INTRO, STATE_NAME_ENTRY, STATE_CLASS_SELECT) and self.player is not None and not self.journal.is_open():  # the Quest Map's title used to sit under it
             ui.draw_zone_banners(s, self.zone_tracker.visible())
         if self.story_banner is not None and self.state not in (STATE_DEAD, STATE_VAULT):
             ui.draw_story_banner(s, self.story_banner[0], self.story_banner[1])
@@ -1846,8 +1865,11 @@ class Game:
             ui.draw_npc_labels(s, self.cam, self.nexus_npcs, self.player.pos)
         self._draw_speech_bubbles(s)
         vfx.draw(s, self.cam)
-        hint = ui._FONT_M.render(hint_text, True, (220, 210, 230))
-        s.blit(hint, (C.SCREEN_W // 2 - hint.get_width() // 2, 82))
+        if not (self.help_open or self.journal.is_open() or getattr(self, "dialogue", None) is not None
+                or getattr(self, "echo_shop_open", False)):
+            # hidden under full windows: it showed through the options panel's title bar
+            hint = ui._FONT_M.render(hint_text, True, (220, 210, 230))
+            s.blit(hint, (C.SCREEN_W // 2 - hint.get_width() // 2, 82))
         if tmap is self.nexus_map:
             event_label = live_events.active_label()
             if event_label:
@@ -1855,7 +1877,8 @@ class Game:
                 s.blit(banner, (C.SCREEN_W // 2 - banner.get_width() // 2, 104))
         ui.draw_dock_frame(s, self.player)
         ui.draw_hud(s, name, None, False)  # hubs: no kill counter
-        if not (self.echo_shop_open or self.help_open or self.vault_chest_open is not None):  # a modal overlay owns that space
+        if not (self.echo_shop_open or self.help_open or self.vault_chest_open is not None
+                or self.dialogue is not None or self.journal.is_open()):  # a modal overlay owns that space
             ui.draw_story_log(s, self.player.story.quest_log(), self.quest_log_expanded,
                               side=self.player.sidequests.log(self.player))
         if settings.get("show_fps"):
@@ -1945,7 +1968,8 @@ class Game:
             ui.draw_fps_counter(s, self.clock.get_fps())
         if self._portal_prompt is not None:
             ui.draw_portal_prompt(s)
-        if (not sim.is_bonus_room or sim.theme_key == "forge") and not self.help_open:
+        if ((not sim.is_bonus_room or sim.theme_key == "forge") and not self.help_open
+                and self.dialogue is None and not self.journal.is_open()):
             ui.draw_story_log(s, self.player.story.quest_log(), self.quest_log_expanded,
                               side=self.player.sidequests.log(self.player))
         else:

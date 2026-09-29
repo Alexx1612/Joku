@@ -64,7 +64,11 @@ def _ornate_panel(w, h, border=CHROME_GOLD, title=None, title_font=None):
     if title:
         font = title_font or _FONT_S
         bar_h = font.get_height() + 8
-        pygame.draw.rect(panel, (*border, 50), (2, 2, w - 4, bar_h), border_radius=5)
+        # blended onto the body: a plain draw.rect with alpha 50 on this SRCALPHA surface
+        # REPLACED the pixels, leaving a see-through title strip (HUD text showed through it)
+        tint = pygame.Surface((w - 4, bar_h), pygame.SRCALPHA)
+        pygame.draw.rect(tint, (*border, 50), tint.get_rect(), border_radius=5)
+        panel.blit(tint, (2, 2))
         pygame.draw.line(panel, border, (2, 2 + bar_h), (w - 2, 2 + bar_h), 1)
         t = font.render(title, True, (240, 228, 200))
         panel.blit(t, (w // 2 - t.get_width() // 2, 2 + bar_h // 2 - t.get_height() // 2))
@@ -240,8 +244,10 @@ def draw_hud(surf, zone_name, kill_count, boss_alive):
     room = rect.w - kc.get_width() - 10
     font = _FONT_M if _FONT_M.size(zone_name)[0] <= room else _FONT_S
     name = zone_name
-    while font.size(name)[0] > room and len(name) > 4:
-        name = name[:-2].rstrip() + "."
+    if font.size(name)[0] > room:  # a real ellipsis ("Forgotten Va..."), not "Forgotten Vaul."
+        while font.size(name + "...")[0] > room and len(name) > 3:
+            name = name[:-1]
+        name = name.rstrip() + "..."
     t = font.render(name, True, (240, 228, 200))
     surf.blit(t, (rect.x, rect.centery - t.get_height() // 2))
     surf.blit(kc, (rect.right - kc.get_width(), rect.centery - kc.get_height() // 2))
@@ -2031,7 +2037,9 @@ def draw_class_select(surf, selected_idx, mouse_pos=(-1, -1)):
     bar_w, bar_h, gap = 130, 12, 6
     total_w = len(STAT_KEYS) * (bar_w + gap) - gap
     panel_w = total_w + 32
-    panel_y = max(r.bottom for r, _ in tile_rects) + 10
+    # +label height: each class name is drawn just BELOW its tile (rect.y + 68), and the
+    # panel's top border used to cut through the second row's names
+    panel_y = max(r.bottom for r, _ in tile_rects) + 10 + _FONT_M.get_height()
     panel_h = 100
     panel, _ = _ornate_panel(panel_w, panel_h)
     surf.blit(panel, (C.SCREEN_W // 2 - panel_w // 2, panel_y))

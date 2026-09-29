@@ -9,8 +9,15 @@ build/
 dist/
 # *.spec - NOT ignored: the three RealmReforged*.spec files are the build configs CI uses
 
-# IDE
+# IDE / editor
 .idea/
+.vscode/
+*.swp
+
+# OS junk
+Thumbs.db
+desktop.ini
+.DS_Store
 
 # Agent workspace scaffolding - not part of the game
 .agents/
@@ -19,6 +26,7 @@ AGENTS.md
 IDENTITY.md
 SOUL.md
 USER.md
+skills-lock.json
 
 # Player save data / runtime state - not source code
 accounts/
@@ -26,6 +34,9 @@ achievements/
 characters/
 friends/
 vaults/
+crews/
+# atomic-write temp files (saves are written to <name>.tmp then renamed)
+*.tmp
 
 # Local client settings (options menu)
 settings.json
@@ -33,3 +44,9 @@ settings.json.tmp
 
 # rendered zone music (game/music.py disk cache)
 music_cache/
+
+# local debug / profiling output and an unpacked Linux release
+*.log
+*.prof
+RealmReforged-linux/
+RealmReforged-linux-*.tar.gz

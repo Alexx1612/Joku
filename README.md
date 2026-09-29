@@ -1,364 +1,23 @@
-# Realm Reforged (v0.3)
+# Realm Reforged - Ends of V0.2
 
-A from-scratch, original-code prototype inspired by **Realm of the Mad God**
-(RotMG) - a top-down bullet-hell MMO-lite, now with real co-op. No RotMG
-assets, sprites, or code were used; every sprite is procedurally generated
-pixel art (and every sound effect/music track is a procedurally synthesized
-waveform), and every gameplay number comes from formulas published on the
-RotMG wiki, re-derived independently in `game/constants.py`.
+A from-scratch, original-code game inspired by **Realm of the Mad God**
+(RotMG) - a top-down bullet-hell MMO-lite you can play solo or in real
+client-server co-op. No RotMG assets, sprites, music or code are used: all
+art is original (hand-painted PNGs plus procedurally generated pixel art),
+every sound effect and all 23 music tracks are original procedurally
+synthesized compositions (no covers, no borrowed melodies), and the stat
+formulas are re-derived independently from the public RotMG wiki in
+`game/constants.py`.
 
-## Version history
+**Current version: "Ends of V0.2"** - the last release of the v0.2 line
+(GitHub release tag `v0.2`). There is no v0.3 yet: everything below is v0.2.
 
-### v0.1 - first working pass
-- 8 classes, each with a real RotMG stat profile and distinct weapon behaviour.
-- The real ATT/DEF/SPD/DEX/VIT/WIS formulas driving damage, mitigation, move
-  speed, attack speed, and regen.
-- A basic Nexus / Realm / Bazaar / Vault loop, tiered + untiered (UT) loot,
-  and permadeath.
-- A small island map with basic enemy spawning.
-- A first working co-op pass: `server.py` + `coop_client.py` over a plain
-  TCP/JSON protocol.
-
-### v0.2 - everything since
-Bigger world, living AI, and a long list of systems added on top of v0.1 -
-all still under the v0.2 umbrella (v0.3 hasn't started yet, see below).
-
-**World & exploration**
-- An immense continent (900x900 tiles, up from 800x800) with an organic,
-  domain-warped coastline and **ten** Voronoi-style biome regions (Forest,
-  Desert, Tundra, Swamp, Highlands, Ashlands, Jungle, Wasteland, Ice, Cave) -
-  warped with layered sine noise plus a dithered "ecotone" blend at
-  boundaries so biomes bleed into each other instead of meeting at a
-  razor-sharp edge. 900x900 was picked by actually benchmarking, not
-  guessing: 1200x1200 (~4.4s) and 1600x1600 (~7.8s) both blew past a ~3s
-  "feels like loading, not hanging" budget for realm generation even after
-  optimizing the generator itself (precomputed sin/cos tables for the
-  boundary-warp noise, plus early-outs for tiles that are guaranteed land or
-  guaranteed ocean regardless of angle) - 900x900 measured ~2.6s for a full
-  realm (map + all ~200 lairs populated) with real background load on the
-  dev machine. Lair count scales with map area (200 lairs, up from 160) to
-  keep the world feeling equally alive at the bigger size, but deliberately
-  not further: the co-op lair-replenishment scan is O(lair_count x
-  enemy_count), and scaling lair count all the way up to match 1200x1200/
-  1600x1600 pushed that scan past 20-100ms - a real stutter against the 30Hz
-  co-op tick budget. Also fixed two perf/correctness issues found while
-  verifying the bigger map: the full-map screen (M key) was scaling the
-  *entire* continent to a huge offscreen surface every frame just to show a
-  player-sized window of it (~40ms/frame, worse than one 60fps frame budget,
-  and it gets worse as the map grows) - fixed to crop to the visible region
-  before scaling (~4-5ms/frame now, and flat regardless of map size); and a
-  co-op networking bug where the realm's tile map (a multi-MB one-time JSON
-  message) could be silently and permanently lost for a session if a faster,
-  smaller snapshot from a tick or two later overwrote it before the client
-  ever read it - fixed by buffering the map separately from the "latest
-  snapshot wins" logic the instant it's seen on the wire.
-- Biomes are tiered by distance from the continent's center (outer = gentler
-  Beaches/Lowlands-style zones, inner = tougher Godlands-style zones), each
-  with its own signature ecosystem mobs and a real distance-based difficulty
-  gradient (up to +120% enemy HP dead-center).
-- A **day/night cycle** (smooth sinusoid, ~4 minutes per full cycle): nights
-  spawn enemies faster and roll a chance of tougher, better-loot "Moonlit"
-  variants; nights also have a rare **Blood Moon** event with even higher
-  danger/reward and ambient ember damage in the Ashlands.
-- A **weather system**: rain/snow/sand/ash particle effects tied to the
-  biome you're standing in, plus a real (not just cosmetic) speed penalty
-  wading through snow/ice.
-- A real multi-room dungeon structure for mob-death bonus portals, now in
-  **7 distinct themes** (Cave Warren, Frozen Crypt, Jungle Ruins, Ember Den,
-  Sunken Grotto, Wind Spire, Forgotten Vault) - which enemy dropped the
-  portal decides the theme, each with its own floor texture, signature mob
-  roster, and boss pool, ending in a dedicated boss room. Rooms have real
-  per-theme SHAPE, not a re-tinted floor - a Cave Warren's rooms are organic
-  carved blobs, a Sunken Grotto winds through a snaking chain of chambers, a
-  Wind Spire climbs a long, mostly-linear corridor of narrower rooms. Most
-  rooms hold a fixed, non-respawning pod of 4-8 enemies (clear it or rush
-  past, nothing gates the doorway either way), some hide a one-shot
-  destructible wall obstacle, and dungeon rooms use real fog-of-war on the
-  live view itself (not just the minimap) - a room's contents stay hidden
-  until you've actually walked in. Every room is also hand-decorated with
-  themed props (torches, rubble, tapestries, idols, crates, bones,
-  crystals, growth, puddles, chains, plus one unique special per theme).
-- **Dungeon Shards, not ambient portals**: elite kills have a chance to drop
-  a carried Dungeon Shard item instead of instantly opening a portal at the
-  kill spot - use it from the backpack whenever/wherever you like to tear
-  open a themed portal, everyone nearby can walk in together. The dungeon's
-  Easy/Medium/Hard difficulty (scaling enemy toughness, enemy cap, and how
-  many times loot is rolled per kill) is rolled the instant the shard is
-  used and shown as a color-coded label floating on the portal itself.
-- **A secret "???" quest, sometimes**: about 30% of dungeons hide one of
-  three quests (hunt down a specific trash mob, destroy 3 stationary
-  Totems, or beat the boss within a time limit), tracked live in a
-  right-docked HUD panel. Completing it carves open a hidden, freshly
-  decorated loot room with a harder "???" boss inside.
-- **A genuinely harder second phase on some bosses**: killing a dungeon's
-  main boss can open a single portal into a reserved pocket room holding a
-  visibly darker, ~60% tankier, ~40% faster-firing version of the same
-  boss (real bespoke "enraged" art per boss - a glow halo, bloomed
-  highlights, and crack/vein detailing, not a flat recolor) - optional, a
-  Realm-exit is always available at the pocket boss's own death too.
-- **Portals are a deliberate action, not a walk-over trigger**: standing on
-  or near any portal shows a "Press ENTER to enter" prompt in the
-  bottom-right corner instead of instantly teleporting you. Every portal
-  kind (entrance/realm-exit/phase-2/shard-opened) reads as visually
-  distinct - a different color AND shape (a rotating vortex, a calm light
-  beam, a jagged spiked rift, a torn crack), not just a re-tinted circle.
-- A living, pre-populated ecosystem: every lair is populated the moment the
-  realm is created (not spawned-on-approach), idle-wanders near home,
-  aggros/leashes realistically, and quietly refills over time.
-- A zoomable, fog-of-war minimap (corner + full-map M key, +/- or scroll to
-  zoom) that only reveals tiles you've actually explored.
-- A bigger, fountain-plaza Nexus (with banner pillars) and a bigger Bazaar
-  (its own fountain plaza + market stalls), both well beyond their original
-  cramped size.
-
-**RPG systems**
-- **Loot scaled by individual mob difficulty, not just rank**: two mobs of the
-  same rank (trash/elite/boss) used to roll from the identical tier range even
-  when one was much tougher to actually fight - a tanky troll and a squishier
-  frost_sprite, both elites, dropped from the same band. Each of the 24 regular
-  mobs and 6 bosses now gets a difficulty score from its HP, average per-hit
-  damage x how aggressively its bullet pattern fires, and speed
-  (`entities.difficulty_fraction`), which raises the FLOOR of the tier range
-  `roll_loot()` draws from for tougher mobs of a rank - the weakest mob of each
-  rank is untouched (still the full original range), so nothing gets nerfed,
-  only the tougher end of the roster pulls ahead. Bag rarity odds (brown/
-  purple/white) and drop chances are unaffected. Example: troll vs.
-  frost_sprite (both elite) used to average the same tier (4.9); now troll
-  averages tier 6.9 while frost_sprite stays at 4.9 - see
-  `tests/check_loot_difficulty.py`.
-- Full item descriptions/flavor text on every weapon, armor, ring, ability,
-  potion, and egg - not just stat numbers.
-- Active class abilities (Space to cast) with **7 distinct effect kinds**:
-  nova, heal, haste, and four "capstone" ultimate effects - chain lightning,
-  lifesteal drain, freeze/root, and a damage-absorbing shield.
-- **Pets, hatched from eggs**: 7 pet kinds across common/uncommon/rare/
-  legendary rarity, each passively healing, restoring mana, or attacking the
-  nearest enemy on a cooldown - both power and cooldown scale with rarity
-  through one shared formula.
-- **Achievements & titles**: 8 achievements (first kill, first dungeon
-  clear, hatching a pet, a fishing catch, a wishing-fountain jackpot,
-  slaying a Realm avatar, hitting level 10/20) persisted per character name,
-  with the most recently unlocked title shown next to your name.
-- **Fishing**: stand at the water's edge, press F to cast, then press again
-  during a brief bite window to reel in tiered loot, an egg, or a rare UT.
-- **A wishing fountain** in the Nexus: press F on the fountain to sacrifice
-  your lowest-tier item for a reroll - mostly a sidegrade, sometimes an
-  upgrade or downgrade, rarely an untiered jackpot (with its own fanfare).
-- **A RotMG-style Vault**: no longer an instant popup - the Nexus's Vault
-  tile now leads into a real, fixed, hand-authored Vault room with **10**
-  chest tiles to walk up to. Opening a chest shows the familiar 8-slot-per-
-  chest screen (80 slots total) with tabs to page between chests, drag-and-
-  drop deposit/withdraw (the same system as backpack/bags, not click-only),
-  and a dedicated "Close Vault" button - not Enter/Escape, which could
-  otherwise feel stuck if you were still standing on a chest when you
-  closed it.
-- **Loot bags, not single ground items**: everything a kill drops (one item
-  or several, on a boss) pools into one RotMG-style 8-slot bag instead of a
-  separate pickup per drop, colored brown/purple/white by the rarest thing
-  inside - back-to-back kills near each other pool into the same bag too.
-  Right-click to open a bag's contents in a small drag-and-drop window;
-  bags despawn after 2 minutes.
-- **A bigger, livelier Nexus (64x50, up from 36x28)**: garden clusters, a
-  minor well, and an announcement board scattered around the plaza, a
-  drifting parallax backdrop so it doesn't end in hard black past the walls,
-  and random ambient events (a bird flyby, a distant chime, a light
-  flicker, extra NPC wandering) on an unpredictable cooldown - not a fixed
-  loop.
-- **Neutral wildlife**: forest hares and cave moths wander the Godlands and
-  never fight back, even when attacked - pure ambient life and a trash-tier
-  kill, not a threat.
-- **Mobs have a voice**: each enemy's hit/death sounds are pitched by a
-  sound "family" (beast/undead/elemental/construct), and non-neutral mobs
-  occasionally bark a short flavour line in a speech bubble, guaranteed once
-  on aggro and a small chance per second afterward.
-- **A persistent, always-on chat log** faded in on the left side of the
-  screen (last 12 messages, sender name included), separate from the
-  ephemeral in-world speech bubbles above players' heads - both now support
-  messages up to 1000 characters with real word-wrap instead of a 48-140
-  character hard cut.
-- **Cross-class drops and 3 armor archetypes**: any class can drop another
-  class's weapon/ability/armor about 40% of the time (kill an enemy on
-  Archer, sometimes walk away with Priest gear), and armor itself now comes
-  in the three real-RotMG archetypes - Heavy (Warrior/Paladin), Light
-  (Archer/Assassin/Rogue), Robe (Wizard/Necromancer/Priest) - instead of one
-  shared table.
-- **A boomerang projectile**: one existing UT weapon per class now fires a
-  bullet that travels out and curves back toward where it was fired from,
-  able to land a second hit on the way back - a real new projectile motion,
-  not just a different color.
-- **All 4 UTs per class are mechanically distinct**: alongside the boomerang
-  UT above, the other 3 each apply a status effect on hit - bleed (a DoT),
-  burn (a shorter, harder-hitting DoT), or vulnerable (a temporary incoming-
-  damage multiplier, since enemies have no DEF stat to actually pierce).
-- **Telegraphed abilities**: Nova/Chain/Drain/Freeze no longer resolve the
-  instant you cast them - a warning ring marks exactly where the impact
-  will land, with a real, dodgeable ~0.45s window before it actually goes
-  off. Damage was bumped up to compensate for the new dodge window, so a
-  landed cast still feels like a real burst on a real cooldown.
-- **A permanent + temporary potion system**: 6 stat potions (one per
-  ATT/DEF/SPD/DEX/VIT/WIS) give a permanent +1 when drunk, capped at 20
-  drinks total per character (freely allocated across the 6 stats) so
-  stacking is a real, finite choice, not infinite grinding. A separate
-  temporary-draught family gives a much bigger (+6), ~60-second buff
-  instead, uncapped. Both families now drop from mobs at every rank, not
-  fishing-only.
-- **Per-class level-up growth, not one identical curve**: HP/MP growth now
-  scales with each class's own Heavy/Light/Robe armor archetype (a Warrior
-  ends up meaningfully tankier by level 20 than a Wizard, who ends up with
-  meaningfully more MP instead), and every one of the 6 core stats rolls a
-  little every level - a class's own "signature" stats (the same ones its
-  starting stat profile already emphasizes) grow faster than the rest.
-- **Visible progress**: an XP bar (with the exact `current/needed` numbers)
-  next to your level, and being healed or given mana (from a pet, Priest,
-  or an ability) now visibly rises off your character as a burst of
-  sparkles instead of only being visible through the HP/MP bars moving.
-
-**Co-op**
-- **Trading with a confirmation timer**: `/trade` a nearby player, drag
-  items in, both Accept, then a 3-second countdown (any change resets it,
-  same anti-scam behaviour as the real game) before the swap actually
-  happens. Auto-cancels on disconnect, death, distance, or idle timeout.
-- A full chat system: Enter to open a pop-up chat box, slash commands
-  (`/nexus`, `/realm`, `/vault`, `/bazaar`, `/trade`, `/help`), and messages
-  shown as speech bubbles above the speaking player.
-- Hover tooltips on other players (class, level, gear, stats, HP, title).
-- Interest management (enemies/bullets/items are only sent to clients within
-  range) so the server stays responsive with a large, busy world.
-
-**Combat feel & presentation**
-- Soft aim assist, auto-fire toggle, floating damage numbers, hit-flash.
-- **A real projectile shape per class**, not just a color - Archer fires
-  arrows, Warrior/Paladin fire blades, Rogue/Assassin fire throwing stars,
-  Priest fires a holy cross-in-ring, Necromancer fires bones, Wizard fires
-  an orb (enemy bullets keep the original plain bolt look).
-- **Every character, monster, and boss is hand-painted**, not flat
-  procedural shapes - all 8 classes, all 27 regular enemy kinds, all 6
-  bosses (each with a distinct "enraged" phase-2 look - a glow halo,
-  bloomed highlights, and crack/vein detailing, not a flat recolor), the
-  Totem quest-enemy, and the destructible dungeon Obstacle prop. Nexus,
-  Vault, every biome, and every dungeon theme are scattered with matching
-  hand-painted decoration props (banners/statues/gardens, chests/pillars/
-  bookshelves, rocks/bushes/trees, torches/rubble/crystals/idols, etc.) -
-  not empty floor tiles. Item icons (weapons, armor, rings, eggs, the 6
-  potion colors + their bigger/glowing temporary-draught versions, and
-  dungeon shards) are hand-painted or procedurally shaded to match, not
-  placeholder squares.
-- **Four distinct per-room music tracks** (Nexus, Bazaar, Realm, Dungeon),
-  each a procedurally synthesized multi-voice piece (lead + bass +
-  percussion) with its own tempo/key/instrumentation, switching
-  automatically as you move between zones - not one single looping theme.
-- A full procedural sound effects set (no audio files anywhere), including
-  a wishing-fountain jackpot fanfare.
-- Q/E camera rotation, a resizable/fullscreen window that actually widens
-  your view instead of just scaling up, click-and-drag inventory, ground-
-  item tooltips + a nearby-loot preview panel (RotMG's "proximity menu"),
-  and an interactive options menu (O key).
-
-### v0.3 - game feel, art, and progression overhaul (this is the current version)
-A research-backed batch (real web research on game-feel/juice techniques,
-pixel-art design, and this project's own asset audit) built via 21 parallel
-git-worktree forks across two waves, each independently tested before
-integration.
-
-**Game feel & combat juice**
-- **Hit-stop + directional screen shake + impact particles** on every hit
-  (player-fires-enemy, enemy-hits-player, melee contact), scaled up for
-  bosses - the "cheapest weight" trio game-feel research consistently
-  points to. Hit-stop is a brief, wall-clock-timed freeze of the local
-  frame's `dt` - safe in co-op since the client never runs the
-  authoritative sim, so it only pauses local rendering/animation, never
-  the server tick.
-- **All ~63 enemy kinds now animate** (idle sway, walk bob/lean tied to
-  real movement direction, a squash-and-stretch attack-anticipation pose
-  right before firing) - a draw-time-only overlay on the existing cached
-  sprites, degrading gracefully for co-op's remote enemy rendering.
-- **A brief pre-fire telegraph glow** on ranged trash mobs (reads their
-  existing fire-cooldown, changes zero damage timing) and a **~100ms
-  buffered fire input** (an early click just before your weapon's
-  cooldown clears now still registers) - both real forgiveness/
-  readability techniques from the input-responsiveness research.
-- **A universal dash/roll** (Left Shift, ~0.18s burst covering ~2.5 tiles,
-  2s cooldown, brief invincibility frames), respecting wall collision -
-  the one bullet-hell genre staple this game was missing.
-- **A real per-source night lightmap** replacing the old flat darken
-  overlay - a soft glow follows the player (measured faster than the old
-  flat overlay, not slower).
-
-**Character & monster art**
-- **26 monster kinds redesigned** (the 6 neutral wildlife + the 20
-  "Reforging" island guardians) that were silently reusing an unrelated
-  existing shape with just a new palette (a "deer" was a recolored yeti,
-  a "songbird" was a recolored bat) - real hand-authored silhouettes now,
-  built from a small set of parametrized body-plan archetypes (wisp/
-  ethereal-flyer, bird, ethereal-singer, quadruped, humanoid-guardian,
-  blocky-construct, low-slung-creature) per the pixel-art research's
-  "small archetype library, varied by params" recommendation, rather than
-  26 fully bespoke grids. Every player class, the 14 original base enemy
-  shapes, the 10 signature per-biome mobs, and all 6 bosses + their
-  phase-2 art already had real bespoke PNGs from an earlier art pass and
-  were left untouched.
-
-**Progression & economy**
-- **Echo currency**: permadeath now awards an account-wide "Echo" currency
-  scaled by the level reached, spendable at a new Nexus "Echo Keeper" tile
-  on fixed, permanent, power-neutral unlocks (an extra backpack slot, a
-  small starting-XP boost for future characters) - softens permadeath
-  without trivializing runs, since nothing purchasable is raw combat
-  power.
-- **A UT "socket" system**: consume a spare UT item to transplant its one
-  distinct mechanic (bleed/burn/vulnerable/boomerang) onto a different
-  weapon of your choice - real build expression, not just a fixed
-  item-to-mechanic mapping.
-- **A visible difficulty/readiness signpost**: dungeon shard portal labels
-  now show a suggested level per difficulty tier (Easy/Medium/Hard ->
-  Lv 1+/8+/15+).
-- Confirmed (not new work): every class already rolled all 6 core stats
-  per level with real per-class emphasis - this was already fully
-  implemented correctly before this batch, verified rather than rebuilt.
-
-**World & events**
-- **A roaming World Boss incursion**: a rare, server-announced, tougher-
-  than-normal boss spawns far from any spawn point on a long random
-  cooldown and slowly wanders, giving scattered co-op players a reason to
-  converge.
-- **Tactical weather**: a Tundra/Ice blizzard now shrinks fog-of-war
-  reveal radius, a Desert/Wasteland sandstorm now narrows the soft
-  aim-assist cone - small, per-biome, real gameplay hooks instead of pure
-  cosmetics.
-- **Clustered biome decorations**: the sparse whole-map decoration pass
-  now seeds cluster centers and scatters props around them with falloff
-  density, instead of pure independent-per-tile placement - measured via
-  a real Clark-Evans nearest-neighbor statistic (~0.28, strongly
-  clustered, vs. ~1.0 for the old uniform approach), same total prop count
-  and realm-gen time as before.
-- **Discoverable landmarks**: one hand-placed, non-combat point of
-  interest per biome (10 total) with a first-visit-only lore message and
-  a guaranteed small loot bag.
-- **Host-settable rotating live events**: setting an `RR_EVENT` environment
-  variable (e.g. `double_loot`, `blood_moon_week`) before launching
-  `server.py`/`main.py` temporarily multiplies loot rolls or the Blood
-  Moon chance, shown as a small Nexus banner.
-
-**Co-op**
-- **A lightweight Crew system**: a persistent group tag + one shared
-  boss-kill counter (`/crew create|join|leave`), shown in the peer hover
-  tooltip - well short of a full guild system by design.
-
-**Fishing**
-- **Goofy junk-tier items**: an old boot, a rubber duck ring, a cursed
-  ring with a real stat tradeoff, a "weapon" that's just the net you
-  caught, a waterlogged sandwich, and a hatchable sentient-fish pet egg -
-  alongside the existing plain stat potion, not replacing it.
-- **A real fishing animation**: a visible cast line, a bobber that idles
-  on the water tile, a sharp dip + exclamation mark when the bite window
-  opens, and a splash on every catch (not just the rare 5% tier).
-
-**Performance**
-- Measured (not assumed): bullet/particle object pooling was investigated
-  and found unnecessary - a real stress benchmark showed ~10-13ms/tick
-  under heavy load, comfortably under the ~23ms budget derived from the
-  documented 30Hz co-op tick rate. The benchmark itself now lives in
-  `tests/` as a permanent regression guard.
+Contents: [Download & play](#download--play-no-python-needed) ·
+[Run from source](#run-from-source) · [Play co-op](#play-co-op) ·
+[Controls](#controls) · [Features](#features) · [Where saves live](#where-saves-live) ·
+[Project structure](#project-structure) · [Tests](#tests) ·
+[Build & release](#build--release) · [Known limitations](#known-limitations) ·
+[Version history](#version-history) · [Bugs found and fixed](#bugs-found-and-fixed-during-development)
 
 ## Download & play (no Python needed)
 
@@ -371,6 +30,8 @@ to install. Get them from the [latest release](https://github.com/Alexx1612/Joku
 | Play solo | double-click `RealmReforged.exe` | `./play.sh` |
 | Host co-op | `RealmReforged-Server.exe` | `./host.sh` |
 | Join co-op | `join.bat <host> <name>` (or `RealmReforged-CoopClient.exe --host <host> --name <name>`) | `./join.sh <host> <name>` |
+
+`join.bat` asks for the host address and your name if you just double-click it.
 
 **Linux**: download `RealmReforged-linux-x86_64.tar.gz`, then
 
@@ -409,251 +70,408 @@ that folder when you update to a new release.
 The first trip into the Realm downloads the ~5 MB world map once, so it can
 take a few seconds over the internet.
 
-## Play solo (from source)
+## Run from source
+
+Needs Python 3.12 (3.13+ lacks the stdlib `audioop` the music renderer uses -
+a slower pure-Python fallback kicks in) and `pygame==2.6.1`
+(`requirements.txt`).
 
 ```
-.venv\Scripts\python.exe main.py          # Windows
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && .venv/bin/python main.py   # Linux/macOS
+# Windows
+py -3.12 -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\python.exe main.py
+
+# Linux / macOS
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python main.py
 ```
 
-That's it - single-player needs nothing else running.
+Single-player needs nothing else running.
 
-## Play co-op with a friend
+## Play co-op
 
 One person **hosts** (runs the server); everyone, including the host,
 **joins as a client**.
 
-**1. Host: start the server.**
+1. **Host: start the server** - `python server.py` (or the Server build).
+   Leave it running - it is the shared world. Options: `--host 0.0.0.0`
+   (default, all interfaces), `--port 50777` (default).
+2. **Host: share an address** - same Wi-Fi: the LAN IPv4 (`ipconfig` /
+   `ip -4 addr`); over the internet: see "Playing with a friend from
+   different homes" above.
+3. **Everyone: launch the client** -
+   `python coop_client.py --host <address> --port 50777 --name YourName`
+   (host uses `--host 127.0.0.1`). Pick a class, press Enter, and you are in
+   the shared Nexus.
 
-```
-.venv\Scripts\python.exe server.py
-```
+`Ctrl+C` stops the server; clients show a "Disconnected" screen. The server
+is authoritative for enemies, damage, loot, XP, trades, quests and saves; it
+ticks at 30 Hz and only sends each client what is within ~1400 px of them.
 
-Leave this window open - it's the shared world. It prints the port it's
-listening on (default `50777`).
+## Controls
 
-**2. Host: find the IP your friend should connect to.**
-
-- Same house / same WiFi (LAN): run `ipconfig` (Windows) in another terminal
-  and use the "IPv4 Address" (something like `192.168.1.23`).
-- Over the internet: you'll need to either port-forward `50777` on your
-  router to your PC, or use a tunnel tool (e.g. `ngrok tcp 50777`) and share
-  the address it gives you. This is a plain, unencrypted LAN-style protocol
-  with no accounts - treat it like a Minecraft LAN game, only share the
-  address with people you trust.
-
-**3. Everyone (including the host): launch the client.**
-
-```
-.venv\Scripts\python.exe coop_client.py --host <server-ip> --port 50777 --name YourName
-```
-
-- Playing on the same PC as the server? Use `--host 127.0.0.1`.
-- `--name` is just a display name (shown above your character, and on the
-  hover tooltip other players see when they mouse over you).
-- Pick a class on the screen that opens, hit Enter, and you're in the
-  shared Nexus with everyone else who's connected.
-
-**Stopping the server**: `Ctrl+C` in its terminal. Everyone's session ends
-(their client will show a "Disconnected" screen).
-
-## Controls (both modes)
+The in-game **O** menu shows the same list (`game/ui.py` `HELP_LINES`).
 
 | Key | Action |
 |---|---|
 | WASD / arrows | Move |
-| Mouse | Aim (soft-assisted - see below) |
-| Left click (hold) | Fire, rate scales with your DEX (a ~100ms early click just before your cooldown clears still registers) |
-| Right click | Drop the hovered backpack item on the ground, or open a nearby ground bag |
-| 1-8 / click a backpack slot | Use/equip that item |
-| Click + drag | Drag items between backpack/equip slots, or drag off the bar to drop on the ground |
-| Space | Use your class's active ability on the tile under your mouse |
-| Left Shift | Dash/roll - a short burst in your current direction with brief invincibility frames (on a cooldown) |
-| F | Context action - interact with a nearby Vault/Bazaar/Echo Keeper tile, fish at the water's edge, etc. |
-| I | Toggle auto-fire (fires continuously without holding the mouse button) |
-| Enter | Confirm menus / step through a portal you're standing near ("Press ENTER" prompt) |
-| R | Nexus (teleport to hub) while in the Realm or Bonus Room |
-| Q / E | Rotate the camera (a real RotMG feature, confirmed on its wiki's Controls page) |
-| X | Reset camera rotation |
-| M | Full map (scroll wheel or +/- to zoom); a small corner minimap is always visible |
-| F11 / native maximize button | Toggle fullscreen - actually widens the view, not just a bigger window |
-| O | Open the options menu - Up/Down to move, Enter to activate (toggles + a controls reference) |
-| Esc | Quit / leave the Vault / close the menu / close the full map |
+| Mouse / left click (hold) | Aim (soft aim-assist near enemies) / fire - rate scales with DEX, a click just before the cooldown clears still registers |
+| I | Toggle auto-fire |
+| Space | Class ability at the mouse position |
+| Left Shift | Dash / roll - 0.18 s burst of 2.5 tiles with i-frames, 2 s cooldown |
+| 1-8 / double-click a slot | Use / equip that backpack item |
+| Click + drag | Move items between backpack, equip slots, ground bags and vault chests; drop off the dock onto the ground; drag onto the Pet tab / pet panel to feed the pet |
+| Shift + click | Quick-move: deposit into an open vault chest / Bazaar chest, or offer in an open trade |
+| Right-click | Drop the hovered backpack item, else open the nearest ground bag; in co-op, right-click a player (or their name in chat) for Whisper / Trade / Inspect / Teleport / Friend / Crew invite |
+| Tab | Switch the right dock between Inventory and Pet |
+| F | Context action: talk to an NPC or animal nearby, open a vault chest, fish at water, wish at the Nexus fountain, talk to Father Given |
+| J | Expand / collapse the small HUD quest log (click it to open the full Quest Log) |
+| Enter | Open chat (with history) / step through the portal you're standing on / open a vault chest |
+| R | Back to the Nexus (Realm) / leave the dungeon |
+| Q / E, X | Rotate the camera, reset rotation |
+| M | Full map (scroll wheel or +/- to zoom; right-drag pans the Quest Map) |
+| L | Friends panel (co-op) |
+| O | Options menu (volumes, effects, FPS cap, auto-fire, fullscreen, Quest Log, Dictionary...) |
+| F11 | Fullscreen (shows more of the world, not a scaled image) |
+| 1-5 in a dialogue | Pick that answer (or click it) |
+| Esc | Close the top-most window (dialogue, journal, map, shop, options, bag, vault chest, trade, menus); with nothing open, asks "quit?" - Esc / Enter / Y quits, N stays |
+
+**Chat** (Enter): real text cursor (Left/Right/Home/End, Backspace/Delete),
+Shift+arrows or mouse drag to select, Ctrl+A / C / X / V, Up/Down to recall
+earlier messages. The chat **log** panel is selectable too (click-drag, then
+Ctrl+C) without entering chat mode; drag its top strip to move it.
+Commands: `/nexus` `/realm` `/vault` `/bazaar` `/trade` `/help`, and in co-op
+`/msg "Name" text` (also `/w`, `/whisper`, `/tell` - reaches a player in any
+zone), `/accept` / `/decline` (trade invites) and
+`/crew create|join|leave <name>`.
 
 ## Features
 
-### Core RPG systems
-- **8 classes**: Wizard, Archer, Warrior, Priest, Rogue, Necromancer,
-  Paladin, Assassin - each with a distinct weapon behaviour and stat
-  profile, picked from a stat-comparison character-select screen (live
-  ATT/DEF/SPD/DEX/VIT/WIS bars per class, RotMG character-creation style).
-- **Real stat formulas**: ATT/DEF/SPD/DEX/VIT/WIS drive damage, mitigation,
-  move speed, attack speed, and regen exactly per the public wiki's
-  formulas (`game/constants.py`) - verified numerically, including that
-  weapon damage really does scale with ATT (`DMG = roll(min,max) *
-  (ATT+25)/50`) uniformly across every class's fire behaviour, and that VIT
-  regen has no hidden cap (tested up to VIT 100+ from gear stacking).
-- **Enemy HP scaled up** (~2.2x trash/elite, ~1.6x boss vs. the original
-  v0.2 numbers) to feel closer to real RotMG Godlands HP pools - the old
-  numbers let most trash die in one hit, which didn't feel like RotMG at
-  all - while stopping well short of the real game's late-game grind, since
-  this is still meant to be beatable in a single co-op session.
-- **Fast levelling**: a steeper XP curve and bigger per-level stat gains
-  than a "realistic" RotMG pace - a level 1-20 run is an evening, not weeks.
-- **Tiered + untiered loot**: multiple weapon/armor/ring tiers per class,
-  rare named UT items with unique procs, and brown/purple/white bag rarity
-  odds bumped up for a generous co-op pace.
-- **Permadeath**: hitting 0 HP ends that character for good.
+### Classes, stats and combat
+- **8 classes** - Wizard, Archer, Warrior, Priest, Rogue, Necromancer,
+  Paladin, Assassin - chosen on a stat-comparison select screen. Base stats
+  and growth cycles are listed in [GAME_DATA.md](GAME_DATA.md).
+- **Real stat formulas** (`game/constants.py`): ATT scales damage
+  (`roll * (ATT+25)/50`), DEX attack speed, SPD move speed, VIT/WIS regen.
+  **Player defense is a percentage curve**: damage taken =
+  `dmg * 75 / (75 + DEF)` (so tanks are tougher but never immune); enemies
+  use flat subtraction with a per-rank floor.
+- **Levelling to 20** with class-archetype growth: HP +16-22 / +12-17 / +9-13
+  per level and MP +4-7 / +5-8 / +7-11 (heavy / light / robe), signature stats
+  +1-3, others +0-1.
+- **Abilities** (Space), 3 tiers per class (T1/T5/T9), damage x2.5 and
+  heal/shield x1.5 at cast (`items.ABILITY_POWER_MULT`), each with its own
+  visual (17 styles in `vfx.ABILITY_STYLES`: crystal shards, void chain
+  lightning, thunderbolts, poison clouds, scythe arcs, holy pillars, domes,
+  horn sound-waves, smoke, shadow...). Wizard/Necromancer/Archer:
+  nova -> nova -> chain / drain / freeze; Priest heals; Paladin heals ->
+  shield; Warrior/Rogue/Assassin party haste. Abilities are telegraphed and
+  never hit friendly creatures or NPCs.
+- **Juice**: hit-stop, directional screen shake, impact particles, damage
+  numbers, hit flash; every enemy has idle/walk/attack animation; ranged mobs
+  glow before firing; a per-light-source night lightmap.
+- **Permadeath** - a dead character is deleted; account unlocks, Echoes,
+  achievements, the vault and completed story acts survive.
+
+### Items and loot
+- 11 weapon tiers per class, 11 armors per archetype (heavy / light / robe),
+  11 rings, abilities, and 4 untiered (UT) weapons per class with distinct
+  procs (bleed, boomerang, burn, vulnerable). 40% of drops can be for
+  another class.
+- **Loot bags** (brown / purple / white by rarity), rolled per mob
+  difficulty; ground-bag tooltips; right-click to open.
+- **UT sockets**: drag a spare UT onto a weapon and confirm with Enter to
+  transplant its proc (both slots highlight while pending).
+- **Potions**: permanent +1 stat potions (20 per character max) and
+  temporary +6 potions (60 s).
+- Goofy fishing junk (boots, rubber duck rings...), Dungeon Shards,
+  quest items (Glowcap Mushroom, Camel Bell, Driftwood Rum, Ember Core).
+
+### Pets
+- 13 pet kinds across common / uncommon / rare / legendary / **mythic**
+  (hatched from eggs; mythic only by fusion). Every pet runs heal, mana and
+  attack abilities on their own cooldowns; feed items (drag onto the pet)
+  to level each ability up to the rarity cap (10 / 15 / 20 / 30 / 40).
+- **Bond**: lifetime feed-XP (counts even when maxed); bond level (max 25)
+  gives up to x2 power and -25% cooldowns (heal/mana cooldown never below
+  1.5 s). Pets follow you in hubs too, and never attack friendly creatures.
+- **Carriers**: the Pack button turns your pet into a tradable, vaultable
+  item that keeps levels and bond; use it to unpack.
+- **Fusion**: drop a maxed carrier onto your maxed active pet of the same
+  rarity -> a pet of the next rarity with the combined bond.
+
+### Story campaign (`game/story.py`)
+- **Prologue: Welcome, Sucker** - talk to Father Given in the Nexus, enter the Realm.
+- **Act I: The Rim Job** - defeat the Landmark Guardians of the 4 outer
+  biomes (forest, desert, tundra, swamp).
+- **Act II: Last Call** - calm any 7 of the 10 islands.
+- **Act III: The Deep End** - defeat 4 inner-biome Landmark Guardians and
+  clear 3 dungeons (inner guardians always drop a Dungeon Shard).
+- **Finale: Closing Time** - Father Given sends you to the Forge to fight the
+  Mad God (two phases, armor-piercing volley and nova), then credits and free play.
+- Completed acts are checkpointed on your account (they survive permadeath);
+  enemy HP scales x1.15 per completed act (up to x1.6). Bot playthroughs
+  measured a median of ~66 minutes. Quest log: **J** (HUD) or the full
+  Quest Log.
+
+### NPCs, dialogue and side quests
+- **11 NPCs** - Barkeep Bitterwick (Nexus tavern), Old Mossbeard, Sandy Sal,
+  Frostine the Ice Fisher, Captain Driftwood (arrival beach), Madame Murk,
+  Brother Tipsy, Cinder Pete, Professor Fernleaf, Rusty the Scrap Golem,
+  Glimmer the Cartographer - plus **4 talkable creature groups** (Grand Elk
+  Herd, Gossiping Flamingos, Philosopher Tortoise, Mushroom Folk) and 16
+  kinds of friendly wildlife you can talk to. Press **F** near them.
+- **Dialogue menus** (`game/dialogue.py`): numbered answers, each topic
+  heard once (conversations are finite), quests offered and handed in
+  there, always a "Bye".
+- **30 side quests** (`game/sidequests.py`): a random board of 3 plus
+  NPC-given quests, rewarding XP, Echoes and a loot roll. Kinds: stand among
+  wildlife groups, talk to creatures, kill counts, visit islands/landmarks/
+  spots, open island chests, deliver quest items, fish, feed your pet,
+  clear dungeons, survive a night, witness a world boss. Full list in
+  [GAME_DATA.md](GAME_DATA.md).
+- **Journal** (`game/journal.py`, O menu): the **Quest Log** (scrollable:
+  story act, active and completed side quests; blue target names open the
+  Dictionary, "Map" opens the Quest Map), the **Dictionary** (200+ entries
+  in 9 categories - mobs, bosses, friendly creatures, NPCs, portals &
+  dungeons, areas, pets & mechanics, items & UT, story - with search,
+  sprite, stats, text and a where-to-find mini map, plus help pages for
+  pets, sockets, story, side quests, co-op loot, Echoes, events and
+  trading), and the **Quest Map** (fully revealed, labelled, pulsing quest
+  markers with hover tooltips, wheel zoom, right-drag pan).
 
 ### World
-*(Map size/biome count/lair count are covered in "Version history > v0.2"
-above, which stays the single up-to-date source for those numbers - not
-repeated here to avoid the two drifting out of sync again.)*
-- **A biome-flavoured, persistent ecosystem**: each biome leans toward its
-  own signature mobs (a Desert biome leans Scorpions, a Tundra leans Yetis,
-  and so on), paired with a generic trash mob for flavour - so exploring the
-  continent actually feels like visiting different zones with different
-  residents. Every lair is populated with monsters the moment the realm is
-  created - the world is already alive when you arrive, you're not waiting
-  for things to spawn in as you explore - and a killed lair quietly refills
-  over time (never right on top of a player) once no one's nearby.
-- **A zoomable map**: a small corner minimap is always visible, and the full
-  map (M key) shows the whole continent - both use real fog-of-war, only
-  revealing tiles you've actually walked near, exactly like RotMG's map
-  screen builds up as you explore. Scroll wheel or +/- to zoom the full map;
-  opening it pauses your own actions like a real menu screen.
-- **Living enemy AI**: enemies idle-wander near their lair (liveness instead
-  of standing frozen), **aggro** onto a player who gets close enough, chase
-  while aggro'd, and **leash** back home and go idle again if kited too far
-  away - a real notice/chase/give-up state machine, not just "always beeline."
-- **The Nexus, a Vault, and a Bazaar**: the Nexus hub has three tiles - the
-  Realm portal, a Vault (account-wide item storage that persists across
-  permadeath, click to deposit/withdraw), and a Bazaar (a shared trade-floor
-  room where you can genuinely drop items on the ground for others to grab -
-  there's no formal player-shop/currency system yet).
-*(Dungeon Shards, per-theme room shapes, the secret "???" quest, boss
-phase-2, and the portal Enter-prompt are all covered in "Version history >
-v0.2" above too, for the same reason - not repeated here.)*
-- **Bullet-hell enemies + a boss**: aimed shots, spreads, ring-bursts, an
-  erratic-flight bat, and a multi-phase spiral/nova boss every 40 kills.
+- **The Realm**: 1308 x 1308 tiles - a 900 x 900 continent in an ocean ring.
+  Terrain is layered value-noise fBm (each octave rotated) with a 2-level
+  domain warp; 10 biomes (outer: forest, desert, tundra, swamp; inner:
+  highlands, ashlands, jungle, wasteland, ice, cave) picked from a
+  Whittaker-style temperature x moisture table; rivers and lakes flow
+  downhill (priority-flood). Difficulty rises toward the centre (up to
+  +120% enemy HP). 200 pre-populated lairs that aggro, leash and refill.
+- **10 big named areas** (42x42-50x46 tiles, safe from lairs): Tavern Town,
+  Oasis Bazaar, Frozen Lake Camp, Witch's Hollow, Mountain Monastery, Forge
+  Camp, Botanist's Glade, Scrapyard, Crystal Caverns, Elk Meadow.
+- **10 islands** (~100 x 100 tiles each, drink-pun names such as Coral Colada
+  Choir or Tidricane Sanctum), each with its own biome, 4 mob camps, a
+  mini-boss arena (a wave "awakens" every 5 minutes), a personal treasure
+  chest, a walkway to the mainland and hub/return portals.
+- **Landmarks and guardians**: one landmark per biome plus a doored lair
+  building and a terrace; 20 curated decoration vignettes per biome.
+- **Big multi-tile trees and props** (34 kinds in `game/big_props.py`):
+  solid trunk, walk-under canopy that fades when you're beneath it; groves
+  and clearings placed with Poisson-disk + density noise.
+- **Nexus** (96 x 72): fountain plaza, Father Given, the Echo Keeper, a
+  tavern, garden park, harbour and arena plaza, portals to the Realm, Bazaar
+  and Vault. **Bazaar**: shared drop-and-grab room with permanent chests.
+  **Vault room**: 12 permanent chests (8 slots each), opened one at a time.
+- **Dungeons** from Dungeon Shards (8% elite drop): Forgotten Vault, Cave
+  Warren, Frozen Crypt, Jungle Ruins, Ember Den, Sunken Grotto, Wind Spire,
+  plus the story's Forge. Easy / Medium / Hard (HP x1.15 / 1.6 / 2.3),
+  fog-of-war rooms, a 30% chance of a secret "???" quest and hidden boss,
+  and a tougher phase-2 boss (x1.75 HP, x1.4 damage, faster fire).
+- **Bosses**: an every-40-kills Mad God's Avatar, a roaming World Boss every
+  15-25 minutes, 10 island mini-bosses. Bosses are drawn and hit at 2x size
+  (mini-bosses 1.8x, guardians 1.5x).
+- **Day/night** (4-minute cycle, Moonlit variants, rare Blood Moon),
+  biome **weather** (blizzards shrink vision, sandstorms), **live events**
+  rotating every 25 minutes (Double Loot Weekend, Happy Hour +50% XP,
+  Blood Moon Week, Two-for-One Tuesday; `RR_EVENT` forces one).
+- **Zone banners** fade in when you enter a zone, biome, area, island or
+  dungeon (1.2 s dwell, 25 s repeat suppression, cross-fade).
 
-### Combat feel
-- **Soft aim assist**: if an enemy is within a narrow cone in front of your
-  mouse aim and in range, your shot snaps onto it - manual aim still
-  matters, but near-misses land. Same behaviour in single-player and co-op.
-- **Auto-fire toggle (I key)**: keeps firing (still aimed with the mouse and
-  the same soft assist) without needing to hold the mouse button down. Off
-  by default.
-- **Floating combat damage numbers** and a **hit-flash** on enemies, in
-  addition to the existing HP-bar feedback.
-- **Full sound**: procedurally synthesized (no audio files) sound effects
-  for firing (a distinct tone per class), taking damage, hitting an enemy,
-  picking up an item, levelling up, a boss appearing, and dying - plus a
-  short looping original background theme. Impact sounds (hit/death/boss)
-  use a proper percussive envelope (fast attack, exponential decay) layered
-  with a second harmonic or noise burst for a punchier feel than a flat
-  tone. All audio is best-effort and can never crash the game if no sound
-  device is available.
-- **Q/E camera rotation, X to reset** - RotMG really does have this
-  (confirmed on its wiki's Controls page). Implemented by rendering the
-  world onto an oversized offscreen buffer and rotating that whole image,
-  so the tile floor itself turns seamlessly, not just entity positions -
-  mouse aim accounts for the rotation too. The HUD stays screen-anchored
-  (it doesn't spin with the world).
-- **A docked, translucent controls overlay (O to toggle)** - RotMG's own
-  options/controls screen is opened with "O"; this mirrors that, but is
-  deliberately a small panel off to one side instead of a full-screen
-  modal, so it never blocks the play area.
+### Economy
+- **Echoes** (account-wide): 1 per 1000 XP earned plus a bonus on death.
+  The **Echo Keeper** (Nexus) sells +1 backpack slots (60 / 120 Echoes, max
+  2) and a starting-XP boost (30 Echoes).
+- **Wishing fountain** (F in the fountain): sacrifices your lowest-tier item
+  for a reroll, with a chance of a UT jackpot.
+- Bazaar chests, trading, and 9 achievements that grant titles.
 
 ### Co-op
-- **Real client-server co-op**: `server.py` you host once, `coop_client.py`
-  everyone (including the host) connects with. The server is authoritative
-  for enemies/damage/loot/XP; movement is client-trusted (fine for playing
-  with friends, not hardened against cheating).
-- **Hover tooltips on other players**: mouse over a nearby player (in the
-  Nexus or the Realm) to see their class, level, equipped gear (with tier
-  colours), stats, and current HP - mirrors RotMG's "hover a name" info.
+- Authoritative server with **personal loot + shared credit**: everyone who
+  damaged a mob gets XP, story and side-quest credit and their own loot bag
+  only they can see and open.
+- **Trading** with invite / accept, offers that stay in your backpack until
+  the swap, a 3 s confirm countdown and clear reasons when a trade can't
+  complete; **Inspect** another player's gear; **friends** (L), **crews**,
+  cross-zone **whispers**, **teleport** to a player, player hover tooltips.
+- Everyone follows their own storyline; co-op Echo shop; per-player island
+  chests.
 
-### Presentation
-*(Hand-painted character/monster/boss/decoration art is covered in
-"Version history > v0.2 > Combat feel & presentation" above - not
-repeated here.)*
-- **A real, resizable window**: drag an edge or click the native maximize
-  button (next to minimize/close) - not just F11. Either way, the render
-  canvas is resized to match the window pixel-for-pixel rather than being
-  scaled, so going fullscreen/bigger actually shows more of the world (a
-  wider field of view), and mouse aim always lines up correctly at any
-  size - no more misaimed shots in fullscreen.
-- **A right-docked inventory**, RotMG-style: the equip grid and backpack sit
-  right below the corner minimap on the right edge of the screen, instead of
-  a bottom-left bar. The Vault screen keeps its own independent layout since
-  it's a separate full-page view, not part of the live HUD.
-- **Click-and-drag inventory**: drag items between backpack and equip slots
-  (invalid drops, like a ring onto the weapon slot, are cancelled), or drag
-  an item off the bar entirely to drop it on the ground in the Realm, a
-  Bonus Room, or the Bazaar. A brief pickup-immunity keeps you from
-  instantly re-grabbing your own drop, while anyone else can grab it right
-  away.
-- **Ground-item tooltips**: hover a dropped bag (yours, a monster's, or a
-  co-op peer's) to see what's inside before deciding whether to walk over
-  and grab it, instead of only finding out after an automatic pickup.
-- **An actual interactive options menu (O key)**: Up/Down to move, Enter to
-  activate - toggle auto-fire or fullscreen, reset the camera, jump straight
-  to the full map, or abandon the run - with the controls reference still
-  shown below it, not just a read-only list.
+### Music and sound
+23 original ~60-second loopable rock tracks, one per zone, biome, island
+theme and dungeon, rendered in the background and cached to `music_cache/`;
+realm music follows your biome/area with a 2 s hysteresis and a ~1.5 s
+crossfade. Track list in [GAME_DATA.md](GAME_DATA.md). Sound effects are
+synthesized at runtime; `tools/export_audio.py` exports them as `.wav`.
 
-## Structure
+### UI and options
+- A framed right dock: day/night clock with zone name and kills, a wide
+  radar minimap, player panel, Inventory/Pet tabs, equipment and backpack.
+- Draggable chat and HUD quest log (positions saved), a draggable-and-
+  resizable game window, FPS counter.
+- **Options (O)**: master / music / SFX volume, mute, fullscreen, FPS cap
+  (30 / 60 / 120 / unlimited), show FPS, screen shake, hit-stop, particles
+  (off / low / high), auto-fire, plus Quest Log, Dictionary, reset camera,
+  full map, leave. Saved to `settings.json`.
+
+## Where saves live
+
+`game/paths.py` decides the data folder: **next to the executable** in a
+PyInstaller build, the **project folder** when running from source, or
+`RR_DATA_DIR` if set. Inside it: `accounts/` (Echoes, unlocks, story act),
+`characters/` (level, gear, backpack, pet, quests), `vaults/`,
+`achievements/`, `friends/`, `crews/`, `settings.json` and `music_cache/`
+(all gitignored). In co-op, these live on the host.
+
+## Project structure
 
 ```
-main.py            single-player game loop and states
-server.py           co-op server: owns the shared Nexus/Bazaar/Realm/Bonus-room state
-coop_client.py       co-op client: connects to server.py, renders server snapshots
-game/constants.py   screen/tile constants + the RotMG stat formulas
-game/sprites.py     procedural pixel-art generation (auto-outlined, auto-shaded ASCII grids)
-game/audio.py       procedural sound effects + theme (raw waveform synthesis, no assets)
-game/items.py       item/tier/loot-table definitions + Vault persistence
-game/entities.py    Player, Enemy, Bullet, Bag, Portal, Obstacle (+ network (de)serialization)
-game/realm_sim.py   shared realm/combat simulation used by BOTH main.py and server.py
-                     (lair spawning, aggro/leash AI hooks, aim assist, dungeon generation/quests)
-game/world.py       tile map generation (Nexus/Bazaar/Realm/Bonus room) + camera
-game/minimap.py     fog-of-war exploration tracking + corner/full-map rendering
-game/ui.py          HUD, inventory bar, Vault screen, class-select, peer tooltips
-game/vfx.py         burst/ring/rise particle effects + screen-shake/hit-stop + fishing animation (heals, deaths, abilities, etc.)
-game/weather.py     rain/snow/sand/ash particle effects tied to the current biome + tactical hooks (blizzard/sandstorm)
-game/accounts.py    username-only account identity + Echo currency (accounts/<name>.json)
-game/characters.py  per-character save/load (level/xp/gear/backpack, characters/<name>.json)
-game/friends.py     per-account friends list (friends/<name>.json)
-game/crews.py       lightweight co-op crew tag + shared boss-kill counter (crews/<name>.json)
-game/live_events.py host-settable rotating live-event multipliers (RR_EVENT env var)
-game/clipboard.py   tkinter-based copy/paste for the in-game chat box
-game/netmsg.py      newline-delimited JSON framing over TCP, shared by server/client
-tools/export_audio.py   renders every procedural sound effect to a real .wav file
+main.py              single-player game loop and states
+server.py            co-op server (authoritative world, 30 Hz, interest management)
+coop_client.py       co-op client (renders server snapshots, sends input/actions)
+game/accounts.py     username accounts, Echoes, unlocks, Echo shop rows, story act checkpoint
+game/achievements.py 9 achievements -> titles
+game/areas.py        the 10 big realm areas + Nexus districts (stamped layouts)
+game/audio.py        sound effects + music playback (volumes, crossfades)
+game/big_props.py    multi-tile trees/props art, trunks and canopies
+game/characters.py   per-character save/load
+game/chat_input.py   chat input line: cursor, selection, clipboard, history
+game/clipboard.py    copy/paste helper
+game/codex.py        Dictionary entries built from the game's own tables
+game/constants.py    screen/tile/net constants + stat and defense formulas
+game/crews.py        crew tags + shared boss-kill counter
+game/dialogue.py     finite dialogue trees + conversation state
+game/entities.py     Player, Enemy (kinds/bosses/scales), Pet, Bullet, Bag, Portal, NexusBot...
+game/friends.py      per-account friends list
+game/items.py        weapons/armor/rings/abilities/UTs, loot rolls, pets, potions, vault storage
+game/journal.py      Quest Log, Dictionary and Quest Map windows
+game/live_events.py  rotating live-event schedule and multipliers
+game/minimap.py      fog-of-war minimap and full map
+game/music.py        23 procedural rock tracks, background render + disk cache
+game/netmsg.py       newline-delimited JSON framing over TCP
+game/npcs.py         NPC / talkable-creature definitions and placement
+game/options_menu.py O-menu rows and input handling
+game/panel_drag.py   draggable HUD panels
+game/paths.py        where saves/settings live (next to the executable when frozen)
+game/prop_art.py     procedural art for props without a painted PNG
+game/realm_sim.py    shared Realm/dungeon simulation (lairs, combat, loot, islands, bosses, events)
+game/settings.py     persisted options (settings.json)
+game/sidequests.py   30 side quests, board, rewards, quest items
+game/sprites.py      sprite loading + procedural pixel-art generation
+game/story.py        story acts, objectives, checkpoints, act scaling, credits
+game/ui.py           HUD, dock, panels, dialogue, trade, vault, menus, banners
+game/vault.py        vault chest helpers
+game/vfx.py          particles, ability styles, shake/hit-stop, fishing animation
+game/weather.py      biome weather particles + tactical weather
+game/world.py        terrain generation, tile maps, Nexus/Bazaar/Vault maps, camera, drawing
+game/zone_banner.py  zone-entry banner state machine
+tools/export_audio.py   export sound effects to .wav
+tests/               63 regression check scripts (tests/check_*.py)
+packaging/           Linux play/host/join.sh, Windows join.bat
+docs/unity-rebuild/  feature-by-feature docs for rebuilding the game in Unity (00-29)
 ```
+
+## Tests
+
+```
+.venv\Scripts\python.exe tests\run_all_checks.py        # Windows
+.venv/bin/python tests/run_all_checks.py                # Linux
+```
+
+`run_all_checks.py` finds every `tests/check_*.py` and runs each as its own
+headless process (`SDL_VIDEODRIVER=dummy`, throwaway settings, no music
+rendering, no event rotation) and prints a PASS/FAIL summary - currently
+**63/63**. The checks are plain asserts that drive the real game objects:
+single-player `Game`, the co-op server's action handler and real
+client-server sockets, rendered screenshots, timing budgets (e.g. world
+generation < 3 s) and fixed-seed input fuzzing.
+
+## Build & release
+
+Releases are built by GitHub Actions (`.github/workflows/release.yml`,
+workflow `build-release`): **push (or force-move) a `v*` tag**, or run it by
+hand with `gh workflow run build-release -f tag=v0.2`. It builds the three
+PyInstaller specs (`RealmReforged*.spec`) on Windows and Ubuntu 22.04,
+smoke-tests that the server starts, and uploads the three `.exe` files,
+`join.bat` and `RealmReforged-linux-x86_64.tar.gz` to that release.
+To build locally: `pip install pyinstaller==6.22.3` then
+`pyinstaller --noconfirm --clean RealmReforged.spec` (same for the Server
+and CoopClient specs); output lands in `dist/`.
 
 ## Known limitations
 
-- No client-side movement prediction: your own position is whatever the
-  last server snapshot said, so co-op has ~1 tick + network latency of
-  input lag. Unnoticeable on a LAN, noticeable over a slow connection.
-- No auth, no encryption, movement is client-trusted. Fine for playing with
-  friends; don't expose the port to the open internet without understanding
-  that risk.
-- The Bazaar is a shared drop-and-grab room, not a real player-shop/
-  currency economy.
-- Priest's passive ally-heal-on-hit is now wired into combat (a small trickle
-  on every tiered/UT weapon hit); Paladin's identically-worded "mace hits
-  heal on contact" class description is still flavour text only. Every
-  class's 4 UTs are now mechanically distinct, though not each 1:1 with its
-  own flavor text - one fires a boomerang (travels out, curves back), and
-  the other three each apply one of bleed/burn/vulnerable (a DoT, a
-  faster-ticking DoT, or a temporary incoming-damage multiplier) on hit.
-  Every OTHER UT-specific proc description beyond those 4 mechanics remains
-  flavour text only, not yet its own distinct mechanic.
-- Item names are original, RotMG-style tiered gear names (the real wiki's
-  item tables run into the hundreds of entries per class) - the *mechanics*
-  (tier bands, stat formulas, bag rarity odds) are reproduced from the wiki.
-- Balance numbers (drop rates, spawn caps, XP curve, aggro/leash ranges) are
-  tuned by feel.
+- No client-side movement prediction: co-op input lag is one server tick
+  plus network latency (fine on a LAN or Tailscale, noticeable on slow links).
+- No auth or encryption, and movement is client-trusted - play with friends,
+  don't expose the port to strangers.
+- The co-op world map is sent as uncompressed JSON (~5.5 MB) once per zone
+  instance.
+- Only Windows and Linux x86_64 builds (no macOS build; macOS can run from
+  source). The Linux build is smoke-tested in CI but has had less real play.
+- Python 3.13+ removed `audioop`; the music renderer falls back to a much
+  slower pure-Python path there. The builds use Python 3.12.
+- Building a second full Realm inside one long-lived process runs ~3x slower
+  than the first (seen in tests; startup generation is ~2 s).
+- Story length (~66 min) is measured by a scripted bot, not yet by human
+  playthroughs.
+- Some UT/class flavour text is still just flavour (e.g. Paladin's
+  "mace hits heal"); only the four UT proc kinds are real mechanics.
+- Balance numbers (drop rates, spawn caps, XP curve) are tuned by feel.
+
+## Version history
+
+### v0.1 - first working pass
+8 classes with RotMG stat profiles and the real stat formulas, a Nexus /
+Realm / Bazaar / Vault loop, tiered + UT loot, permadeath, a small island
+map, and a first co-op pass (`server.py` + `coop_client.py` over TCP/JSON).
+
+### v0.2 - everything since (release tag `v0.2`)
+Built in batches; each has a detailed doc in `docs/unity-rebuild/`.
+
+- **Foundations (batches 1-7, docs 01-15)**: loot bags, vault chests,
+  7 themed multi-room dungeons from Dungeon Shards, secret "???" quests,
+  phase-2 bosses, telegraphed abilities, potions, per-class growth, a big
+  biome continent with lairs, aggro/leash AI, day/night, Blood Moon,
+  weather, co-op social suite (whispers, friends, context menus, hover
+  tooltips), interest management, multiple concurrent co-op dungeon
+  instances, fog-of-war minimap.
+- **Wildlife, pets and The Reforging (batches 8-11, docs 20-23)**: neutral
+  wildlife, mouse-driven HUD, multi-ability pets, the Reforging islands and
+  portal hub, trading, precise collision, player animation, day/night clock.
+- **Game feel and progression (batches 12-13, commit 2359371, doc 24)**:
+  hit-stop/shake/particles, world boss, UT sockets, crews, live events,
+  dash/roll, 26 mob redesigns, universal enemy animation, fishing overhaul.
+  (That commit was titled "v0.3", but it is part of v0.2.)
+- **Batch 14 (92c3086, doc 25)**: drink-pun islands with mini-bosses,
+  curated decorations, right dock + Tab, per-zone music, Echo accrual,
+  Bazaar chests, dungeon doors.
+- **v0.2 final fixes (cafd86c, doc 26)**: options menu, trading overhaul,
+  story campaign, pet bond/carriers/fusion.
+- **Balance/terrain/UI round (doc 27)** and **Batch 15 "living world"
+  (doc 28)**, released together as **Ends of V0.2 (65552b4)**.
+
+### Ends of V0.2 (current)
+- **Living world**: 11 NPCs + talkable creatures with real dialogue menus,
+  30 side quests, Quest Log / Dictionary / Quest Map.
+- **World**: terrain rewrite (organic biomes, rivers, lakes), 1308 x 1308
+  map with ten 100 x 100 islands, 10 big named areas, a 96 x 72 Nexus, big
+  multi-tile trees, 2x bosses, doored buildings.
+- **Combat & balance**: percentage defense curve, spells x2.5 with 17
+  distinct visuals, pets and spells ignore friendlies, Mad God tuning,
+  story pacing from bot playthroughs.
+- **Co-op**: personal loot + shared credit, island chests, cross-zone
+  `/msg`, co-op Echo shop.
+- **UI**: framed dock, wide clock/minimap, zone banners, chat
+  cursor/selection/copy + right-click names, draggable panels, 12-chest
+  vault, new Esc/quit flow, live-event rotation.
+- **Music**: 23 original ~1-minute loopable rock tracks.
+- **Follow-ups on the same release (30fb143, d09df8d)**: saves now live next
+  to the executable (they used to reset every launch of the builds), Linux
+  builds via GitHub Actions, Linux/Windows launch scripts, cross-platform
+  co-op docs.
 
 ## Bugs found and fixed during development
 
@@ -717,3 +535,28 @@ Kept here because a couple were genuinely subtle and worth remembering:
   would have left the buffer's edges undrawn - showing as background-colour
   gaps at the screen corners once rotated. Fixed by passing the real
   surface size into the tile-culling call.
+
+Found in the "Ends of V0.2" round:
+
+- **The long-standing "dragged an item into a portal and it crashed" bug**:
+  found by seeded input fuzzing - dragging the equipped weapon onto the
+  ground and then firing read the damage of a weapon that no longer
+  existed. In co-op it happened inside the server tick and froze everyone.
+  Firing is now skipped while no weapon is equipped.
+- **Hand-painted art never showed in the real game**: the clients imported
+  `game.world` before a display existed, so every PNG load failed silently
+  and fell back to flat tiles (the tests always opened a display first).
+- **Saves reset on every launch of the released builds**: a one-file
+  PyInstaller build unpacks into a new temp folder each run, and the save
+  paths were relative to the module files. Fixed with `game/paths.py`.
+- **Co-op client crashes** the first time a portal, a loot bag or a Bazaar
+  chest was drawn (the `Ghost*` stand-ins lacked fields `draw()` needed).
+- **Vault-room crash**: the big-prop overhang scan wasn't clamped to the map
+  when the camera sat right of a map narrower than the view.
+- **Far-away wildlife lines in chat**: mob speech had no position; it now
+  only reaches players within 600 px.
+- **Island index drift**: a skipped island placement shifted every later
+  island's name and mini-boss.
+- **Pet feed target covering the equip bar** (drops onto equip slots fed
+  the pet), and the **Echo shop reopening** on the next frame while you
+  still stood on its tile.
