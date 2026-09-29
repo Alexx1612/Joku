@@ -1355,7 +1355,7 @@ class Enemy:
             self._update_dash(dt, tile_map)
         elif self._attacks and (self._shell_t > 0 or self._phase_invuln > 0 or (
                 self._windup is not None and self._windup["move"].get(
-                    "root", self._windup["move"]["tele"] != "glow"))):
+                    "root", self._windup["move"]["tele"] not in ("glow", "none")))):
             self._is_moving = False  # planted for a telegraphed wind-up / shell / phase roar
         elif self.aggro:
             if self.pattern == "erratic":
@@ -1513,13 +1513,17 @@ class Enemy:
                 self._windup = dict(move=m, t=0.0, total=max(0.05, m.get("windup", 0.25)),
                                     tele_dir=tele_dir, tele_point=tele_point)
                 self._windup_frac = 0.0
-                self._windup_kind = ("homing" if m["fn"] == "homing" else
-                                     "aoe" if m.get("tele") in ("zone", "ring", "cone") else "aim")
-                if m.get("tele") == "dash":
-                    self._sfx_pending.append("dash_windup")
-                elif m.get("windup", 0) >= 0.5:
-                    self._sfx_pending.append("windup")
-        self._pretelegraph = self._windup is not None
+                if EA.is_dangerous(m):
+                    self._windup_kind = ("homing" if m["fn"] == "homing" else
+                                         "aoe" if m.get("tele") in ("zone", "ring", "cone") else "aim")
+                    if m.get("tele") == "dash":
+                        self._sfx_pending.append("dash_windup")
+                    elif m.get("windup", 0) >= 0.5:
+                        self._sfx_pending.append("windup")
+                else:
+                    self._windup_kind = None  # ordinary shot: no glow, no tell
+        # the sprite glow / co-op tell only for DANGEROUS moves (AoEs, slams, beams, dashes...)
+        self._pretelegraph = self._windup is not None and EA.is_dangerous(self._windup["move"])
         if self._windup is None:
             self._windup_frac = 0.0
             if self._dash is None:

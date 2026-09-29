@@ -415,6 +415,7 @@ def play_ability(style=None):
 # enemy attack kinds (game/enemy_attacks.py move "sfx" keys + wind-ups / phases)
 ENEMY_ATTACK_SOUND = {
     "shot": (520, 380, 0.05, "square", 0.0, 22),
+    "shot_small": (600, 470, 0.035, "square", 0.0, 28),   # trash basic shots - quieter, see below
     "shotgun": (300, 180, 0.09, "square", 0.25, 18),
     "burst": (400, 250, 0.1, "square", 0.1, 14),
     "wall": (240, 200, 0.14, "triangle", 0.1, 10),
@@ -440,9 +441,10 @@ ENEMY_ATTACK_SOUND = {
 
 def _enemy_attack_sound(key):
     base, end, dur, wave, noise, decay = ENEMY_ATTACK_SOUND.get(key, ENEMY_ATTACK_SOUND["shot"])
+    vol = 0.09 if key == "shot_small" else 0.2  # fodder shots stay in the background
     layers = []
     if wave != "noise":
-        layers.append(_samples(base, dur, 0.2, wave, end, envelope="exp_decay", decay_rate=decay))
+        layers.append(_samples(base, dur, vol, wave, end, envelope="exp_decay", decay_rate=decay))
     if noise > 0 or wave == "noise":
         layers.append(_samples(0, dur, max(noise, 0.15), "noise", envelope="exp_decay", decay_rate=decay))
     return _mix(*layers)

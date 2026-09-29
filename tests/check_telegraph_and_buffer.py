@@ -2,8 +2,9 @@
 Regression check for two Batch-12 combat-feel additions:
 
 1. Mob attack telegraph: `Enemy._pretelegraph` is on for the whole WIND-UP of
-   a move (game/enemy_attacks.py - every move is telegraphed before it fires,
-   dashes with a red lane), off once it fires, and round-trips through
+   a DANGEROUS move (game/enemy_attacks.py - ground AoEs, slams, beams, dashes
+   with a red lane...; ordinary shots and all trash attacks have NO tell), off
+   once it fires, and round-trips through
    `net_state()` into `coop_client.GhostEnemy` together with its colour
    (`wk`: aim/aoe/homing).
 2. Buffered fire input: an early "fire" request (mouse click in
@@ -29,17 +30,17 @@ from game.entities import Enemy
 from coop_client import GhostEnemy
 
 
-def _mk_ranged_enemy(ready=True, aggro=True, kind="imp"):
-    """imp: rank=trash, moves = Ember Flick (aimed/predictive) + Cinder Triplet.
-    Since the combat-feel rework every attack starts with a WIND-UP (the
-    telegraph) instead of a hidden _fire_cd window - `ready` makes its next
-    move available immediately."""
+def _mk_ranged_enemy(ready=True, aggro=True, kind="troll", only=None):
+    """troll: an elite whose Boulder Lob is a telegraphed ground AoE. `ready`
+    makes its next move available immediately; `only` = the primitive (fn) the
+    ready move must use (default: the first DANGEROUS move)."""
+    from game import enemy_attacks as EA
     e = Enemy(kind, pygame.Vector2(100, 100))
     e.aggro = aggro
     if ready:
         e._atk_gap = 0.0
-        for k in e._atk_cds:
-            e._atk_cds[k] = 0.0
+        pick = next((m for m in e._attacks if (m["fn"] == only if only else EA.is_dangerous(m))), e._attacks[0])
+        e._atk_cds = {m["name"]: (0.0 if m is pick else 99.0) for m in e._attacks}
     else:
         e._atk_gap = 5.0
     return e
@@ -71,7 +72,7 @@ def check_pretelegraph_off_when_not_aggro():
 
 def check_pretelegraph_off_for_melee_pattern():
     # renamed intent: melee DASHES are telegraphed too now - a red lane shows where it will lunge
-    e = _mk_ranged_enemy(kind="panther")
+    e = _mk_ranged_enemy(kind="panther", only="dash")
     e.update(0.001, pygame.Vector2(400, 100), [], tile_map=None)
     assert e._pretelegraph is True and e._windup["move"]["tele"] == "dash"
     assert any(z["shape"] == "line" for z in e._new_zones), "a dash wind-up must push its lane telegraph"
@@ -80,13 +81,26 @@ def check_pretelegraph_off_for_melee_pattern():
 
 def check_pretelegraph_off_right_after_firing():
     # the tick the wind-up completes and the shot is released - no longer "about to"
-    e = _mk_ranged_enemy()
+    e = _mk_ranged_enemy(kind="troll", only="fan")  # its plain Club Bolt
     e.update(0.001, pygame.Vector2(400, 100), [], tile_map=None)
     total = e._windup["total"]
     bullets = []
     e.update(total + 0.01, pygame.Vector2(400, 100), bullets, tile_map=None)
     assert bullets, "the move must fire when its wind-up ends"
     assert e._pretelegraph is False
+
+
+def check_no_tell_for_trash_or_plain_shots():
+    # trash (imp) and an elite's ordinary shot never glow or flag a tell
+    for kind, only in (("imp", None), ("troll", "fan")):
+        e = Enemy(kind, pygame.Vector2(100, 100))
+        e.aggro = True
+        e._atk_gap = 0.0
+        e._atk_cds = {m["name"]: (0.0 if (only is None or m["fn"] == only) else 99.0) for m in e._attacks}
+        e.update(0.001, pygame.Vector2(400, 100), [], tile_map=None)
+        assert e._windup is not None and e._pretelegraph is False and e._windup_kind is None, kind
+        assert not e._new_zones, kind
+    print("check_no_tell_for_trash_or_plain_shots: PASSED")
     print("check_pretelegraph_off_right_after_firing: PASSED")
 
 
@@ -180,6 +194,7 @@ if __name__ == "__main__":
     check_pretelegraph_off_when_not_aggro()
     check_pretelegraph_off_for_melee_pattern()
     check_pretelegraph_off_right_after_firing()
+    check_no_tell_for_trash_or_plain_shots()
     check_pretelegraph_survives_net_roundtrip()
     check_buffered_fire_fires_once_cooldown_clears()
     check_buffered_fire_expires_if_cooldown_never_clears_in_time()

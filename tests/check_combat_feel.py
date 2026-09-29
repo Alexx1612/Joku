@@ -4,6 +4,9 @@ motions, the screen-shake policy and the new sound effects.
 
 - every hostile kind has its own move set; no non-boss move is an untelegraphed
   full ring (the old "everything sprays a ring" look)
+- trash (the common fodder) only has plain basics: no named specials, no rings /
+  AoEs / dashes, no telegraph at all; elites / mini-bosses / bosses carry the
+  specials, hardened, and ONLY dangerous moves are telegraphed
 - bosses / island mini-bosses rotate >= 3 named moves and break into phase 2
 - ground AoEs are telegraphed for their whole wind-up before they hurt anyone
 - sine / accel (brake to a stop) / homing (capped turn) / split bullets behave
@@ -90,7 +93,7 @@ def _sim_with(kind):
 
 def check_ground_aoe_is_telegraphed_before_it_hurts():
     from game.entities import Player
-    sim, e, center = _sim_with("goblin")
+    sim, e, center = _sim_with("troll")  # an elite - trash has no ground AoEs
     lob = next(m for m in e._attacks if m["fn"] == "lob")
     p = Player("wizard", "Target", pid="p1")
     p.pos = center + pygame.Vector2(120, 0)
@@ -235,8 +238,7 @@ def check_dash_windup_then_lunge():
     e = Enemy("panther", pygame.Vector2(0, 0))
     e.aggro = True
     e._atk_gap = 0
-    for k in e._atk_cds:
-        e._atk_cds[k] = 0
+    e._atk_cds = {m["name"]: (0 if m["fn"] == "dash" else 99) for m in e._attacks}  # force the Pounce
     target = pygame.Vector2(300, 0)
     e.update(0.01, target, [], tile_map=None)
     assert e._windup is not None and e._windup["move"]["tele"] == "dash"
@@ -250,6 +252,53 @@ def check_dash_windup_then_lunge():
     print("check_dash_windup_then_lunge: PASSED")
 
 
+TRASH = [k for k in HOSTILE if ENEMY_KINDS[k]["rank"] == "trash" and not k == "totem"]
+SPECIAL = [k for k in HOSTILE if ENEMY_KINDS[k]["rank"] in ("elite", "boss")]
+BASIC_FNS = ("fan", "sine", "boomerang")
+
+
+def check_trash_has_only_plain_untelegraphed_basics():
+    assert len(TRASH) >= 8, TRASH
+    for k in TRASH:
+        for m in EA.moves_for(k):
+            assert m["fn"] in BASIC_FNS, f"{k}: trash move {m['name']} uses {m['fn']}"
+            assert m["tele"] == "none" and not EA.is_dangerous(m), f"{k}: {m['name']} is telegraphed"
+            assert m["fn"] != "fan" or m.get("n", 1) <= 3, f"{k}: {m['name']} is not a small fan"
+    # and in play: a trash mob never glows / flags a tell before shooting
+    e = Enemy("goblin", pygame.Vector2(0, 0))
+    e.aggro = True
+    e._atk_gap = 0
+    out = []
+    for _ in range(90):
+        e.update(1 / 30, pygame.Vector2(200, 0), out, tile_map=None)
+        assert not e._pretelegraph and e._windup_kind is None and not e._new_zones
+    assert out, "the goblin still shoots"
+    print(f"check_trash_has_only_plain_untelegraphed_basics: PASSED ({len(TRASH)} kinds)")
+
+
+def check_special_mobs_have_specials_and_only_dangerous_tells():
+    danger_fns = ("lob", "slam", "rain", "eruption", "leap", "dash", "beam", "root_pulse")
+    for k in SPECIAL:
+        moves = EA.moves_for(k)
+        need = 3 if ENEMY_KINDS[k]["rank"] == "boss" else 2
+        assert len({m["name"] for m in moves}) >= need, (k, [m["name"] for m in moves])
+        for m in moves:
+            if m["fn"] in danger_fns:
+                assert EA.is_dangerous(m), f"{k}: dangerous {m['name']} ({m['fn']}) has no telegraph"
+            if m["fn"] in ("fan", "sine", "homing", "boomerang", "split") and m.get("tele") in ("none", None):
+                assert not EA.is_dangerous(m)
+    # ordinary aimed/fan/volley moves carry no tell, even on elites and bosses
+    plain = [(k, m["name"]) for k in SPECIAL for m in EA.moves_for(k)
+             if m["fn"] == "fan" and m["tele"] == "glow"]
+    assert not plain, f"plain fans still glow: {plain[:5]}"
+    # hardened vs the raw table: faster and on a shorter cycle
+    raw = EA.ATTACKS["boss"][0]
+    hard = EA.moves_for("boss")[0]
+    assert hard["cd"] < raw["cd"] and hard.get("speed", 1) > raw.get("speed", 1.0)
+    assert any(m["name"] == "Crossfire" for m in EA.moves_for("frost_monarch")), "bosses get the Crossfire combo"
+    print(f"check_special_mobs_have_specials_and_only_dangerous_tells: PASSED ({len(SPECIAL)} kinds)")
+
+
 if __name__ == "__main__":
     check_every_hostile_kind_has_an_attack_set()
     check_no_untelegraphed_full_rings_for_regular_mobs()
@@ -259,4 +308,6 @@ if __name__ == "__main__":
     check_shake_policy()
     check_sfx_distinct_cached_and_rate_limited()
     check_dash_windup_then_lunge()
+    check_trash_has_only_plain_untelegraphed_basics()
+    check_special_mobs_have_specials_and_only_dangerous_tells()
     print("PASSED: combat feel checks all green.")

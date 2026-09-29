@@ -45,7 +45,7 @@ BASE_SPEED = 220.0
 
 PHASE_BREAK_FRAC = 0.5       # bosses / mini-bosses change phase below this HP fraction
 PHASE_BREAK_INVULN = 0.8     # a short "roar" window with no damage taken
-PHASE2_CD_MULT = 0.75        # everything comes back faster after the phase break
+PHASE2_CD_MULT = 0.6         # enrage: everything comes back much faster after the phase break
 GLOBAL_GAP = (0.35, 0.7)     # breathing room between two moves of the same enemy
 ATTACK_RANGE = 620.0         # won't start a move from further away than this
 
@@ -244,9 +244,9 @@ def _zone(e, shape, pos, life, color, dmg_mult=0.0, r=60, length=0, width=0, ang
 
 def tele_for(e, m, target, lead, aim):
     """Pushes the move's telegraph zone(s) and returns (tele_dir, tele_point)."""
-    tele = m.get("tele", "glow")
+    tele = m.get("tele", "none")
     windup = m.get("windup", 0.3)
-    fn = m["fn"]
+    fn = m.get("tele_fn", m["fn"])
     if tele == "line":
         d = (lead - e.pos) if m.get("lead") else (target - e.pos)
         d = d.normalize() if d.length_squared() > 1 else pygame.Vector2(aim)
@@ -280,8 +280,10 @@ def tele_for(e, m, target, lead, aim):
                   sfx=m.get("sfx", "lob"), burst=m.get("burst"))
             return None, point
         if fn == "rain":
-            for i in range(m.get("n", 5)):
-                off = pygame.Vector2(random.uniform(-1, 1), random.uniform(-1, 1)) * m.get("spread", 150)
+            # rain_n / rain_spread let a combo move (tele_fn="rain") keep n / spread for its bullets
+            for i in range(m.get("rain_n", m.get("n", 5))):
+                off = (pygame.Vector2(random.uniform(-1, 1), random.uniform(-1, 1))
+                       * m.get("rain_spread", m.get("spread", 150)))
                 if i == 0:
                     off = pygame.Vector2(0, 0)  # one always right on you - keep moving
                 life = windup + i * m.get("stagger", 0.12)
@@ -361,7 +363,10 @@ def execute(e, m, c):
 # ----------------------------------------------------------- the tables --
 def M(name, fn, windup=0.25, cd=2.0, tele=None, sfx=None, **kw):
     if tele is None:
-        tele = "glow"
+        # ordinary shots (aimed / fans / volleys / sine / homers) get NO visual hint -
+        # only dangerous moves carry a telegraph (see TELEGRAPHED / is_dangerous)
+        tele = "none"
+        windup = min(windup, 0.12)
     d = dict(name=name, fn=fn, windup=windup, cd=cd, tele=tele, sfx=sfx or _DEFAULT_SFX.get(fn, "shot"))
     d.update(kw)
     return d
@@ -378,27 +383,20 @@ _DEFAULT_SFX = {
 _LAND_RING = dict(n=10, gaps=2, gap_w=2, speed=0.75)
 
 ATTACKS = {
-    # ---------------- trash ----------------
-    "imp": [M("Ember Flick", "fan", lead=True, speed=1.2, cd=1.3),
-            M("Cinder Triplet", "fan", windup=0.35, cd=4.5, repeat=3, gap=0.12, lead=True, speed=1.25)],
-    "goblin": [M("Rock Throw", "fan", cd=1.2),
-               M("Rock Lob", "lob", windup=0.8, cd=6.0, tele="zone", r=58, dmgm=1.3)],
-    "bat": [M("Screech Swoop", "dash", windup=0.3, cd=3.5, tele="dash", dash_time=0.4, dash_mult=2.6,
-              end=dict(fn="fan", n=1, speed=1.1))],
-    "ember_wisp": [M("Ember Trail", "mines", windup=0.3, cd=3.5, n=2, spread=70, speed=0.6, pop=3),
-                   M("Wisp Dart", "dash", windup=0.35, cd=5.0, tele="dash", dash_time=0.35, dash_mult=2.4)],
-    "fury_shard": [M("Shard Triplet", "fan", n=3, spread=16, cd=1.8, speed=1.1)],
-    "rubble_crawler": [M("Grenade", "lob", windup=0.9, cd=4.0, tele="zone", r=55, dmgm=1.2),
-                       M("Pebble", "fan", cd=1.5)],
-    "spite_spirit": [M("Spite Orb", "homing", windup=0.4, cd=3.2, n=1, speed=0.55, turn=1.4)],
-    "tide_wisp": [M("Drift Shot", "sine", cd=1.8, amp=22, freq=6.0)],
-    "pearl_acolyte": [M("Pearl Stop", "mines", windup=0.3, cd=3.5, n=3, spread=40, speed=0.9, pop=3,
-                        color=(240, 240, 255))],
-    "brine_crawler": [M("Bubble Lob", "lob", windup=0.8, cd=4.2, tele="zone", r=52, dmgm=1.1, sfx="bubble"),
-                      M("Brine Spit", "fan", n=2, spread=12, cd=1.8)],
-    "abyssal_chorister": [M("Sound Wall", "wall", windup=0.5, cd=4.0, tele="line", n=7, speed=0.6,
-                            tele_len=260, tele_w=150),
-                          M("Hum", "fan", cd=1.6, speed=0.9)],
+    # ---------------- trash: simple, readable basics - no specials, no telegraphs ----------------
+    # (the common fodder; named specials/telegraphs are reserved for elites, mini-bosses and bosses)
+    "imp": [M("Ember Flick", "fan", lead=True, speed=1.15, cd=1.3, sfx="shot_small")],
+    "goblin": [M("Rock Throw", "fan", cd=1.3, sfx="shot_small")],
+    "bat": [M("Screech Dart", "fan", cd=1.6, speed=1.1, sfx="shot_small")],
+    "ember_wisp": [M("Ember Pair", "fan", cd=1.8, repeat=2, gap=0.14, speed=1.0, sfx="shot_small")],
+    "fury_shard": [M("Shard Triplet", "fan", n=3, spread=16, cd=1.9, speed=1.05, sfx="shot_small")],
+    "rubble_crawler": [M("Heavy Pebble", "fan", cd=1.9, speed=0.7, dmgm=1.4, size=3, sfx="shot_small")],
+    "spite_spirit": [M("Spite Wave", "sine", cd=1.9, amp=18, sfx="shot_small")],
+    "tide_wisp": [M("Drift Shot", "sine", cd=1.8, amp=22, freq=6.0, sfx="shot_small")],
+    "pearl_acolyte": [M("Pearl Pair", "fan", cd=1.9, repeat=2, gap=0.16, lead=True, color=(240, 240, 255),
+                        sfx="shot_small")],
+    "brine_crawler": [M("Brine Boomerang", "boomerang", cd=2.4, offs=(0,), sfx="shot_small")],
+    "abyssal_chorister": [M("Hum Fan", "fan", n=3, spread=20, cd=1.9, speed=0.85, sfx="shot_small")],
     # ---------------- outer biomes ----------------
     "thornling": [M("Seed Pods", "mines", windup=0.4, cd=3.0, n=3, spread=60, pop=4),
                   M("Thorn", "fan", cd=1.6)],
@@ -434,7 +432,7 @@ ATTACKS = {
                    M("Spit", "fan", cd=1.6, speed=1.0)],
     "cinder_wisp": [M("Kindling", "accel", cd=1.6, n=1),
                     M("Flare Fan", "accel", windup=0.35, cd=4.5, n=3, spread=30)],
-    "panther": [M("Pounce", "dash", windup=0.4, cd=3.5, tele="dash", dash_time=0.35, dash_mult=3.4,
+    "panther": [M("Claw Flick", "fan", n=2, spread=14, cd=1.6, lead=True), M("Pounce", "dash", windup=0.4, cd=3.5, tele="dash", dash_time=0.35, dash_mult=3.4,
                   end=dict(fn="fan", n=3, spread=70, speed=0.9, life=0.5))],
     "vine_serpent": [M("Serpent Stream", "sine", cd=2.2, repeat=5, gap=0.12, amp=30, phase_step=False),
                      M("Vine Snare", "fan", windup=0.4, cd=5.0, tele="line", speed=1.2, use_tele=True,
@@ -452,16 +450,16 @@ ATTACKS = {
                       M("Shard Split", "split", cd=2.5)],
     "cave_lurker": [M("Ambush", "fan", windup=0.2, cd=2.4, n=5, spread=34, life=0.9, speed=1.1, sfx="shotgun"),
                     M("Lurker Lunge", "dash", windup=0.35, cd=5.0, tele="dash", dash_time=0.3, dash_mult=3.2)],
-    "deep_stalker": [M("Sniper Shot", "fan", windup=0.8, cd=3.0, tele="line", lead=True, use_tele=True,
+    "deep_stalker": [M("Quick Shot", "fan", cd=1.5, speed=1.2), M("Sniper Shot", "fan", windup=0.8, cd=3.0, tele="line", lead=True, use_tele=True,
                        speed=1.7, size=1, sfx="beam")],
     # ---------------- Reforging island elites ----------------
-    "shard_sentinel": [M("Cross Beam", "fan", windup=0.45, cd=3.0, tele="ring", tele_r=60, n=4, spread=270,
+    "shard_sentinel": [M("Shard Burst", "fan", n=3, spread=20, cd=1.7, repeat=2, gap=0.2), M("Cross Beam", "fan", windup=0.45, cd=3.0, tele="ring", tele_r=60, n=4, spread=270,
                          repeat=5, gap=0.15, sweep_step=9, speed=0.85)],
-    "echo_knight": [M("Echo Strike", "fan", cd=1.6, repeat=2, gap=0.5, speed=1.1)],
+    "echo_knight": [M("Echo Lance", "beam", windup=0.6, cd=4.5, tele="line", n=5, lead=True), M("Echo Strike", "fan", cd=1.6, repeat=2, gap=0.5, speed=1.1)],
     "shattered_golem": [M("Golem Slam", "slam", windup=0.8, cd=6.0, tele="zone", r=105, dmgm=1.2,
                           burst=dict(kind="half", n=7)),
                         M("Splitting Stone", "split", cd=2.4)],
-    "fracture_hound": [M("Zigzag Charge", "dash", windup=0.4, cd=3.0, tele="dash", dash_time=0.35,
+    "fracture_hound": [M("Fracture Bite", "fan", n=3, spread=26, cd=1.6, life=0.8), M("Zigzag Charge", "dash", windup=0.4, cd=3.0, tele="dash", dash_time=0.35,
                          dash_mult=3.2, end=dict(fn="fan", n=3, spread=36))],
     "stone_revenant": [M("Orbit Shards", "accel", windup=0.5, cd=4.0, tele="ring", tele_r=55, n=4, spread=60,
                          speed=0.2, accel=380),
@@ -473,14 +471,14 @@ ATTACKS = {
     "coral_sentinel": [M("Coral Buckshot", "fan", n=5, spread=26, cd=2.2, sfx="shotgun"),
                        M("Reef Spiral", "fan", cd=4.0, repeat=6, gap=0.16, n=2, spread=180, sweep_step=28,
                          speed=0.7)],
-    "drowned_custodian": [M("Anchor Toss", "boomerang", cd=2.6, offs=(0,), dmgm=1.4)],
+    "drowned_custodian": [M("Undertow Slam", "slam", windup=0.8, cd=6.0, tele="zone", r=100, dmgm=1.2, burst=dict(kind="half", n=7)), M("Anchor Toss", "boomerang", cd=2.6, offs=(0,), dmgm=1.4)],
     "kelp_stalker": [M("Kelp Stream", "sine", cd=2.2, repeat=4, gap=0.13),
                      M("Snare Bolt", "fan", windup=0.4, cd=5.0, tele="line", use_tele=True, speed=1.2,
                        bkw=dict(status_effect="root"))],
     "shellback_guardian": [M("Shell Up", "shell", windup=0.4, cd=7.0, tele="ring", tele_r=80, shell=2.0,
                              then=dict(fn="ring", n=12, gaps=2, gap_w=2, speed=0.7)),
                            M("Shell Shot", "fan", cd=1.7, speed=0.9, dmgm=1.2)],
-    "siren_wraith": [M("Siren Waves", "sine", cd=1.9, repeat=3, gap=0.2, amp=40, freq=4.0)],
+    "siren_wraith": [M("Lure", "homing", cd=3.6, n=2, speed=0.55, turn=1.5), M("Siren Waves", "sine", cd=1.9, repeat=3, gap=0.2, amp=40, freq=4.0)],
     "choir_warden": [M("Choir Charge", "dash", windup=0.5, cd=4.5, tele="dash", dash_time=0.45, dash_mult=3.0),
                      M("Wave Arc", "half_ring", windup=0.45, cd=4.0, tele="ring", tele_r=70, n=7, arc=120),
                      M("Call the Tide", "summon", windup=0.6, cd=14.0, tele="ring", tele_r=70, kind="tide_wisp",
@@ -493,7 +491,7 @@ ATTACKS.update({
                           burst=dict(kind="ring", n=12, gaps=2, gap_w=2, speed=0.7)),
                         M("Flame Sweep", "spray", windup=0.5, cd=4.0, tele="cone", arc=70, repeat=12, gap=0.07),
                         M("Ember Rain", "rain", windup=0.9, cd=7.0, tele="zone", n=6, r=48, phase=2),
-                        M("Cinder Fist", "fan", n=3, spread=20, cd=1.8)],
+                        M("Cinder Fist", "fan", n=3, spread=20, cd=1.6, lead=True, repeat=2, gap=0.22)],
     "rubble_warlord": [M("Triple Charge", "dash", windup=0.5, cd=5.0, tele="dash", dash_time=0.4, dash_mult=3.0,
                          end=dict(fn="fan", n=5, spread=50)),
                        M("Boulder Toss", "lob", windup=0.9, cd=4.0, tele="zone", r=72, dmgm=1.3),
@@ -549,9 +547,10 @@ ATTACKS.update({
                spread=270, sweep_step=11, speed=0.8, phase=2),
              M("Crystal Rage", "ring", windup=1.1, cd=9.0, tele="ring", tele_r=160, n=20, gaps=3, gap_w=2,
                speed=0.85, p2=True)],
-    "frost_monarch": [M("Ice Lances", "beam", windup=0.6, cd=3.0, tele="line", n=5),
+    "frost_monarch": [M("Ice Lances", "beam", windup=0.65, cd=3.4, tele="line", n=5, lead=True),
                       M("Blizzard", "fan", windup=0.35, cd=4.5, repeat=10, gap=0.07, sweep_step=10, n=2,
                         spread=24, speed=0.9, color=(170, 220, 255)),
+                      M("Hailstones", "fan", n=3, spread=18, cd=2.0, color=(200, 235, 255)),
                       M("Frozen Floor", "rain", windup=0.9, cd=6.0, tele="zone", n=5, r=50, phase=2),
                       M("Glacial Nova", "ring", windup=1.2, cd=9.0, tele="ring", tele_r=170, n=22, gaps=3,
                         gap_w=2, speed=0.8, p2=True)],
@@ -593,12 +592,79 @@ ATTACKS.update({
 })
 
 
+# telegraph styles that mark a DANGEROUS move (ground AoE, slam/nova, beam/lance line, dash/leap, big
+# boss specials). "none" = an ordinary shot with no visual hint at all.
+TELEGRAPHED = ("zone", "ring", "cone", "line", "dash", "glow")
+
+
+def is_dangerous(move):
+    return move.get("tele", "none") in TELEGRAPHED
+
+
+# ------------------------------------------------ special-mob hardening --
+# Elites, mini-bosses and bosses are the "special" mobs: their moves are sped up,
+# densified (more bullets -> narrower, but never removed, gaps) and come back
+# sooner; bosses/mini-bosses also get a Crossfire combo (a predictive burst while
+# ground AoEs land around you). Trash keeps its plain basics untouched.
+HARDEN = {
+    "elite": dict(speed=1.18, cd=0.75, fan_n=1, ring_mult=1.2, wall_n=2, repeat=0),
+    "boss": dict(speed=1.2, cd=0.72, fan_n=1, ring_mult=1.3, wall_n=2, repeat=0),
+}
+FAST_CD = 1.5  # moves already on a short cycle (primaries) only get 10% faster, not the full factor
+_NO_SPEEDUP = ("dash", "leap", "summon", "shell", "root_pulse", "lob", "slam", "rain", "eruption")
+# each primitive's own default bullet speed (so hardening scales the REAL speed)
+_PRIM_SPEED = {"fan": 1.0, "ring": 0.8, "half_ring": 0.85, "wall": 0.7, "beam": 1.7, "sine": 0.8,
+               "homing": 0.5, "accel": 0.4, "mines": 1.0, "split": 0.8, "boomerang": 1.0, "spray": 1.1}
+
+
+def _harden_move(m, h):
+    m = dict(m)
+    m["cd"] = round(m["cd"] * (0.9 if m["cd"] < FAST_CD else h["cd"]), 2)
+    if m["fn"] not in _NO_SPEEDUP:
+        m["speed"] = round(m.get("speed", _PRIM_SPEED.get(m["fn"], 1.0)) * h["speed"], 3)
+    if m["fn"] == "fan" and m.get("n", 1) >= 3:
+        m["n"] = m["n"] + h["fan_n"]
+    elif m["fn"] == "fan" and m.get("n", 1) == 1 and m.get("repeat", 1) == 1 and not is_dangerous(m):
+        m["n"], m["spread"] = 2, 9  # a special mob's plain shot becomes a tight double
+    if m["fn"] in ("ring", "half_ring"):
+        m["n"] = int(round(m.get("n", 10) * h["ring_mult"]))
+        if m["fn"] == "ring":
+            m["gaps"] = max(2, m.get("gaps", 2))  # the safe gaps always stay
+    if m["fn"] == "wall":
+        m["n"] = m.get("n", 7) + h["wall_n"]
+    if m.get("repeat", 1) > 1 and h["repeat"]:
+        m["repeat"] = m["repeat"] + h["repeat"]
+    if is_dangerous(m):
+        m["windup"] = round(max(0.35, m.get("windup", 0.3) * 0.9), 2)  # still readable
+    return m
+
+
+def _crossfire():
+    return M("Crossfire", "fan", windup=0.7, cd=6.5, tele="zone", tele_fn="rain", rain_n=3, rain_spread=120,
+             r=52, n=3, spread=22, repeat=3, gap=0.16, lead=True, speed=1.25, sfx="shotgun", phase=2)
+
+
+_HARDENED = {}
+
+
 def moves_for(kind):
     """The move list for an enemy kind (phase-2 room kinds reuse the base kind's
     moves, with their p2-only move enabled), or None for kinds with no set
-    (neutral wildlife / the totem)."""
+    (neutral wildlife / the totem). Elite / boss sets come back hardened."""
     base = kind[:-7] if kind.endswith("_phase2") else kind
-    return ATTACKS.get(base)
+    if base in _HARDENED:
+        return _HARDENED[base]
+    moves = ATTACKS.get(base)
+    if moves is None:
+        return None
+    rank = _E().ENEMY_KINDS.get(base, {}).get("rank", "trash")
+    h = HARDEN.get(rank)
+    if h is not None:
+        moves = [_harden_move(m, h) for m in moves]
+        if rank == "boss" and not any(m["name"] == "Crossfire" for m in moves):
+            moves.append(_crossfire())
+    _HARDENED[base] = moves
+    return moves
 
 
 def is_phase2_room(kind):

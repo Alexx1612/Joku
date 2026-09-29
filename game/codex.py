@@ -57,7 +57,7 @@ def cap(text):
 
 
 _TELE_WORDS = {"zone": "ground zone", "line": "aim line", "cone": "cone", "ring": "ring warning",
-               "dash": "dash lane", "glow": "glow"}
+               "dash": "dash lane", "glow": "glow"}  # "none" (ordinary shots) has no tag
 
 
 def attack_moves(kind):
@@ -68,9 +68,10 @@ def attack_moves(kind):
     for m in moves:
         if m.get("p2") and not kind.endswith("_phase2"):
             continue
-        tag = _TELE_WORDS.get(m.get("tele", "glow"), "glow")
-        extra = ", enraged" if m.get("phase", 1) == 2 else (", phase-2 room" if m.get("p2") else "")
-        out.append(f"{m['name']} ({tag}{extra})")
+        tag = _TELE_WORDS.get(m.get("tele", "none"))
+        extra = "enraged" if m.get("phase", 1) == 2 else ("phase-2 room" if m.get("p2") else "")
+        bits = ", ".join(b for b in (tag, extra) if b)
+        out.append(f"{m['name']} ({bits})" if bits else m["name"])
     return out
 
 
@@ -133,8 +134,12 @@ def _enemy_entry(kind, d, biomes, extra):
             text = "Attacks: " + "; ".join(moves) + "."
         else:
             text = f"It {PATTERN_TEXT.get(d.get('pattern'), 'attacks you')}."
-        text += (" Every attack is telegraphed: a glow on the mob, plus a red lane (aimed / dash), an"
-                 " orange ground zone (area attack) or purple (homing).")
+        if rank == "trash":
+            text += " Common fodder: plain shots only, no warning before it fires - just keep moving."
+        else:
+            text += (" A special mob - its moves are fast and dense. Only the DANGEROUS ones are"
+                     " telegraphed: a red lane (aim line / dash), an orange ground zone (area attack)"
+                     " or a ring warning; ordinary shots come without warning.")
         if rank == "boss":
             text += " Below half HP it enrages: new moves, and everything comes faster."
         if kind.endswith("_phase2"):

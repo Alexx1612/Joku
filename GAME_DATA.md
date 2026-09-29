@@ -176,30 +176,35 @@ below already include the global x1.22 enemy damage multiplier.
 | mad_god (Forge, phase 1) | 2200 | 6-12 | 2.0 |
 | mad_god_phase2 | 3850 | 6-13 | 2.0 |
 
-**Attack sets** (`game/enemy_attacks.py` `ATTACKS`; `*` = added when enraged below 50% HP, `+` = phase-2 room only;
-telegraph in brackets: line/dash = red, zone/cone = orange, homing = purple, no bracket = glow on the mob only):
+**Attack sets** (`game/enemy_attacks.py`: `ATTACKS` + `moves_for()`, which HARDENS elite/boss sets - x1.18/x1.2
+bullet speed, x0.75/x0.72 cooldowns (x0.9 for moves already under 1.5 s), +1 bullet on fans, x1.2/x1.3 ring density
+with the gaps kept, +2 on walls, a plain single shot becomes a tight double; bosses/mini-bosses also get the enraged
+**Crossfire** combo (a predictive 3x burst while 3 ground zones land around you). `*` = enraged below 50% HP
+(cooldowns x0.6 after the roar), `+` = phase-2 room only. Only DANGEROUS moves are telegraphed, shown in brackets:
+line/dash = red, zone/cone/ring = orange; no bracket = no warning at all. Trash has plain shots only):
 
 | Kind | Moves |
 |---|---|
-| boss (Vault Guardian) | Aimed Shotgun, Grenade Barrage [zone], Gapped Spin* [ring], Crystal Rage+ [ring] |
-| frost_monarch | Ice Lances [line], Blizzard, Frozen Floor* [zone], Glacial Nova+ [ring] |
-| ash_behemoth | Behemoth Flame [cone], Magma Meteors [zone], Molten Charge* [dash], Eruption+ [zone] |
-| void_reaper | Scythe Boomerangs, Blink Slash [dash], Summon Shades*, Void Spiral+ [ring] |
-| thorn_warden | Root Pulse [zone], Thorn Walls [line], Thorn Shot, Seed Mines*, Vine Lash+ |
-| sand_wyrm | Sand Spit, Tail Sweep, Sandstorm* [ring], Dune Collapse+ [zone] |
-| mad_god | Star Shotgun, Minion Grenades [zone], Blade Burst [ring], Gathering Power* [ring], Madness Spiral+ [ring] |
-| cinder_colossus | Magma Slam [zone], Flame Sweep [cone], Cinder Fist, Ember Rain* [zone] |
-| choir_sovereign | Choir Wall [line], Echo Volley, Crescendo* [ring] |
-| rubble_warlord | Triple Charge [dash], Boulder Toss [zone], Rally* (summon) |
-| coral_leviathan | Tidal Beam [line], Bubble Mines, Surge Charge* [dash] |
-| ashreach_revenant | Soul Spiral, Grave Hands [zone], Ash Orbit* [ring] |
-| tideglass_warden | Mirror Lances [line], Glass Orbit [ring], Shatter Nova* [ring] |
-| thornrock_colossus | Quake [zone], Thorn Wall [line], Pebble Fan, Root Burst* [zone] |
-| driftbell_matriarch | Bell Toll [ring], Call the Tide (summon), Bell Chime, Drift Homers* |
-| ashenreach_devourer | Lunge Chain [dash], Maw Cone [cone], Split Spit* |
-| abyssal_choirmaster | Dirge Wall [line], Abyss Pull, Low Note, Silence* [zone] |
-| Realm elites & trash | goblin Rock Throw / Rock Lob [zone]; imp Ember Flick / Cinder Triplet; bat Screech Swoop [dash]; thornling Seed Pods / Thorn; scorpion Pincer Spray / Stinger [line]; dune_stalker Sand Burrow / Dune Lunge [dash]; yeti Snowball / Avalanche Slam [zone]; frost_sprite Icicle Weave / Frost Blink; ghost Wisp Pair / Fade; troll Club Bolt / Boulder Lob [zone]; bog_crawler Poison Glob [zone] / Bog Spiral; skeleton Bone Boomerangs / Rattle Burst; harpy Feather Strafe / Talon Dive [dash]; cliff_strider Cliff Leap [zone] / Rock Chip; salamander Flamethrower [cone] / Spit; cinder_wisp Kindling / Flare Fan; panther Pounce [dash]; vine_serpent Serpent Stream / Vine Snare [line]; ghoul Rot Orbs / Vomit [cone]; husk_wanderer Husk Wall [line] / Shamble Charge [dash]; frost_wraith Frost Sweep / Chill; glacier_shard Ice Lance [line] / Shard Split; cave_lurker Ambush / Lurker Lunge [dash]; deep_stalker Sniper Shot [line] |
-| Island elites & trash | cinder_warden Warden Flame [cone] / Cinder Grenade [zone] / Call the Embers; choir_warden Choir Charge [dash] / Wave Arc / Call the Tide; shard_sentinel Cross Beam; echo_knight Echo Strike; shattered_golem Golem Slam [zone] / Splitting Stone; fracture_hound Zigzag Charge [dash]; stone_revenant Orbit Shards / Grave Chip; coral_sentinel Coral Buckshot / Reef Spiral; drowned_custodian Anchor Toss; kelp_stalker Kelp Stream / Snare Bolt [line]; shellback_guardian Shell Up / Shell Shot; siren_wraith Siren Waves; ember_wisp Ember Trail / Wisp Dart [dash]; fury_shard Shard Triplet; rubble_crawler Grenade [zone] / Pebble; spite_spirit Spite Orb; tide_wisp Drift Shot; pearl_acolyte Pearl Stop; brine_crawler Bubble Lob [zone] / Brine Spit; abyssal_chorister Sound Wall [line] / Hum |
+| cinder_colossus | Magma Slam [zone], Flame Sweep [cone], Ember Rain* [zone], Cinder Fist, Crossfire* [zone] |
+| rubble_warlord | Triple Charge [dash], Boulder Toss [zone], Rally* [ring], Crossfire* [zone] |
+| ashreach_revenant | Soul Spiral, Grave Hands [zone], Ash Orbit* [ring], Crossfire* [zone] |
+| thornrock_colossus | Quake [zone], Thorn Wall [line], Root Burst* [zone], Pebble Fan, Crossfire* [zone] |
+| ashenreach_devourer | Lunge Chain [dash], Maw Cone [cone], Split Spit*, Crossfire* [zone] |
+| choir_sovereign | Choir Wall [line], Echo Volley, Crescendo* [ring], Crossfire* [zone] |
+| coral_leviathan | Tidal Beam [line], Bubble Mines, Surge Charge* [dash], Crossfire* [zone] |
+| tideglass_warden | Mirror Lances [line], Glass Orbit [ring], Shatter Nova* [ring], Crossfire* [zone] |
+| driftbell_matriarch | Bell Toll [ring], Call the Tide [ring], Drift Homers*, Bell Chime, Crossfire* [zone] |
+| abyssal_choirmaster | Dirge Wall [line], Abyss Pull, Silence* [zone], Low Note, Crossfire* [zone] |
+| boss (Vault Guardian) | Aimed Shotgun, Grenade Barrage [zone], Gapped Spin* [ring], Crystal Rage+ [ring], Crossfire* [zone] |
+| frost_monarch | Ice Lances [line], Blizzard, Hailstones, Frozen Floor* [zone], Glacial Nova+ [ring], Crossfire* [zone] |
+| ash_behemoth | Behemoth Flame [cone], Magma Meteors [zone], Molten Charge* [dash], Eruption+ [zone], Crossfire* [zone] |
+| void_reaper | Scythe Boomerangs, Blink Slash [dash], Summon Shades* [ring], Void Spiral+ [ring], Crossfire* [zone] |
+| thorn_warden | Root Pulse [zone], Thorn Walls [line], Seed Mines*, Vine Lash+, Thorn Shot, Crossfire* [zone] |
+| sand_wyrm | Sand Spit, Tail Sweep, Sandstorm* [ring], Dune Collapse+ [zone], Crossfire* [zone] |
+| mad_god | Star Shotgun, Minion Grenades [zone], Blade Burst [ring], Gathering Power* [ring], Madness Spiral+ [ring], Crossfire* [zone] |
+| Realm elites | thornling Seed Pods / Thorn; scorpion Pincer Spray / Stinger [line]; dune_stalker Sand Burrow [ring] / Dune Lunge [dash]; yeti Snowball / Avalanche Slam [zone]; frost_sprite Icicle Weave / Frost Blink; ghost Wisp Pair / Fade; troll Club Bolt / Boulder Lob [zone]; bog_crawler Poison Glob [zone] / Bog Spiral; skeleton Bone Boomerangs / Rattle Burst; harpy Feather Strafe / Talon Dive [dash]; cliff_strider Cliff Leap [zone] / Rock Chip; salamander Flamethrower [cone] / Spit; cinder_wisp Kindling / Flare Fan; panther Claw Flick / Pounce [dash]; vine_serpent Serpent Stream / Vine Snare [line]; ghoul Rot Orbs / Vomit [cone]; husk_wanderer Husk Wall [line] / Shamble Charge [dash]; frost_wraith Frost Sweep / Chill; glacier_shard Ice Lance [line] / Shard Split; cave_lurker Ambush / Lurker Lunge [dash]; deep_stalker Quick Shot / Sniper Shot [line] |
+| Island elites | shard_sentinel Shard Burst / Cross Beam [ring]; echo_knight Echo Lance [line] / Echo Strike; shattered_golem Golem Slam [zone] / Splitting Stone; fracture_hound Fracture Bite / Zigzag Charge [dash]; stone_revenant Orbit Shards [ring] / Grave Chip; cinder_warden Warden Flame [cone] / Cinder Grenade [zone] / Call the Embers [ring]; coral_sentinel Coral Buckshot / Reef Spiral; drowned_custodian Undertow Slam [zone] / Anchor Toss; kelp_stalker Kelp Stream / Snare Bolt [line]; shellback_guardian Shell Up [ring] / Shell Shot; siren_wraith Lure / Siren Waves; choir_warden Choir Charge [dash] / Wave Arc [ring] / Call the Tide [ring] |
+| Trash (plain shots, no telegraph) | imp Ember Flick; goblin Rock Throw; bat Screech Dart; ember_wisp Ember Pair; fury_shard Shard Triplet; rubble_crawler Heavy Pebble; spite_spirit Spite Wave; tide_wisp Drift Shot; pearl_acolyte Pearl Pair; brine_crawler Brine Boomerang; abyssal_chorister Hum Fan |
 
 Bullet motions: straight, boomerang, sine, accel (speed up / slow to a stop / stop-and-re-aim mines), homing (capped
 turn rate), split (bursts into shards when its life ends). Bosses and mini-bosses enrage below 50% HP with a 0.8 s
