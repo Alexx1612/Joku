@@ -189,3 +189,6 @@ etc.) is a fresh ask, not a continuation of an open item.
   don't silently pick one - note the conflict here and flag it to both
   writing sessions if they're still active (`ListAgents`), so the confusion is
   resolved once, not repeated by a future reader of just one of the two.
+
+---
+Session handoff (what the "v0.2 final touch" session did, conventions, open items): [../HANDOFF-v0.2-final-touch.md](../HANDOFF-v0.2-final-touch.md)
