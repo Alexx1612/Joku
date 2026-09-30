@@ -227,9 +227,16 @@ def apply_unlocks(player, name: str) -> None:
 def get_story_act(name: str) -> int:
     rec = load_account(name)
     try:
-        return max(0, int(rec.get("story_act", 0))) if rec else 0
+        act = max(0, int(rec.get("story_act", 0))) if rec else 0
     except (TypeError, ValueError):
         return 0
+    if rec and act and rec.get("story_v") is None:
+        # an account from the old five-act arc: map its checkpoint once and remember that
+        from game import story
+        act = story.migrate_act(act)
+        rec = dict(rec, story_act=act, story_v=story.STORY_VERSION)
+        _save_account(name, rec)
+    return act
 
 
 def set_story_act(name: str, act: int) -> int:
@@ -237,7 +244,9 @@ def set_story_act(name: str, act: int) -> int:
     have = get_story_act(name)
     if act <= have:
         return have
+    from game import story
     rec = dict(load_account(name) or touch_account(name))
     rec["story_act"] = int(act)
+    rec["story_v"] = story.STORY_VERSION
     _save_account(name, rec)
     return int(act)

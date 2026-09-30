@@ -75,7 +75,9 @@ class AttackCtx:
 
 
 def _dir_for(e, c, m):
-    if m.get("use_tele") and c.tele_dir is not None:
+    # a telegraphed move ALWAYS fires where its warning pointed (the direction is
+    # fixed at wind-up start) - never re-aimed at wherever the player moved since
+    if c.tele_dir is not None:
         return pygame.Vector2(c.tele_dir)
     if m.get("lead"):
         v = c.lead - e.pos
@@ -96,20 +98,31 @@ def p_fan(e, c, m):
                              motion=m.get("motion", "straight"), **m.get("bkw", {})))
 
 
-def p_ring(e, c, m):
-    """A ring WITH gaps (never a solid wall of bullets) - `gaps` holes of
-    `gap_w` bullets each, rotated so a gap faces a random side."""
+def _ring_skip(m):
     n = m.get("n", 12)
     gaps = m.get("gaps", 2)
     gap_w = m.get("gap_w", 2)
-    base = random.uniform(0, 360) if not m.get("aim_gap") else _dir_for(e, c, m).as_polar()[1]
+    if m.get("aim_gap"):  # the gap is centred ON you: stand still = safe, strafe = hit
+        return {((i - gap_w // 2) % n) for i in range(gap_w)} | {((n // 2 + i) % n) for i in range(gap_w)}
     skip = set()
     for g in range(gaps):
         start = int(g * n / gaps)
         for k in range(gap_w):
             skip.add((start + k) % n)
-    if m.get("aim_gap"):  # the gap is centred ON you: stand still = safe, strafe = hit
-        skip = {((i - gap_w // 2) % n) for i in range(gap_w)} | {((n // 2 + i) % n) for i in range(gap_w)}
+    return skip
+
+
+def p_ring(e, c, m):
+    """A ring WITH gaps (never a solid wall of bullets) - `gaps` holes of
+    `gap_w` bullets each. The rotation comes from the telegraph (tele_dir =
+    the ring's base angle, picked at wind-up start so the drawn spokes show the
+    real gaps); untelegraphed rings pick a random side."""
+    n = m.get("n", 12)
+    if c.tele_dir is not None:
+        base = pygame.Vector2(c.tele_dir).as_polar()[1]
+    else:
+        base = random.uniform(0, 360) if not m.get("aim_gap") else _dir_for(e, c, m).as_polar()[1]
+    skip = _ring_skip(m)
     origin = c.tele_point if (m.get("at_point") and c.tele_point is not None) else e.pos
     for i in range(n):
         if i in skip:
@@ -136,7 +149,10 @@ def p_wall(e, c, m):
     spacing = m.get("spacing", 26)
     d = _dir_for(e, c, m)
     perp = d.rotate(90)
-    gap = random.randint(1, n - 2)
+    gap = getattr(e, "_wall_gap", None)  # picked (and drawn) at wind-up start
+    e._wall_gap = None
+    if gap is None or not (1 <= gap <= n - 2):
+        gap = random.randint(1, n - 2)
     for i in range(n):
         if abs(i - gap) <= m.get("gap_w", 0):
             continue
@@ -230,60 +246,163 @@ def p_spray(e, c, m):
 
 
 def _zone(e, shape, pos, life, color, dmg_mult=0.0, r=60, length=0, width=0, ang=0.0, sfx="slam",
-          burst=None, effect=None, shake=True):
+          burst=None, effect=None, shake=True, extra=None):
     dmg = 0
     if dmg_mult > 0:
         dmg = max(1, int(round(random.randint(*e.dmg) * dmg_mult)))
-    e._new_zones.append(dict(shape=shape, x=float(pos[0]), y=float(pos[1]), r=float(r), length=float(length),
-                             width=float(width), ang=float(ang), life=float(life), t=0.0, color=color,
-                             dmg=dmg, sfx=sfx, burst=burst, effect=effect, shake=shake and dmg > 0,
-                             src_rank=e.rank, src=e))
+    z = dict(shape=shape, x=float(pos[0]), y=float(pos[1]), r=float(r), length=float(length),
+             width=float(width), ang=float(ang), life=float(life), t=0.0, color=color,
+             dmg=dmg, sfx=sfx, burst=burst, effect=effect, shake=shake and dmg > 0,
+             src_rank=e.rank, src=e)
+    if extra:
+        z.update(extra)
+    e._new_zones.append(z)
+    return z
+
+
+# each primitive's default bullet lifetime (so a telegraph can be drawn as long as the real shot flies)
+_PRIM_LIFE = {"fan": 2.4, "ring": 2.4, "half_ring": 2.4, "wall": 3.0, "beam": 1.6, "sine": 3.0,
+              "homing": 3.2, "accel": 2.6, "mines": 2.6, "split": 1.1, "boomerang": 2.2, "spray": 0.8}
+SPOKE_MAX_LEN = 150.0  # spokes point the way (and show the gaps); they don't need to cross the screen
+
+
+def reach(m):
+    """How far a move's bullets really travel (px) - telegraph lanes are drawn this long."""
+    fn = m["fn"]
+    life = m.get("life", _PRIM_LIFE.get(fn, 2.4))
+    if fn == "accel":
+        return BASE_SPEED * m.get("max_speed", 1.6) * life * 0.6
+    return BASE_SPEED * m.get("speed", _PRIM_SPEED.get(fn, 1.0)) * life
+
+
+def spoke_angles(m, d):
+    """Every direction (degrees) the bullets of move `m` will fly when it fires
+    along base direction `d` - including every step of a sweep. The spokes
+    telegraph draws exactly these, so the warning can never lie."""
+    fn = m["fn"]
+    base = pygame.Vector2(d).as_polar()[1]
+    if fn == "ring":
+        n = m.get("n", 12)
+        skip = _ring_skip(m)
+        return [base + 360 * i / n for i in range(n) if i not in skip]
+    if fn == "half_ring":
+        n = max(2, m.get("n", 7))
+        arc = m.get("arc", 180)
+        return [base - arc / 2 + arc * i / (n - 1) for i in range(n)]
+    offs = [0.0]
+    if fn in ("fan", "accel", "mines"):
+        n = m.get("n", 1)
+        spread = m.get("spread", 50 if fn == "mines" else 0)
+        offs = [0.0 if n == 1 else -spread / 2 + spread * i / (n - 1) for i in range(n)]
+    elif fn == "homing":
+        n = m.get("n", 2)
+        offs = [0.0 if n == 1 else -30 + 60 * i / (n - 1) for i in range(n)]
+    elif fn == "boomerang":
+        offs = [float(o) for o in m.get("offs", (-15, 15))]
+    sweep = m.get("sweep_step", 0) if fn == "fan" else 0
+    steps = range(m.get("repeat", 1)) if sweep else (0,)
+    out = []
+    for s in steps:
+        for o in offs:
+            a = base + sweep * s + o
+            if not any(abs(((a - b) + 180) % 360 - 180) < 0.5 for b in out):
+                out.append(a)
+    return out
+
+
+def _burst_move(burst):
+    bm = dict(burst)
+    bm["fn"] = "half_ring" if burst.get("kind") == "half" else "ring"
+    return bm
 
 
 # ------- telegraph builders: called at WIND-UP START, before the move fires --
 
 def tele_for(e, m, target, lead, aim):
-    """Pushes the move's telegraph zone(s) and returns (tele_dir, tele_point)."""
+    """Pushes the move's telegraph zone(s) and returns (tele_dir, tele_point).
+    Everything random or aimed about the move (direction, ring gaps, wall gap,
+    slam-burst facing) is decided HERE and stored, and the move fires exactly
+    that later - moving during the wind-up never re-aims a telegraphed attack."""
     tele = m.get("tele", "none")
     windup = m.get("windup", 0.3)
     fn = m.get("tele_fn", m["fn"])
+    run = windup + max(0, m.get("repeat", 1) - 1) * m.get("gap", 0.15)  # wind-up + every repeat step
+
+    def toward(p):
+        d = pygame.Vector2(p) - e.pos
+        return d.normalize() if d.length_squared() > 1 else pygame.Vector2(aim)
+
+    br = e._bullet_radius() + m.get("size", 0)
     if tele == "line":
-        d = (lead - e.pos) if m.get("lead") else (target - e.pos)
-        d = d.normalize() if d.length_squared() > 1 else pygame.Vector2(aim)
-        _zone(e, "line", e.pos, windup, RED, length=m.get("tele_len", 420), width=m.get("tele_w", 14),
-              ang=d.as_polar()[1], sfx=None)
+        d = toward(lead if m.get("lead") else target)
+        length = max(m.get("tele_len", 420), reach(m))
+        if m["fn"] == "wall":
+            n = m.get("n", 7)
+            spacing = m.get("spacing", 26)
+            gap = random.randint(1, n - 2)
+            e._wall_gap = gap
+            width = (n - 1) * spacing + 2 * br + 8
+            gap_px = (2 * m.get("gap_w", 0) + 1) * spacing - 2 * br
+            _zone(e, "line", e.pos, windup, RED, length=length, width=width, ang=d.as_polar()[1], sfx=None,
+                  extra=dict(gap_off=(gap - (n - 1) / 2) * spacing, gap_w=max(8.0, gap_px)))
+        else:
+            _zone(e, "line", e.pos, run, RED, length=length, width=max(m.get("tele_w", 14), 2 * br + 4),
+                  ang=d.as_polar()[1], sfx=None)
         return d, None
     if tele == "cone":
-        d = (target - e.pos)
-        d = d.normalize() if d.length_squared() > 1 else pygame.Vector2(aim)
-        _zone(e, "cone", e.pos, windup, ORANGE, r=m.get("tele_len", 170), width=m.get("arc", 40),
-              ang=d.as_polar()[1], sfx=None)
+        d = toward(target)
+        _zone(e, "cone", e.pos, run, ORANGE, r=max(m.get("tele_len", 170), reach(m) * 1.12),
+              width=m.get("arc", 40) + 10, ang=d.as_polar()[1], sfx=None)
         return d, None
     if tele == "dash":
-        d = (target - e.pos)
-        d = d.normalize() if d.length_squared() > 1 else pygame.Vector2(aim)
+        d = toward(target)
         dist = e.speed * m.get("dash_mult", 3.2) * m.get("dash_time", 0.45)
         _zone(e, "line", e.pos, windup, RED, length=dist + e.radius, width=max(18, e.radius * 2),
               ang=d.as_polar()[1], sfx=None)
         return d, None
     if tele == "ring":
-        _zone(e, "circle", e.pos, windup, ORANGE, r=m.get("tele_r", 90), sfx=None)
-        return None, None
+        mm = m.get("then") if m["fn"] == "shell" else m
+        if m["fn"] == "summon" or mm is None or mm["fn"] not in _PRIM_LIFE:
+            _zone(e, "circle", e.pos, windup, ORANGE, r=m.get("tele_r", 90), sfx=None)  # a summoning circle
+            return None, None
+        if mm["fn"] == "ring" and not mm.get("aim_gap"):
+            d = pygame.Vector2(1, 0).rotate(random.uniform(0, 360))  # the ring's rotation = where its gaps are
+        else:
+            d = toward(lead if mm.get("lead") else target)
+        life = run + (m.get("shell", 1.5) if m["fn"] == "shell" else 0.0)
+        _zone(e, "spokes", e.pos, life, ORANGE, r=min(reach(mm), SPOKE_MAX_LEN), sfx=None,
+              extra=dict(angles=spoke_angles(mm, d)))
+        return d, None
     if tele == "zone":
-        if fn == "slam":
-            _zone(e, "circle", e.pos, windup, ORANGE, dmg_mult=m.get("dmgm", 1.3), r=m.get("r", 110),
-                  sfx=m.get("sfx", "slam"), burst=m.get("burst"))
-            return None, pygame.Vector2(e.pos)
+        if fn in ("slam", "leap"):
+            point = pygame.Vector2(e.pos) if fn == "slam" else pygame.Vector2(lead)
+            life = windup if fn == "slam" else windup + m.get("dash_time", 0.35)
+            burst = m.get("burst")
+            extra = None
+            if burst:
+                # the burst's facing is fixed now and drawn as spokes from the impact point
+                if burst.get("kind") == "half":
+                    bd = pygame.Vector2(target) - point
+                    bd = bd.normalize() if bd.length_squared() > 1 else pygame.Vector2(aim)
+                else:
+                    bd = pygame.Vector2(1, 0).rotate(random.uniform(0, 360))
+                extra = dict(burst_ang=bd.as_polar()[1])
+                bm = _burst_move(burst)
+                _zone(e, "spokes", point, life, ORANGE, r=min(reach(bm), SPOKE_MAX_LEN), sfx=None,
+                      extra=dict(angles=spoke_angles(bm, bd)))
+            _zone(e, "circle", point, life, ORANGE, dmg_mult=m.get("dmgm", 1.3),
+                  r=m.get("r", 110 if fn == "slam" else 70), sfx=m.get("sfx", "slam"), burst=burst, extra=extra)
+            if fn == "slam":
+                return None, point
+            return toward(point), point
         if fn == "lob":
             point = pygame.Vector2(lead if m.get("lead", True) else target)
             _zone(e, "circle", point, windup, ORANGE, dmg_mult=m.get("dmgm", 1.2), r=m.get("r", 60),
                   sfx=m.get("sfx", "lob"), burst=m.get("burst"))
             return None, point
         if fn == "rain":
-            # rain_n / rain_spread let a combo move (tele_fn="rain") keep n / spread for its bullets
-            for i in range(m.get("rain_n", m.get("n", 5))):
-                off = (pygame.Vector2(random.uniform(-1, 1), random.uniform(-1, 1))
-                       * m.get("rain_spread", m.get("spread", 150)))
+            for i in range(m.get("n", 5)):
+                off = (pygame.Vector2(random.uniform(-1, 1), random.uniform(-1, 1)) * m.get("spread", 150))
                 if i == 0:
                     off = pygame.Vector2(0, 0)  # one always right on you - keep moving
                 life = windup + i * m.get("stagger", 0.12)
@@ -299,13 +418,8 @@ def tele_for(e, m, target, lead, aim):
                     _zone(e, "circle", p, windup + 0.35 * k, ORANGE, dmg_mult=m.get("dmgm", 1.0), r=36,
                           sfx=m.get("sfx", "slam") if i == 0 else None)
             return None, pygame.Vector2(e.pos)
-        if fn == "leap":
-            point = pygame.Vector2(lead)
-            _zone(e, "circle", point, windup + m.get("dash_time", 0.35), ORANGE, dmg_mult=m.get("dmgm", 1.3),
-                  r=m.get("r", 70), sfx=m.get("sfx", "slam"), burst=m.get("burst"))
-            d = point - e.pos
-            return (d.normalize() if d.length_squared() > 1 else pygame.Vector2(aim)), point
         if fn == "root_pulse":
+            # the drawn circle IS the root radius (RealmSim roots everyone inside m["r"] of the mob)
             _zone(e, "circle", e.pos, windup, (120, 220, 90), r=m.get("r", 170), sfx=m.get("sfx", "root"),
                   effect="root", shake=False)
             return None, pygame.Vector2(e.pos)
@@ -340,10 +454,11 @@ def p_shell(e, c, m):
     """Invulnerable for a moment (shell / fade / burrow feint), then an attack."""
     e._shell_t = m.get("shell", 1.5)
     e._shell_then = m.get("then")
+    e._shell_dir = c.tele_dir  # the follow-up fires where the wind-up's spokes pointed
 
 
 def p_root(e, c, m):
-    e._root_pulse = True
+    e._root_pulse = float(m.get("r", 170))  # the radius the wind-up circle showed
 
 
 PRIMITIVES = {
@@ -640,8 +755,10 @@ def _harden_move(m, h):
 
 
 def _crossfire():
-    return M("Crossfire", "fan", windup=0.7, cd=6.5, tele="zone", tele_fn="rain", rain_n=3, rain_spread=120,
-             r=52, n=3, spread=22, repeat=3, gap=0.16, lead=True, speed=1.25, sfx="shotgun", phase=2)
+    # every hit comes from the warned circles (it used to also fire predictive volleys that
+    # ignored its own warning - "leave the circle" while the real shots flew past it)
+    return M("Crossfire", "rain", windup=0.7, cd=6.5, tele="zone", n=6, spread=130, r=52, stagger=0.16,
+             dmgm=1.1, sfx="lob", phase=2)
 
 
 _HARDENED = {}

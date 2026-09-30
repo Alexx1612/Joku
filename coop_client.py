@@ -178,6 +178,12 @@ def _split_msg_target(rest):
     name, _, msg = rest.partition(" ")
     return name.strip('"'), msg.strip()
 
+# snapshot fields that are THIS-TICK-ONLY events (not state): a snapshot the render loop
+# never got to read must hand them on to the next one, and a snapshot read twice (the
+# render loop running faster than the server ticks) must not replay them
+ONE_SHOT_SNAPSHOT_KEYS = ("chats", "feed", "popups", "vfx", "sound", "mob_speech", "story_feed", "story_banners")
+
+
 class NetLink:
     """Background thread that keeps the latest server messages ready for the render loop."""
 
@@ -186,6 +192,8 @@ class NetLink:
         self.reader = MessageReader(sock)
         self.lock = threading.Lock()
         self.latest_snapshot = None
+        self._snap_read = False      # has the render loop already seen latest_snapshot's one-shot events?
+        self._snap_stale = None      # latest_snapshot with its one-shot events emptied (for re-reads)
         self.pending_map = None
         self.pending_areas = None
         self.vault_items = None
@@ -213,7 +221,15 @@ class NetLink:
                     t = msg.get("type")
                     if t == "snapshot":
                         with self.lock:
+                            prev = self.latest_snapshot
+                            if prev is not None and not self._snap_read:
+                                # the render loop never saw `prev` - carry its events forward
+                                for k in ONE_SHOT_SNAPSHOT_KEYS:
+                                    if prev.get(k):
+                                        msg[k] = list(prev[k]) + list(msg.get(k) or [])
                             self.latest_snapshot = msg
+                            self._snap_read = False
+                            self._snap_stale = None
                             # the realm/bonus map rides inside a snapshot message but is only
                             # sent once per zone-instance (see server.py's sent_map_id) - it's
                             # ~2-3MB of JSON at the current map size, big enough to take longer
@@ -269,8 +285,18 @@ class NetLink:
             self.error = str(e) or "send failed"
 
     def get_snapshot(self):
+        """The newest snapshot. Its one-shot events (chat lines, sounds, popups...) are
+        handed out exactly once - a re-read of the same snapshot gets them empty."""
         with self.lock:
-            return self.latest_snapshot
+            snap = self.latest_snapshot
+            if snap is None:
+                return None
+            if not self._snap_read:
+                self._snap_read = True
+                return snap
+            if self._snap_stale is None:
+                self._snap_stale = dict(snap, **{k: [] for k in ONE_SHOT_SNAPSHOT_KEYS if k in snap})
+            return self._snap_stale
 
     def pop_pending_areas(self):
         with self.lock:

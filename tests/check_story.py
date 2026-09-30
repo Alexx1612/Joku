@@ -29,6 +29,7 @@ from game import accounts, characters, achievements, story, world
 from game import realm_sim as rs
 from game.realm_sim import RealmSim, FORGE_DIFFICULTY, ISLAND_NAMES, ISLAND_MINI_BOSS
 from game.entities import Player, Enemy, ENEMY_KINDS
+from game.constants import TILE
 
 accounts.ACCOUNTS_DIR = tempfile.mkdtemp(prefix="rr_story_acc_")
 characters.CHAR_DIR = tempfile.mkdtemp(prefix="rr_story_chr_")
@@ -64,7 +65,11 @@ def _shot(surf, name):
 
 
 def check_transitions_through_every_act():
-    sp = story.StoryProgress()
+    S = story
+    sp = S.StoryProgress()
+    assert len(S.ACTS) == 7 and S.FINAL_ACT == 7
+    assert S.ACTS[S.ACT_TOUR]["title"] == "Act I: The Grand Tour"
+    assert not any("Rim" in a["title"] or "Rim" in a["done"] for a in S.ACTS)
     assert sp.act == 0 and sp.wants("talk") and not sp.wants("island", 3)
     sp.on_event("talk")
     sp.on_event("talk")  # a repeat never double-counts
@@ -72,37 +77,130 @@ def check_transitions_through_every_act():
     sp.on_event("zone", "bazaar")  # wrong key ignored
     assert sp.act == 0
     sp.on_event("zone", "realm")
-    assert sp.act == 1 and sp.just_completed == [0] and sp.done == {}
-    for b in story.OUTER_BIOMES:
+    assert sp.act == S.ACT_TOUR and sp.just_completed == [0] and sp.done == {}
+    # Act I - The Grand Tour: exploration only, nobody wants a fight yet
+    assert not sp.wants("guardian", "forest") and sp.wants("landmark", "forest")
+    assert not sp.wants("landmark", "cave")  # only the outer biomes
+    for key in ["tavern_town", "tavern_town", "oasis_bazaar", "scrapyard", "elk_meadow"]:
+        sp.on_event("area", key)
+    assert sp.quest_log()["objectives"][0]["have"] == 4
+    sp.on_event("area", "forge_camp")
+    for b in S.OUTER_BIOMES:
+        sp.on_event("landmark", b)
+    for npc in ("murk", "murk", "sal", "old_pete"):
+        sp.on_event("npc", npc)
+    assert sp.act == S.ACT_TOUR
+    sp.on_event("fish")
+    assert sp.act == S.ACT_BOUNCERS
+    # Act II - guardians + a first dungeon
+    for b in S.OUTER_BIOMES:
         assert sp.wants("guardian", b)
         sp.on_event("guardian", b)
-    assert not sp.wants("guardian", "cave") or sp.act != 1
-    assert sp.act == 2
-    n = story.ISLANDS_NEEDED
-    for idx in [0] + list(range(n - 1)):  # a repeated island doesn't count twice
-        sp.on_event("island", idx)
-    assert sp.act == 2 and sp.quest_log()["objectives"][0]["have"] == n - 1
-    sp.on_event("island", 9)
-    assert sp.act == 3
-    sp.on_event("guardian", "forest")  # outer biome doesn't count for Act III
-    inner = ["cave"] + list(story.INNER_BIOMES[:story.INNER_GUARDIANS_NEEDED])  # repeat cave: no double count
+    assert sp.act == S.ACT_BOUNCERS and sp.wants("dungeon")
+    sp.on_event("dungeon")
+    assert sp.act == S.ACT_GEAR
+    # Act III - gear: wear T8+, 2 more dungeons, a heroic trial quest, forge something
+    for ev in ("equip_tier", "dungeon", "heroic_unlock", "forge"):
+        assert sp.wants(ev), ev
+        sp.on_event(ev)
+    assert sp.act == S.ACT_GEAR
+    sp.on_event("dungeon")
+    assert sp.act == S.ACT_DEEP
+    # Act IV - inner guardians + heroic dungeons
+    sp.on_event("guardian", "forest")  # an outer biome doesn't count here
+    inner = ["cave"] + list(S.INNER_BIOMES[:S.INNER_GUARDIANS_NEEDED])  # repeat cave: no double count
     for b in inner:
         sp.on_event("guardian", b)
     log = sp.quest_log()
-    assert log["objectives"][0]["have"] == story.INNER_GUARDIANS_NEEDED and log["objectives"][1]["have"] == 0
-    for _ in range(story.DUNGEONS_NEEDED):
-        sp.on_event("dungeon")
-    assert sp.act == 4
-    assert sp.quest_log()["title"] == story.ACTS[4]["title"]
+    assert log["objectives"][0]["have"] == S.INNER_GUARDIANS_NEEDED and log["objectives"][1]["have"] == 0
+    for _ in range(S.HEROIC_DUNGEONS_NEEDED):
+        sp.on_event("heroic_dungeon")
+    assert sp.act == S.ACT_ISLANDS
+    # Act V - the big islands
+    n = S.ISLANDS_NEEDED
+    for idx in [0] + list(range(n - 1)):  # a repeated island doesn't count twice
+        sp.on_event("island", idx)
+    assert sp.act == S.ACT_ISLANDS and sp.quest_log()["objectives"][0]["have"] == n - 1
+    sp.on_event("island", 9)
+    assert sp.act == S.ACT_FINALE
+    assert sp.quest_log()["title"] == S.ACTS[S.ACT_FINALE]["title"]
     msgs = sp.on_event("mad_god")
-    assert sp.finished and sp.act == story.FINAL_ACT and sp.just_completed == [0, 1, 2, 3, 4]
-    assert any(story.ACTS[4]["done"] in m for m, _c in msgs)
-    assert sp.quest_log()["title"] == story.FREE_PLAY_TITLE and sp.on_event("talk") == []
-    assert story.act_scale(0) == 1.0 and story.act_scale(3) > story.act_scale(1)
+    assert sp.finished and sp.act == S.FINAL_ACT and sp.just_completed == list(range(7))
+    assert any(S.ACTS[S.ACT_FINALE]["done"] in m for m, _c in msgs)
+    assert sp.quest_log()["title"] == S.FREE_PLAY_TITLE and sp.on_event("talk") == []
+    assert "Room" in S.FREE_PLAY_HINT  # the endgame hook
+    assert S.act_scale(0) == 1.0 and S.act_scale(3) > S.act_scale(1)
+    assert abs(S.act_scale(S.ACT_FINALE) - 1.6) < 1e-9  # same top end as the old arc
+    for a in S.ACTS:  # every objective kind has a Quest Log / map target
+        for o in a["objectives"]:
+            assert S.objective_target(o) is not None, o
     heard = set()
-    first = story.given_line(story.StoryProgress(2), heard)
-    assert story.ACTS[2]["intro"] in first and story.given_line(story.StoryProgress(2), heard) == story.ACTS[2]["hint"]
+    first = S.given_line(S.StoryProgress(2), heard)
+    assert S.ACTS[2]["intro"] in first and S.given_line(S.StoryProgress(2), heard) == S.ACTS[2]["hint"]
     print("check_transitions_through_every_act: PASSED")
+
+
+def check_old_saves_migrate_to_the_new_arc():
+    S = story
+    # every old five-act index lands on the right new chapter
+    expect = {0: S.ACT_PROLOGUE, 1: S.ACT_TOUR, 2: S.ACT_GEAR, 3: S.ACT_DEEP, 4: S.ACT_FINALE, 5: S.FINAL_ACT}
+    for old, new in expect.items():
+        got = S.StoryProgress.from_json({"act": old, "done": {"islands": [1, 2]}}, 0)
+        assert got.act == new and got.done == {}, (old, got.act, got.done)
+    # a new-format save keeps its act and progress as-is
+    cur = S.StoryProgress.from_json({"act": 2, "done": {"guardian_forest": ["forest"]}, "v": 2}, 0)
+    assert cur.act == 2 and cur.done == {"guardian_forest": ["forest"]}
+    # an old account checkpoint is mapped once, then stays put
+    accounts.touch_account("Veteran")
+    rec = dict(accounts.load_account("Veteran"), story_act=3)
+    rec.pop("story_v", None)
+    accounts._save_account("Veteran", rec)
+    assert accounts.get_story_act("Veteran") == S.ACT_DEEP
+    assert accounts.load_account("Veteran")["story_v"] == S.STORY_VERSION
+    assert accounts.get_story_act("Veteran") == S.ACT_DEEP  # not migrated twice
+    # a finished old account stays finished
+    rec = dict(accounts.load_account("Veteran"), story_act=5)
+    rec.pop("story_v")
+    accounts._save_account("Veteran", rec)
+    assert accounts.get_story_act("Veteran") == S.FINAL_ACT
+    print("check_old_saves_migrate_to_the_new_arc: PASSED")
+
+
+def check_grand_tour_events_from_the_realm():
+    """Act I's sightseeing credit comes from the real sim ticks / dialogue."""
+    from game import dialogue, npcs, sidequests
+    sim = _realm()
+    sim.enemies = []
+    t = _player("Tourist1", act=story.ACT_TOUR)
+    area = sim.areas[0]
+    t.pos = pygame.Vector2(area["rect"].centerx * TILE + 16, area["rect"].centery * TILE + 16)
+    sim._near_cd = 0
+    sim.begin_tick()
+    sim.update(0.01, {t.pid: t})
+    assert t.story.done.get("tour_areas") == [area["key"]], t.story.done
+    lm = next(l for l in sim.landmarks if l["biome"] in story.OUTER_BIOMES)
+    t.pos = pygame.Vector2(lm["pos"]) + pygame.Vector2(5 * TILE, 0)
+    sim._near_cd = 0
+    sim.begin_tick()
+    sim.update(0.01, {t.pid: t})
+    assert lm["biome"] in t.story.done.get("tour_landmarks", []), t.story.done
+    assert not any(getattr(e, "story_guardian", None) for e in sim.enemies), "sightseeing wakes no guardian"
+    # talking to a Realm NPC counts as meeting a local
+    t.sidequests = sidequests.SideQuestProgress()
+    npc_id = next(k for k, d in npcs.NPCS.items() if d["kind"] == "person")
+    conv = dialogue.start_conversation(t, npc=next((n for n in sim.npcs if n.npc_id == npc_id), None)
+                                       or npcs.NPC(npc_id, pygame.Vector2(0, 0)))
+    assert npc_id in t.story.done.get("tour_npcs", []), t.story.done
+    # Act III: gear already worn counts on the next side-quest tick
+    g = _player("Shopper", act=story.ACT_GEAR)
+    from game.items import WEAPONS, Item
+    g.weapon.tier = story.EQUIP_TIER_NEEDED
+    g.pos = sim.spawn_point()
+    sim._near_cd = 0
+    sim.begin_tick()
+    sim.update(0.01, {g.pid: g})
+    assert g.story.done.get("gear_equip"), g.story.done
+    print("check_grand_tour_events_from_the_realm: PASSED")
 
 
 def check_account_act_persistence():
@@ -116,14 +214,14 @@ def check_account_act_persistence():
 
 
 def check_character_progress_and_permadeath():
-    accounts.set_story_act("Hero", 1)
-    p = _player("Hero", act=1)
+    accounts.set_story_act("Hero", story.ACT_BOUNCERS)
+    p = _player("Hero", act=story.ACT_BOUNCERS)
     p.story.on_event("guardian", "forest")
     characters.save_character("Hero", p)
     saved = characters.load_character("Hero")
     back = Player.from_full_state(dict(saved, pid="x", name="Hero"))
     back.story = story.StoryProgress.from_json(saved.get("story"), accounts.get_story_act("Hero"))
-    assert back.story.act == 1 and back.story.done == {"guardian_forest": ["forest"]}
+    assert back.story.act == story.ACT_BOUNCERS and back.story.done == {"guardian_forest": ["forest"]}
     # an old save with no "story" key loads fine and starts the account's act
     legacy = dict(saved)
     legacy.pop("story")
@@ -131,12 +229,13 @@ def check_character_progress_and_permadeath():
     assert old.story.act == 0
     assert story.StoryProgress.from_json(legacy.get("story"), 1).act == 1
     # a save behind the account checkpoint is raised to it
-    assert story.StoryProgress.from_json({"act": 0, "done": {"talk_given": [0]}}, 2).to_json() == {"act": 2, "done": {}}
+    assert story.StoryProgress.from_json({"act": 0, "done": {"talk_given": [0]}, "v": 2}, 2).to_json() == \
+        {"act": 2, "done": {}, "v": story.STORY_VERSION}
     # permadeath: the character (and its in-act progress) is gone, the act checkpoint stays
     characters.delete_character("Hero")
     assert characters.load_character("Hero") is None
     fresh = story.StoryProgress.from_json(None, accounts.get_story_act("Hero"))
-    assert fresh.act == 1 and fresh.done == {}
+    assert fresh.act == story.ACT_BOUNCERS and fresh.done == {}
     print("check_character_progress_and_permadeath: PASSED")
 
 
@@ -167,7 +266,7 @@ def check_island_idx_survives_a_skipped_placement():
     sim._tick_island_events(0.0)
     wave = [e for e in sim.enemies if getattr(e, "island_idx", None) == isl["slot"]]
     assert wave and wave[0].kind == ISLAND_MINI_BOSS[isl["idx"]]
-    killer = _player("IslandKid", act=2)
+    killer = _player("IslandKid", act=story.ACT_ISLANDS)
     sim._story_players = [killer]
     for e in wave:
         _kill(sim, e, killer)
@@ -179,12 +278,12 @@ def check_landmark_guardian():
     sim = _realm()
     lm_idx, lm = next((i, l) for i, l in enumerate(sim.landmarks) if l["biome"] == "forest")
     sim.enemies = []
-    tourist = _player("Tourist", act=2)  # Act II doesn't need landmarks
+    tourist = _player("Tourist", act=story.ACT_GEAR)  # Act III doesn't need landmark guardians
     tourist.pos = pygame.Vector2(lm["pos"])
     sim.begin_tick()
     sim.update(0.01, {tourist.pid: tourist})
     assert not any(getattr(e, "story_guardian", None) for e in sim.enemies)
-    hero = _player("Ranger", act=1)
+    hero = _player("Ranger", act=story.ACT_BOUNCERS)
     hero.pos = pygame.Vector2(lm["pos"])
     players = {hero.pid: hero}
     for _ in range(3):  # standing there several ticks still wakes exactly one
@@ -194,7 +293,7 @@ def check_landmark_guardian():
     assert len(guardians) == 1, len(guardians)
     g = guardians[0]
     base = ENEMY_KINDS[story.GUARDIAN_KIND["forest"]]["hp"]
-    assert g.hp_max == int(base * rs.LANDMARK_GUARDIAN_HP_SCALE * story.act_scale(1)), (g.hp_max, base)
+    assert g.hp_max == int(base * rs.LANDMARK_GUARDIAN_HP_SCALE * story.act_scale(story.ACT_BOUNCERS)), (g.hp_max, base)
     _kill(sim, g, hero)
     assert hero.story.done.get("guardian_forest") == ["forest"]
     sim.enemies = [e for e in sim.enemies if e.alive]
@@ -202,18 +301,18 @@ def check_landmark_guardian():
     sim.update(0.01, players)  # already done for this player - no respawn
     assert not any(getattr(e, "story_guardian", None) for e in sim.enemies)
     # a second player who still needs it can wake it again
-    other = _player("Latecomer", act=1)
+    other = _player("Latecomer", act=story.ACT_BOUNCERS)
     other.pos = pygame.Vector2(lm["pos"])
     sim.begin_tick()
     sim.update(0.01, {other.pid: other})
     assert sum(1 for e in sim.enemies if getattr(e, "story_guardian", None) == "forest") == 1
     assert sim._landmark_guardians[lm_idx].alive
     sim.enemies = []
-    # an INNER Landmark Guardian always drops a Dungeon Shard (Act III's dungeons
-    # shouldn't hinge on the 8% elite roll)
+    # an INNER Landmark Guardian always drops a Dungeon Shard (the story's dungeons
+    # shouldn't hinge on the 8% elite roll) - outer ones too (checked by the forest kill above)
     inner = next((l for l in sim.landmarks if l["biome"] in story.INNER_BIOMES), None)
     if inner is not None:
-        delver = _player("Delver", act=3)
+        delver = _player("Delver", act=story.ACT_DEEP)
         delver.pos = pygame.Vector2(inner["pos"])
         sim.ground_items = []
         sim.begin_tick()
@@ -232,12 +331,12 @@ def check_dungeon_clear_and_act_scale():
     base = ENEMY_KINDS["void_reaper"]["hp"]
     assert easy.boss.hp_max == int(base * 1.15)
     assert hard_story.boss.hp_max == int(base * 1.15 * story.act_scale(3))
-    diver = _player("Diver", act=3)
+    diver = _player("Diver", act=story.ACT_GEAR)
     diver.pos = hard_story.boss.pos + pygame.Vector2(0, 40)
     hard_story.begin_tick()
     hard_story.update(0.01, {diver.pid: diver})
     _kill(hard_story, hard_story.boss, diver)
-    assert len(diver.story.done.get("dungeons", [])) == 1
+    assert len(diver.story.done.get("gear_dungeons", [])) == 1
     # the realm refreshes its scale from the furthest-along player present
     sim = _realm()
     far = _player("FarAlong", act=4)
@@ -249,9 +348,9 @@ def check_dungeon_clear_and_act_scale():
 
 
 def check_forge_finale():
-    fsim = RealmSim(bonus=True, theme="forge", difficulty_name=FORGE_DIFFICULTY, story_act=4)
+    fsim = RealmSim(bonus=True, theme="forge", difficulty_name=FORGE_DIFFICULTY, story_act=story.ACT_FINALE)
     assert fsim.boss.kind == "mad_god" and fsim.phase2_quest is None and fsim.secret_quest is None
-    champ = _player("Champ", act=4)
+    champ = _player("Champ", act=story.ACT_FINALE)
     champ.pos = fsim.boss.pos + pygame.Vector2(0, 60)
     fsim.begin_tick()
     fsim.update(0.01, {champ.pid: champ})
@@ -259,7 +358,7 @@ def check_forge_finale():
     assert fsim.boss is not None and fsim.boss.kind == "mad_god_phase2" and not champ.story.finished
     assert fsim.boss.hp_max > ENEMY_KINDS["mad_god"]["hp"]
     _kill(fsim, fsim.boss, champ)
-    assert champ.story.finished and champ.story.just_completed == [4]
+    assert champ.story.finished and champ.story.just_completed == [story.ACT_FINALE]
     assert any(pt.kind == "realm_exit" for pt in fsim.portals)
     print("check_forge_finale: PASSED")
 
@@ -276,9 +375,10 @@ def check_mad_god_threat():
         rates = []
         for seed in (3, 4, 5):
             _r.seed(seed)
-            fsim = RealmSim(bonus=True, theme="forge", difficulty_name=FORGE_DIFFICULTY, story_act=4)
+            fsim = RealmSim(bonus=True, theme="forge", difficulty_name=FORGE_DIFFICULTY,
+                            story_act=story.ACT_FINALE)
             p = Player(cls, name="Tank" + cls, pid="Tank" + cls)
-            p.story = story.StoryProgress(4)
+            p.story = story.StoryProgress(story.ACT_FINALE)
             while p.level < 20:
                 p.gain_xp(10 ** 6)
             boss = fsim.boss
@@ -339,7 +439,7 @@ def check_coop_snapshot_and_talk():
     server._apply_action(state, s, {"action": "respawn", "cls": "wizard"})
     assert s.player.story.act == 1 and s.player.story.done == {}
     # finale: talking opens a private Forge; leaving it goes back to the Nexus
-    s.player.story = story.StoryProgress(4)
+    s.player.story = story.StoryProgress(story.ACT_FINALE)
     s.player.pos = pygame.Vector2(state.nexus_bot.pos)
     server._apply_action(state, s, {"action": "wish"})
     assert s.zone == server.ZONE_BONUS and state.bonus_sims[s.bonus_sim_id].boss.kind == "mad_god"
@@ -381,7 +481,7 @@ def check_singleplayer_draws():
     _shot(g.screen, "story_quest_log_collapsed.png")
     # the Forge + Mad God, and the finale completing into the credits
     g.quest_log_expanded = True
-    g.player.story = story.StoryProgress(4)
+    g.player.story = story.StoryProgress(story.ACT_FINALE)
     g.state = main.STATE_NEXUS
     g.player.pos = pygame.Vector2(g.nexus_bot.pos) + pygame.Vector2(44, 0)  # beside him, off the portal tile
     g._context_action()
@@ -470,9 +570,11 @@ def check_coop_client_quest_log():
 if __name__ == "__main__":
     check_transitions_through_every_act()
     check_account_act_persistence()
+    check_old_saves_migrate_to_the_new_arc()
     check_character_progress_and_permadeath()
     check_island_idx_survives_a_skipped_placement()
     check_landmark_guardian()
+    check_grand_tour_events_from_the_realm()
     check_dungeon_clear_and_act_scale()
     check_forge_finale()
     check_mad_god_threat()

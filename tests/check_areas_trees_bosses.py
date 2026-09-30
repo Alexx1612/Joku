@@ -190,7 +190,7 @@ def check_bosses_bigger():
     saved = SIM.enemies
     SIM.enemies = []
     hero = Player("wizard", name="Big", pid="Big")
-    hero.story = story.StoryProgress(1)
+    hero.story = story.StoryProgress(story.ACT_BOUNCERS)
     hero.pos = pygame.Vector2(lm["pos"])
     SIM.begin_tick()
     SIM.update(0.01, {hero.pid: hero})

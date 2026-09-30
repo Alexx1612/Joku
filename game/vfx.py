@@ -767,8 +767,20 @@ def _zone_fields(z):
         frac = min(1.0, z["t"] / max(0.01, z["life"]))
         return (z["shape"], z["x"], z["y"], z["r"], z["length"], z["width"], z["ang"], frac,
                 tuple(z["color"]), z["dmg"] > 0)
-    shape = {"c": "circle", "l": "line", "o": "cone"}.get(z[0], "circle")
+    shape = {"c": "circle", "l": "line", "o": "cone", "s": "spokes"}.get(z[0], "circle")
     return shape, z[1], z[2], z[3], z[4], z[5], z[6], z[7], tuple(z[8]), bool(z[9])
+
+
+def _zone_extra(z, shape):
+    """Spokes: the list of bullet angles. A bullet-wall lane: (gap_off, gap_w) or None."""
+    if isinstance(z, dict):
+        if shape == "spokes":
+            return z.get("angles", ())
+        return (z["gap_off"], z["gap_w"]) if z.get("gap_off") is not None else None
+    extra = z[10] if len(z) > 10 else None
+    if shape == "spokes":
+        return extra or ()
+    return tuple(extra) if extra else None
 
 
 def draw_enemy_zones(surf, cam, zones):
@@ -801,6 +813,13 @@ def draw_enemy_zones(surf, cam, zones):
             layer.fill((*color, 16 if wide else ZONE_FILL_ALPHA))
             pygame.draw.rect(layer, (*color, 40 if wide else ZONE_FILL_ALPHA + 60), (0, 0, int(L * frac), W))
             pygame.draw.rect(layer, (*color, edge_a), layer.get_rect(), 1)
+            gap = _zone_extra(z, shape)
+            if gap:  # a bullet wall: cut its real gap out of the lane so you can see where to slip through
+                gy = int(W / 2 + gap[0] - gap[1] / 2)
+                pygame.draw.rect(layer, (0, 0, 0, 0), (0, gy, L, max(4, int(gap[1]))))
+                pygame.draw.line(layer, (120, 255, 140, 170), (0, gy), (L, gy), 1)
+                pygame.draw.line(layer, (120, 255, 140, 170), (0, gy + max(4, int(gap[1]))),
+                                 (L, gy + max(4, int(gap[1]))), 1)
             rot = pygame.transform.rotate(layer, -ang)
             # rotate about the line's start point (the attacker)
             off = pygame.Vector2(L / 2, 0).rotate(ang)
@@ -817,3 +836,19 @@ def draw_enemy_zones(surf, cam, zones):
                 pygame.draw.polygon(layer, (*color, ZONE_FILL_ALPHA + 50), inner)
             pygame.draw.polygon(layer, (*color, edge_a), pts, 2)
             surf.blit(layer, (cx - rr - 2, cy - rr - 2))
+        elif shape == "spokes":
+            # one ray per bullet the move will fire (ring gaps / fan / half-ring / every sweep
+            # step), fixed at wind-up start: the dark gaps between rays are the safe lanes
+            rr = max(20, int(r))
+            rot_off = ang - _zone_fields(z)[6]  # camera rotation (ang above is already on-screen)
+            layer = pygame.Surface((rr * 2 + 24, rr * 2 + 24), pygame.SRCALPHA)
+            c = pygame.Vector2(rr + 12, rr + 12)
+            for a in _zone_extra(z, shape):
+                u = pygame.Vector2(1, 0).rotate(a + rot_off)
+                p0, p1 = c + u * 16, c + u * rr
+                pm = c + u * max(18, rr * frac)
+                pygame.draw.line(layer, (*color, ZONE_FILL_ALPHA + 20), p0, p1, 2)
+                pygame.draw.line(layer, (*color, edge_a), p0, pm, 3)
+                side = u.rotate(90) * 5
+                pygame.draw.polygon(layer, (*color, edge_a), [p1 + u * 9, p1 + side, p1 - side])  # arrowhead
+            surf.blit(layer, (cx - rr - 12, cy - rr - 12))

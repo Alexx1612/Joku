@@ -63,6 +63,9 @@ class Conversation:
             self.msgs = self.progress.on_event("talk", self.npc_id,
                                                ctx={"npc": self.npc_id, "person": person, "uid": self.npc_id},
                                                player=self.player)
+            story_progress = getattr(self.player, "story", None)
+            if story_progress is not None and story_progress.wants("npc", self.npc_id):
+                self.msgs = list(self.msgs) + story_progress.on_event("npc", self.npc_id)  # Act I: meet the locals
         else:
             self.msgs = self.progress.on_event("talk", self.wildlife_kind,
                                                ctx={"npc": self.wildlife_kind, "person": False, "uid": self.uid},

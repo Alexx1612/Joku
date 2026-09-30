@@ -1,7 +1,13 @@
 """
-The story / critical path: five acts (Prologue -> Act I -> Act II -> Act III ->
-Finale), each a short list of objectives fed by plain (kind, key) events from
-RealmSim/main.py/server.py. Pure data + logic - no pygame, no file I/O.
+The story / critical path: seven acts that go exploration -> combat -> gear ->
+the deep inland -> the big islands -> the Mad God (Prologue, Act I "The Grand
+Tour" ... Act V "Last Call", Finale), each a short list of objectives fed by
+plain (kind, key) events from RealmSim/main.py/server.py/dialogue.py/entities.py.
+After the Finale the endgame is the Mad God's Room (a rare key from heroic
+dungeons - see realm_sim). Pure data + logic - no pygame, no file I/O.
+
+Save versions: STORY_VERSION 2 is the seven-act arc. Saves / accounts without a
+version are from the old five-act arc and are mapped with OLD_ACT_TO_NEW.
 
 Persistence split (see the design notes in the v0.2 final-fixes plan):
 - account-wide `story_act` (accounts.py) = number of acts completed. It never
@@ -42,7 +48,19 @@ def landmark_name(biome):
 # islands start armed and each re-arms independently, so 7 distinct ones never queue)
 ISLANDS_NEEDED = 7
 INNER_GUARDIANS_NEEDED = 4
-DUNGEONS_NEEDED = 3  # each inner Landmark Guardian drops a guaranteed Dungeon Shard (RealmSim._reward)
+DUNGEONS_NEEDED = 2  # Act III (every outer/inner Landmark Guardian drops a guaranteed Dungeon Shard)
+TOUR_AREAS_NEEDED = 5  # of the 10 big named places (game/areas.py)
+TOUR_NPCS_NEEDED = 3
+EQUIP_TIER_NEEDED = 8  # Act III: wear a real piece of gear (a T8+ weapon/armor/ring/ability)
+HEROIC_DUNGEONS_NEEDED = 2
+HEROIC_MIN_LEVEL = 16  # see game/gates.py
+
+STORY_VERSION = 2
+# the old five-act arc (Prologue, guardians, islands, deep end, finale, done) -> the seven-act arc
+OLD_ACT_TO_NEW = {0: 0, 1: 1, 2: 3, 3: 4, 4: 6, 5: 7}
+
+# act indices, for code/tests that need a specific chapter
+ACT_PROLOGUE, ACT_TOUR, ACT_BOUNCERS, ACT_GEAR, ACT_DEEP, ACT_ISLANDS, ACT_FINALE = range(7)
 
 
 def _obj(obj_id, text, kind, need=1, keys=None):
@@ -59,29 +77,52 @@ ACTS = [
          _obj("talk_given", "Talk to Father Given in the Nexus (F)", "talk"),
          _obj("enter_realm", "Step through the Realm portal", "zone", keys=("realm",)),
      ]},
-    {"title": "Act I: The Rim Job",
+    {"title": "Act I: The Grand Tour",
+     "intro": "Before you go punching anything, see the place. Tourists live longer. Slightly.",
+     "hint": f"Wander the Realm: visit {TOUR_AREAS_NEEDED} of the big named places, spot the landmark in every outer biome (forest, desert, tundra, swamp), chat with {TOUR_NPCS_NEEDED} locals (F) and catch a fish at the water (F).",
+     "done": "Postcards sent. Now the landmarks have noticed you. Uh oh.",
+     "objectives": [
+         _obj("tour_areas", f"Visit {TOUR_AREAS_NEEDED} of the Realm's big named places", "area",
+              need=TOUR_AREAS_NEEDED),
+         _obj("tour_landmarks", "Spot the landmark in each outer biome", "landmark", need=len(OUTER_BIOMES),
+              keys=OUTER_BIOMES),
+         _obj("tour_npcs", f"Chat with {TOUR_NPCS_NEEDED} Realm locals (F)", "npc", need=TOUR_NPCS_NEEDED),
+         _obj("tour_fish", "Catch a fish (F at the water's edge)", "fish"),
+     ]},
+    {"title": "Act II: Bouncer Problems",
      "intro": "Four old landmarks ring the coast, and each one grew a bouncer. Go un-bounce them.",
-     "hint": "Find the landmark in each outer biome - forest, desert, tundra, swamp. Walk up to it and its Guardian wakes up grumpy.",
-     "done": "The Rim is quiet. The bouncers have been... bounced.",
+     "hint": "Walk up to the landmark in each outer biome - its Guardian wakes up grumpy (and drops a Dungeon Shard). Then clear a dungeon.",
+     "done": "The coast is quiet. The bouncers have been... bounced.",
      "objectives": [
          _obj(f"guardian_{b}", f"Defeat the Guardian of {landmark_name(b)} ({b})", "guardian", keys=(b,))
          for b in OUTER_BIOMES
-     ]},
-    {"title": "Act II: Last Call",
-     "intro": "The islands are having a very loud party and the neighbours - that's everyone - are complaining.",
-     "hint": f"Calm {ISLANDS_NEEDED} of the 10 islands. Use the island portals in the beach plaza, beat each wave and its mini-boss.",
-     "done": "Last call has been called. The islands are sleeping it off.",
+     ] + [_obj("first_dungeon", "Clear a dungeon (beat its boss)", "dungeon")]},
+    {"title": "Act III: Retail Therapy",
+     "intro": "You're dressed like a tutorial. Let's fix that. Brother Hammerstein runs the Anvil in the Nexus.",
+     "hint": f"Wear a T{EQUIP_TIER_NEEDED}+ item, clear {DUNGEONS_NEEDED} more dungeons, finish one Heroic trial quest (their givers hang around the dungeon biomes) and forge something at the Anvil (3 same-tier items -> 1 better one).",
+     "done": "Look at you. Shiny. Dangerous. Slightly overdrawn.",
      "objectives": [
-         _obj("islands", f"Calm any {ISLANDS_NEEDED} islands", "island", need=ISLANDS_NEEDED),
+         _obj("gear_equip", f"Wear a T{EQUIP_TIER_NEEDED}+ weapon, armor, ring or ability", "equip_tier"),
+         _obj("gear_dungeons", f"Clear {DUNGEONS_NEEDED} more dungeons", "dungeon", need=DUNGEONS_NEEDED),
+         _obj("gear_heroic_unlock", "Finish a Heroic trial quest (unlocks that Heroic dungeon)", "heroic_unlock"),
+         _obj("gear_forge", "Forge an item at Brother Hammerstein's Anvil (Nexus)", "forge"),
      ]},
-    {"title": "Act III: The Deep End",
+    {"title": "Act IV: The Deep End",
      "intro": "The inland biomes are where the real trouble brews. Bring snacks. And a will.",
-     "hint": f"Beat {INNER_GUARDIANS_NEEDED} inner-biome Landmark Guardians, then clear {DUNGEONS_NEEDED} dungeons - every inner Guardian drops a Dungeon Shard (elites drop them too).",
+     "hint": f"Beat {INNER_GUARDIANS_NEEDED} inner-biome Landmark Guardians and clear {HEROIC_DUNGEONS_NEEDED} Heroic dungeons (level {HEROIC_MIN_LEVEL}+).",
      "done": "You went off the deep end and came back. Nobody does that.",
      "objectives": [
          _obj("inner_guardians", f"Defeat {INNER_GUARDIANS_NEEDED} inner-biome Landmark Guardians", "guardian",
               need=INNER_GUARDIANS_NEEDED, keys=INNER_BIOMES),
-         _obj("dungeons", f"Clear {DUNGEONS_NEEDED} dungeons (beat the boss)", "dungeon", need=DUNGEONS_NEEDED),
+         _obj("heroic_dungeons", f"Clear {HEROIC_DUNGEONS_NEEDED} Heroic dungeons", "heroic_dungeon",
+              need=HEROIC_DUNGEONS_NEEDED),
+     ]},
+    {"title": "Act V: Last Call",
+     "intro": "The islands are having a very loud party. They grew. A lot. Bring a level-20 liver and your best gear.",
+     "hint": f"Take the ferry from any island harbour (level 20). Calm {ISLANDS_NEEDED} of the 10 islands: beat each island's anchor wave and its mini-boss.",
+     "done": "Last call has been called. The islands are sleeping it off.",
+     "objectives": [
+         _obj("islands", f"Calm any {ISLANDS_NEEDED} islands", "island", need=ISLANDS_NEEDED),
      ]},
     {"title": "Finale: Closing Time",
      "intro": "Right. The Mad God. He's been reforging this place like a bad remix. Time to unplug him.",
@@ -94,10 +135,11 @@ ACTS = [
 FINAL_ACT = len(ACTS)  # story_act == FINAL_ACT means the story is finished (free play)
 
 FREE_PLAY_TITLE = "Free Play"
-FREE_PLAY_HINT = "You beat the Mad God. Everything is still out there, just angrier. Enjoy!"
+FREE_PLAY_HINT = ("You beat the Mad God. Mostly. Rumour says Heroic bosses sometimes drop a key to his Room, "
+                  "where he's been practising two new forms. Level 20 and T12 gear, or don't bother.")
 
 # difficulty ramps with story progress - applied to every enemy's HP at spawn
-ACT_SCALE_STEP = 0.15
+ACT_SCALE_STEP = 0.1  # 7 acts: 1.0 (Prologue) .. 1.6 (Finale), the same top end as the old 5-act arc
 
 
 def act_scale(act):
@@ -207,18 +249,28 @@ class StoryProgress:
                                for o in act["objectives"]]}
 
     def to_json(self):
-        return {"act": self.act, "done": {k: list(v) for k, v in self.done.items()}}
+        return {"act": self.act, "done": {k: list(v) for k, v in self.done.items()}, "v": STORY_VERSION}
 
     @staticmethod
     def from_json(d, account_act=0):
         """A character save's story progress, never behind the account's checkpoint.
-        A missing/old save (d=None) starts the account's current act fresh."""
+        A missing/old save (d=None) starts the account's current act fresh. A save from
+        the old five-act arc (no "v") is mapped onto the new arc; its in-act progress
+        (objective ids that no longer exist) is dropped."""
         d = d or {}
         act = int(d.get("act", 0)) if isinstance(d, dict) else 0
         done = d.get("done", {}) if isinstance(d, dict) and isinstance(d.get("done"), dict) else {}
+        if isinstance(d, dict) and d and d.get("v") is None:
+            act, done = migrate_act(act), {}
         if act < account_act:
             return StoryProgress(account_act)
         return StoryProgress(act, done)
+
+
+def migrate_act(old_act):
+    """Old five-act index -> seven-act index (see OLD_ACT_TO_NEW)."""
+    old_act = max(0, int(old_act))
+    return OLD_ACT_TO_NEW.get(old_act, FINAL_ACT)
 
 
 def objective_target(o):
@@ -229,6 +281,22 @@ def objective_target(o):
         return {"kind": "npc", "key": "father_given", "label": "Father Given"}
     if kind == "zone":
         return {"kind": "area", "key": "realm", "label": "the Realm portal"}
+    if kind == "area":
+        return {"kind": "area", "key": "areas", "label": "the big named places"}
+    if kind == "landmark":
+        return {"kind": "area", "key": "landmarks", "label": "outer-biome landmarks"}
+    if kind == "npc":
+        return {"kind": "area", "key": "locals", "label": "Realm locals"}
+    if kind == "fish":
+        return {"kind": "area", "key": "water", "label": "any shoreline"}
+    if kind == "equip_tier":
+        return {"kind": "area", "key": "gear", "label": f"T{EQUIP_TIER_NEEDED}+ gear"}
+    if kind == "forge":
+        return {"kind": "area", "key": "anvil", "label": "Brother Hammerstein's Anvil (Nexus)"}
+    if kind == "heroic_unlock":
+        return {"kind": "area", "key": "heroic_trials", "label": "a Heroic trial quest giver"}
+    if kind == "heroic_dungeon":
+        return {"kind": "area", "key": "heroic_dungeons", "label": "Heroic dungeons"}
     if kind == "guardian":
         if keys and len(keys) == 1:
             return {"kind": "area", "key": f"landmark:{keys[0]}", "label": landmark_name(keys[0])}

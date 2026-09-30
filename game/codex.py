@@ -247,7 +247,7 @@ def _area_entries():
                                ("Mini-boss", _pretty(boss) if boss else "-")],
                         text="One of the ten Reforging islands. Reach it through the island portals in the "
                              "beach plaza. Every few minutes it flares up with a guardian wave led by its "
-                             "mini-boss; calming it counts for Act II. Its chest refills when calmed.",
+                             "mini-boss; calming it counts for Act V (Last Call). Its chest refills when calmed.",
                         where={"biomes": [], "areas": [f"island:{i}"]}))
     for key, label, text in (
             ("islands", "The Reforging islands", "Ten drink-pun islands in the ocean around the continent."),
@@ -255,7 +255,20 @@ def _area_entries():
             ("island_chests", "Island chests", "Each island has a chest you can open once; it refills when "
                                                 "the island is calmed. Quest items for NPCs can be inside."),
             ("realm", "The Godlands (the Realm)", "The whole continent. Difficulty rises toward the centre."),
-            ("dungeons", "Dungeons", "Opened with Dungeon Shards (dropped by elites and inner Guardians).")):
+            ("dungeons", "Dungeons", "Opened with Dungeon Shards (dropped by elites and every Landmark Guardian)."),
+            ("areas", "The big named places", "Ten big safe places scattered over the continent (towns, camps, "
+                                              "a monastery, a scrapyard...). Act I asks you to visit five."),
+            ("locals", "Realm locals", "The people and talkable creatures of the Realm. Walk up and press F."),
+            ("water", "Fishing spots", "Any shoreline: stand at the water's edge and press F to fish."),
+            ("gear", "Gear tiers", "Items run T1-T11 from normal loot, T12-T13 from Heroic dungeons, the big "
+                                   "islands and the Mad God's Room, and T14 only from the Anvil. UT and Divine "
+                                   "items are special drops."),
+            ("anvil", "The Anvil (Nexus)", "Brother Hammerstein's forge in the Nexus: combine 3 items of the "
+                                           "same slot and tier into one of the next tier, or reforge a UT."),
+            ("heroic_trials", "Heroic trials", "One trial quest per dungeon, given by a local near that dungeon's "
+                                               "biome. Finishing it unlocks the Heroic version of the dungeon."),
+            ("heroic_dungeons", "Heroic dungeons", "Much harder versions of every dungeon (level 16+), opened with "
+                                                   "Heroic Shards. Their bosses can drop the Mad God's Room Key.")):
         out.append(dict(id=f"area:{key}", cat="areas", title=label, sprite=None, stats=[], text=text,
                         where={"biomes": [], "areas": [key]}))
     from game import areas as areas_mod
@@ -283,7 +296,7 @@ def _portal_entries():
     from game import realm_sim
     out = []
     for key, th in realm_sim.DUNGEON_THEMES.items():
-        opened = ("Only opened by Father Given once Act III is done." if key == "forge" else
+        opened = ("Only opened by Father Given in the Finale (after Act V)." if key == "forge" else
                   "Opened by a Dungeon Shard dropped by: " +
                   (", ".join(sorted({_pretty(k) for k, t in realm_sim.THEME_FOR_KIND.items() if t == key}))
                    or "any elite") + ".")
@@ -292,7 +305,7 @@ def _portal_entries():
                         stats=[("Bosses", ", ".join(_pretty(b) for b in th["bosses"][:3])),
                                ("Mobs", ", ".join(_pretty(k) for k in th["kinds"][:4]))],
                         text=f"{opened}\n\nDungeons come in Easy / Medium / Hard; harder ones hit harder and "
-                             "drop more loot. Beat the boss to clear it (counts for Act III).",
+                             "drop more loot. Beat the boss to clear it (counts for Acts II and III).",
                         where={"biomes": [], "areas": ["dungeons"]}))
     for kind, label, text in (
             ("entrance", "Realm portal", "The big swirly portal in the Nexus - step through to reach the Realm."),

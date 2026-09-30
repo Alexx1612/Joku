@@ -333,7 +333,7 @@ DUNGEON_THEMES = {
                         kinds=["harpy", "scorpion", "bat", "cliff_strider", "dune_stalker"],
                         weights=[25, 20, 15, 20, 20], bosses=["boss", "void_reaper", "sand_wyrm"]),
     # the story finale (game/story.py) - never dropped as a shard (not in THEME_FOR_KIND),
-    # only opened by Father Given once Act III is done. A short gauntlet ending in the
+    # only opened by Father Given in the Finale (after Act V). A short gauntlet ending in the
     # Mad God, whose phase 2 spawns on the spot when phase 1 dies (see _reward).
     "forge": dict(label="The Forge", floor=world.ASH, wall=world.WALL_EMBER,
                   kinds=["salamander", "cinder_wisp", "imp", "ghoul", "husk_wanderer"],
@@ -1331,9 +1331,11 @@ class RealmSim:
                 if e.neutral or e.rank == "boss":
                     self.mob_speech_events.append((e.kind, e.speech, e.pos.x, e.pos.y))
             if e._root_pulse:
+                # a move's pulse carries its own radius (= the circle its wind-up drew)
+                rad = self.ROOT_PULSE_RADIUS if e._root_pulse is True else float(e._root_pulse)
                 e._root_pulse = False
                 for p in alive:
-                    if p.pos.distance_to(e.pos) <= self.ROOT_PULSE_RADIUS:
+                    if p.pos.distance_to(e.pos) <= rad:
                         p.root_time = max(p.root_time, self.ROOT_DURATION)
                         self.events.append((p.pid, "Rooted by thorns!", (140, 220, 100)))
             for p in alive:
@@ -1486,8 +1488,11 @@ class RealmSim:
                 from game import enemy_attacks as EA
                 center = pygame.Vector2(z["x"], z["y"])
                 tgt = min(alive, key=lambda q: q.pos.distance_squared_to(center)).pos if alive else center
-                aim = (tgt - center)
-                aim = aim.normalize() if aim.length_squared() > 1 else pygame.Vector2(0, 1)
+                if z.get("burst_ang") is not None:  # facing fixed (and drawn as spokes) at wind-up start
+                    aim = pygame.Vector2(1, 0).rotate(z["burst_ang"])
+                else:
+                    aim = (tgt - center)
+                    aim = aim.normalize() if aim.length_squared() > 1 else pygame.Vector2(0, 1)
                 n0 = len(self.bullets)
                 old = src.pos
                 src.pos = center  # burst from the landing point, not wherever the mob is now
@@ -1504,14 +1509,20 @@ class RealmSim:
         self.enemy_zones = keep
 
     def zone_snapshot(self, center=None, radius=None):
-        """Compact zones for co-op clients: [shape, x, y, r, length, width, ang, frac, color]."""
+        """Compact zones for co-op clients: [shape, x, y, r, length, width, ang, frac, color, has_dmg]
+        plus an optional 11th element: the spokes' angles, or a bullet wall's [gap_off, gap_w]."""
         out = []
         for z in self.enemy_zones:
             if center is not None and (z["x"] - center.x) ** 2 + (z["y"] - center.y) ** 2 > radius * radius:
                 continue
-            out.append([z["shape"][0], round(z["x"]), round(z["y"]), round(z["r"]), round(z["length"]),
-                        round(z["width"]), round(z["ang"], 1), round(min(1.0, z["t"] / max(0.01, z["life"])), 2),
-                        list(z["color"]), 1 if z["dmg"] > 0 else 0])
+            row = [z["shape"][0], round(z["x"]), round(z["y"]), round(z["r"]), round(z["length"]),
+                   round(z["width"]), round(z["ang"], 1), round(min(1.0, z["t"] / max(0.01, z["life"])), 2),
+                   list(z["color"]), 1 if z["dmg"] > 0 else 0]
+            if z["shape"] == "spokes":
+                row.append([round(a, 1) for a in z.get("angles", ())])
+            elif z.get("gap_off") is not None:
+                row.append([round(z["gap_off"], 1), round(z["gap_w"], 1)])
+            out.append(row)
         return out
 
     def _spawn_enemy(self, alive):
@@ -1693,6 +1704,26 @@ class RealmSim:
                 continue
             for msg, color in progress.on_event(kind, key):
                 self.events.append((p.pid, msg, color))
+
+    def _story_personal(self, p, kind, key=None):
+        """A story event that only counts for this one player (sightseeing, fishing, gear)."""
+        progress = getattr(p, "story", None)
+        if progress is None or not progress.wants(kind, key):
+            return
+        for msg, color in progress.on_event(kind, key):
+            self.events.append((p.pid, msg, color))
+
+    def _story_gear_check(self, p):
+        """Act III "wear a T8+ item": checked on the side-quest tick, so gear that was
+        already on when the act began (or came through a trade) counts too."""
+        progress = getattr(p, "story", None)
+        if progress is None or not progress.wants("equip_tier"):
+            return
+        for slot in ("weapon", "armor", "ring", "ability"):
+            it = getattr(p, slot, None)
+            if it is not None and (it.tier >= story.EQUIP_TIER_NEEDED or it.is_ut):
+                self._story_personal(p, "equip_tier")
+                return
 
     def _maybe_wake_landmark_guardian(self, p):
         """A player whose current act needs a landmark's Guardian wakes it by walking
@@ -1980,6 +2011,13 @@ class RealmSim:
             for idx, lm in enumerate(self.landmarks):
                 if p.pos.distance_to(lm["pos"]) <= 3 * TILE:
                     self._side_event(p, "reach", "landmark", 1, {"idx": idx})
+                if p.pos.distance_to(lm["pos"]) <= 8 * TILE:
+                    self._story_personal(p, "landmark", lm["biome"])  # Act I: "spot" it
+            ptx, pty = int(px // TILE), int(py // TILE)
+            for a in self.areas:
+                if a["rect"].collidepoint(ptx, pty):
+                    self._story_personal(p, "area", a["key"])
+            self._story_gear_check(p)
             for isl in self.islands:
                 if p.pos.distance_to(isl["pos"]) <= (world.ISLAND_RADIUS + 2) * TILE:
                     self._side_event(p, "reach", "island", 1, {"idx": isl["idx"]})
@@ -2068,9 +2106,9 @@ class RealmSim:
         # kill spot - it's a real carried item now, used later from the backpack
         # wherever the player happens to be standing (see Player.use_shard)
         dropped_shard_label = None
-        # an inner-biome Landmark Guardian always drops one - Act III needs dungeons, and
-        # the plain 8% elite roll alone made that act mostly waiting on luck (story pacing)
-        story_shard = getattr(enemy, "story_guardian", None) in story.INNER_BIOMES
+        # every Landmark Guardian always drops one - Acts II/III need dungeons, and the
+        # plain 8% elite roll alone made those acts mostly waiting on luck (story pacing)
+        story_shard = getattr(enemy, "story_guardian", None) is not None
         biome = self._biome_at(enemy.pos)
         # one PERSONAL roll + bag per credited player (a kill with no known player - a DoT
         # from someone who left - still drops one shared bag, as before)
@@ -2413,6 +2451,7 @@ class RealmSim:
         msg = f"You caught {item.display_name}!"
         self.events.append((player.pid, msg, item.color))
         self._side_event(player, "fish", None, 1, {"biome": self._biome_at(player.pos)})
+        self._story_personal(player, "fish")
         return item, msg
 
     # -------------------------------------------------------------- input --

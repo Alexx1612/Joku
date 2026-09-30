@@ -1116,6 +1116,10 @@ ANIM_ATTACK_STRETCH = 1.15  # horizontal scale during the attack-anticipation po
                              # apparent volume roughly constant (squash one axis, stretch the other)
 
 
+# the burrowing boss's surfacing ring (warned by spokes while it digs up - entities.Enemy)
+BURROW_RING = dict(n=12, gaps=2, gap_w=2, speed=0.9, color=(230, 190, 90))
+
+
 class Enemy:
     MIN_REBARK_INTERVAL = 20.0  # seconds - a hard per-mob floor between flavor lines/idle
                                  # barks, on top of the %/sec roll (see update())
@@ -1227,6 +1231,8 @@ class Enemy:
         self._phase_invuln = 0.0
         self._shell_t = 0.0          # shell / fade / burrow feint invulnerability
         self._shell_then = None
+        self._shell_dir = None       # the shell follow-up's warned direction (spokes drawn at wind-up)
+        self._wall_gap = None        # a bullet wall's gap, picked + drawn at wind-up start
         self._summon_pending = None  # (kind, n) one-tick flag RealmSim reads
         self._new_zones = []         # telegraph / ground-AoE zones for RealmSim to take over
         self._sfx_pending = []       # attack sound keys for RealmSim.sound_events
@@ -1356,7 +1362,9 @@ class Enemy:
             self._update_dash(dt, tile_map)
         elif self._attacks and (self._shell_t > 0 or self._phase_invuln > 0 or (
                 self._windup is not None and self._windup["move"].get(
-                    "root", self._windup["move"]["tele"] not in ("glow", "none")))):
+                    "root", self._windup["move"]["tele"] not in ("glow", "none"))) or (
+                self._repeat is not None and self._repeat["move"]["fn"] != "dash"
+                and self._repeat["move"]["tele"] not in ("glow", "none"))):
             self._is_moving = False  # planted for a telegraphed wind-up / shell / phase roar
         elif self.aggro:
             if self.pattern == "erratic":
@@ -1477,20 +1485,33 @@ class Enemy:
             if self._shell_t <= 0 and self._shell_then:
                 then = dict(self._shell_then)
                 then.setdefault("name", "shell_then")
-                self._fire_move(then, self._ctx(player_pos, to_player_n, bullets_out), first=False)
+                self._fire_move(then, self._ctx(player_pos, to_player_n, bullets_out, self._shell_dir),
+                                first=False)
                 self._sfx_pending.append(EA._DEFAULT_SFX.get(then["fn"], "shot"))
                 self._shell_then = None
+                self._shell_dir = None
         if self._repeat is not None:
             r = self._repeat
             r["timer"] -= dt
-            if r["timer"] <= 0:
-                m = r["move"]
-                if m["fn"] == "dash":
-                    tele_dir = pygame.Vector2(to_player_n)
-                else:
-                    tele_dir = r["tele_dir"]
-                ctx = self._ctx(player_pos, to_player_n, bullets_out, tele_dir, r["tele_point"], r["step"])
-                self._fire_move(m, ctx, first=(m["fn"] == "dash"))
+            m = r["move"]
+            if m["fn"] == "dash":
+                if r["timer"] <= 0 and self._dash is None and self._windup is None:
+                    # a chained dash gets its OWN lane telegraph + short wind-up from where the mob
+                    # landed (it used to re-aim at you and go instantly, with no warning at all)
+                    again = dict(m, repeat=1, windup=max(0.3, min(0.45, m.get("windup", 0.4))))
+                    ctx = self._ctx(player_pos, to_player_n, bullets_out)
+                    tele_dir, tele_point = EA.tele_for(self, again, ctx.target, ctx.lead, ctx.aim)
+                    self._windup = dict(move=again, t=0.0, total=again["windup"], tele_dir=tele_dir,
+                                        tele_point=tele_point, chained=True)
+                    self._windup_frac = 0.0
+                    self._windup_kind = "aim"
+                    self._sfx_pending.append("dash_windup")
+                    r["left"] -= 1
+                    if r["left"] <= 0:
+                        self._repeat = None
+            elif r["timer"] <= 0:
+                ctx = self._ctx(player_pos, to_player_n, bullets_out, r["tele_dir"], r["tele_point"], r["step"])
+                self._fire_move(m, ctx, first=False)
                 r["step"] += 1
                 r["left"] -= 1
                 r["timer"] = m.get("gap", 0.15)
@@ -1509,8 +1530,9 @@ class Enemy:
                 if reps > 1:
                     self._repeat = dict(move=m, left=reps - 1, timer=m.get("gap", 0.15), step=1,
                                         tele_dir=w["tele_dir"], tele_point=w["tele_point"])
-                self._atk_cds[m["name"]] = m["cd"] * self._cd_mult()
-                self._atk_gap = random.uniform(*EA.GLOBAL_GAP) * self._cd_mult()
+                if not w.get("chained"):  # a chained dash already put its move on cooldown
+                    self._atk_cds[m["name"]] = m["cd"] * self._cd_mult()
+                    self._atk_gap = random.uniform(*EA.GLOBAL_GAP) * self._cd_mult()
         elif (self.aggro and self._atk_gap <= 0 and self._repeat is None and self._dash is None
               and self._shell_t <= 0 and self._phase_invuln <= 0 and not self.invulnerable
               and dist <= EA.ATTACK_RANGE
@@ -1635,8 +1657,14 @@ class Enemy:
             if self._burrow_cd <= 0:
                 self._burrow_state = "surfacing"
                 self._burrow_cd = 0.6
-                # a dust ring on the ground where it's about to burst out
-                EA._zone(self, "circle", self.pos, 0.6, EA.ORANGE, r=95, sfx=None)
+                # a dust patch where it's about to burst out, plus spokes showing exactly where
+                # the surfacing ring's bullets (and its gaps) will fly
+                bd = pygame.Vector2(1, 0).rotate(random.uniform(0, 360))
+                self._burrow_ring_dir = bd
+                rm = dict(BURROW_RING, fn="ring")
+                EA._zone(self, "circle", self.pos, 0.6, EA.ORANGE, r=40, sfx=None)
+                EA._zone(self, "spokes", self.pos, 0.6, EA.ORANGE, r=min(EA.reach(rm), EA.SPOKE_MAX_LEN),
+                         sfx=None, extra=dict(angles=EA.spoke_angles(rm, bd)))
         elif self._burrow_state == "surfacing":
             if self._burrow_cd <= 0:
                 self.invulnerable = False
@@ -1644,9 +1672,9 @@ class Enemy:
                 self._burrow_cd = random.uniform(2.0, 3.0)
                 to_p = self._last_player_pos - self.pos
                 aim = to_p.normalize() if to_p.length_squared() > 1 else pygame.Vector2(0, 1)
-                EA.p_ring(self, EA.AttackCtx(aim, self._last_player_pos, self._last_player_pos, None, None,
-                                             bullets_out), dict(n=12, gaps=2, gap_w=2, speed=0.9,
-                                                                color=(230, 190, 90)))
+                EA.p_ring(self, EA.AttackCtx(aim, self._last_player_pos, self._last_player_pos,
+                                             getattr(self, "_burrow_ring_dir", None), None, bullets_out),
+                          BURROW_RING)
                 self._sfx_pending.append("slam")
 
     def _pattern_interval(self):
