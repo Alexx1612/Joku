@@ -587,3 +587,86 @@ def stop_theme():
         _theme_channel = None
     _current_theme_zone = None
     _playing_zone = None
+
+
+# ------------------------------------------------ endgame event sfx (V0.2 final) --
+# Forging, Heroic dungeons, the level gates, the big islands' ferry, the Mad God's
+# Room forms and the Divine items. Each is a short list of layered notes:
+# (delay s, freq, freq_end, duration, wave, volume, envelope, decay). All synthesized
+# here from scratch - no samples, no borrowed melodies.
+EVENT_SOUND = {
+    # hammer on hot metal: a clang, a ring, a second lighter tap
+    "forge_hammer": [(0.0, 880, 820, 0.18, "square", 0.12, "exp_decay", 22),
+                     (0.0, 0, 0, 0.06, "noise", 0.14, "exp_decay", 60),
+                     (0.0, 1760, 1700, 0.3, "sine", 0.06, "exp_decay", 9)],
+    # three clangs rising, then a bright shimmer: something good came off the Anvil
+    "forge_success": [(0.0, 700, 660, 0.14, "square", 0.1, "exp_decay", 24),
+                      (0.0, 0, 0, 0.05, "noise", 0.12, "exp_decay", 60),
+                      (0.16, 820, 780, 0.14, "square", 0.1, "exp_decay", 24),
+                      (0.16, 0, 0, 0.05, "noise", 0.12, "exp_decay", 60),
+                      (0.32, 980, 940, 0.16, "square", 0.11, "exp_decay", 20),
+                      (0.32, 0, 0, 0.05, "noise", 0.12, "exp_decay", 60),
+                      (0.5, 1320, 1980, 0.45, "sine", 0.08, "exp_decay", 6),
+                      (0.5, 1650, 2470, 0.45, "sine", 0.05, "exp_decay", 6)],
+    "forge_fail": [(0.0, 300, 180, 0.25, "square", 0.1, "exp_decay", 10),
+                   (0.12, 220, 130, 0.3, "triangle", 0.1, "exp_decay", 8)],
+    # the level gate: a low double buzz
+    "gate_denied": [(0.0, 150, 140, 0.16, "square", 0.11, "linear", 0),
+                    (0.2, 120, 110, 0.22, "square", 0.11, "linear", 0)],
+    # a Heroic portal tearing open: rising noise sweep over a minor-ish dyad
+    "heroic_portal": [(0.0, 0, 0, 0.6, "noise", 0.07, "exp_decay", 4),
+                      (0.0, 220, 440, 0.6, "triangle", 0.1, "linear", 0),
+                      (0.0, 262, 523, 0.6, "sine", 0.07, "linear", 0),
+                      (0.55, 880, 860, 0.5, "sine", 0.06, "exp_decay", 5)],
+    # the ferry bell at an island harbour
+    "harbour_bell": [(0.0, 523, 520, 1.1, "sine", 0.1, "exp_decay", 3),
+                     (0.0, 1310, 1305, 0.9, "sine", 0.04, "exp_decay", 4),
+                     (0.0, 784, 780, 0.9, "triangle", 0.03, "exp_decay", 4)],
+    # the Mad God changing form: a falling roar, a thud, a wobbling growl
+    "mg_transform": [(0.0, 0, 0, 1.0, "noise", 0.12, "exp_decay", 2.5),
+                     (0.0, 160, 45, 1.0, "square", 0.12, "exp_decay", 2.5),
+                     (0.35, 55, 40, 0.5, "square", 0.14, "exp_decay", 6),
+                     (0.5, 90, 70, 0.9, "triangle", 0.1, "exp_decay", 3)],
+    "mg_enrage": [(0.0, 110, 220, 0.5, "square", 0.1, "linear", 0),
+                  (0.0, 0, 0, 0.5, "noise", 0.06, "exp_decay", 3)],
+    # a Divine item dropping: a four-note rising arpeggio with a halo on top
+    "divine_drop": [(0.0, 523, 523, 0.16, "sine", 0.1, "exp_decay", 10),
+                    (0.1, 659, 659, 0.16, "sine", 0.1, "exp_decay", 10),
+                    (0.2, 784, 784, 0.16, "sine", 0.1, "exp_decay", 10),
+                    (0.3, 1047, 1047, 0.6, "sine", 0.1, "exp_decay", 4),
+                    (0.3, 2093, 2100, 0.6, "sine", 0.04, "exp_decay", 4)],
+    "mythic_drop": [(0.0, 587, 587, 0.14, "triangle", 0.1, "exp_decay", 12),
+                    (0.1, 880, 880, 0.4, "triangle", 0.1, "exp_decay", 6)],
+    "starfall": [(0.0, 1400, 2400, 0.12, "sine", 0.06, "exp_decay", 18),
+                 (0.03, 1800, 2800, 0.1, "sine", 0.04, "exp_decay", 20)],
+    "second_wind": [(0.0, 330, 660, 0.35, "sine", 0.12, "linear", 0),
+                    (0.3, 660, 990, 0.5, "sine", 0.1, "exp_decay", 4),
+                    (0.0, 0, 0, 0.4, "noise", 0.04, "exp_decay", 6)],
+    # the new "ring with gaps" warning tone: a quick ticking pulse
+    "ring_warn": [(0.0, 740, 740, 0.05, "square", 0.05, "linear", 0),
+                  (0.1, 740, 740, 0.05, "square", 0.05, "linear", 0),
+                  (0.2, 988, 988, 0.08, "square", 0.05, "linear", 0)],
+    # a heroic trial / island "calmed" / quest completion sting
+    "trial_done": [(0.0, 392, 392, 0.15, "triangle", 0.1, "exp_decay", 10),
+                   (0.12, 523, 523, 0.15, "triangle", 0.1, "exp_decay", 10),
+                   (0.24, 784, 784, 0.4, "triangle", 0.1, "exp_decay", 5)],
+}
+
+
+def _event_sound(key):
+    notes = EVENT_SOUND[key]
+    total = max(n[0] + n[3] for n in notes)
+    layers = []
+    for delay, f0, f1, dur, wave, vol, env, decay in notes:
+        pad = [0] * int(SAMPLE_RATE * delay)
+        layers.append(pad + _samples(f0, dur, vol, wave, f1 if f1 != f0 else None, envelope=env,
+                                     decay_rate=decay or 8.0))
+    out = _mix(*layers)
+    return out[:int(SAMPLE_RATE * (total + 0.02))]
+
+
+def play_event(key):
+    """One of EVENT_SOUND's endgame stingers (unknown keys are ignored)."""
+    if key not in EVENT_SOUND:
+        return
+    _play(f"event_{key}", lambda: _sound_from(_event_sound(key)))

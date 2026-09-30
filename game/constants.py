@@ -48,13 +48,18 @@ TIER_COLORS = {
     "t_low": (222, 222, 222),      # tiers 1-3 (brown-bag common)
     "t_mid": (86, 156, 255),       # tiers 4-6
     "t_high": (176, 84, 232),      # tiers 7-9 (purple bag / soulbound)
-    "t_top": (255, 150, 40),       # tiers 10+
+    "t_top": (255, 150, 40),       # tiers 10-11
+    "t_mythic": (70, 225, 215),    # tiers 12-13 (Heroic dungeons / big islands / the Mad God's Room)
+    "t_forged": (255, 80, 95),     # tier 14 - Anvil-forged only (game/forge.py)
     "ut": (255, 210, 60),          # untiered - rarest, white-bag drop
+    "divine": (255, 246, 196),     # the Mad God's Room's Divine items
 }
 BAG_COLORS = {
     "brown": (120, 84, 48),
     "purple": (130, 60, 160),
     "white": (235, 235, 235),
+    "cyan": (40, 175, 185),        # mythic-tier drops (T12-T13)
+    "gold": (235, 195, 70),        # Divine drops
 }
 
 # --------------------------------------------------------------- formulas --

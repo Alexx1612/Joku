@@ -296,10 +296,16 @@ def _portal_entries():
     from game import realm_sim
     out = []
     for key, th in realm_sim.DUNGEON_THEMES.items():
-        opened = ("Only opened by Father Given in the Finale (after Act V)." if key == "forge" else
-                  "Opened by a Dungeon Shard dropped by: " +
-                  (", ".join(sorted({_pretty(k) for k, t in realm_sim.THEME_FOR_KIND.items() if t == key}))
-                   or "any elite") + ".")
+        if th.get("heroic"):
+            opened = (f"The Heroic version of the {realm_sim.DUNGEON_THEMES[th['base']]['label']}: elites only, two "
+                      "more rooms, 3.6x HP, faster bullets - and mythic T12-T13 loot plus Forge Ingots. Level 16+. "
+                      "Opened by a Heroic Shard: finish that dungeon's Heroic trial quest for the first one; Hard "
+                      "clears and Heroic bosses drop more.")
+        else:
+            opened = ("Only opened by Father Given in the Finale (after Act V)." if key == "forge" else
+                      "Opened by a Dungeon Shard dropped by: " +
+                      (", ".join(sorted({_pretty(k) for k, t in realm_sim.THEME_FOR_KIND.items() if t == key}))
+                       or "any elite") + ".")
         out.append(dict(id=f"area:dungeon:{key}", cat="portals", title=th["label"],
                         sprite={"src": "portal", "key": "dungeon_shard"},
                         stats=[("Bosses", ", ".join(_pretty(b) for b in th["bosses"][:3])),

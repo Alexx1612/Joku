@@ -56,8 +56,8 @@ def _player(name="Tester", pid=None, cls="wizard"):
 def check_content_counts():
     people = [k for k, d in npcs.NPCS.items() if d["kind"] == "person"]
     creatures = [k for k, d in npcs.NPCS.items() if d["kind"] == "creature"]
-    assert len(people) == 11 and len(creatures) == 4, (len(people), len(creatures))
-    assert len(QUESTS) == 30, len(QUESTS)
+    assert len(people) == 12 and len(creatures) == 4, (len(people), len(creatures))  # +Brother Hammerstein (Anvil)
+    assert len(QUESTS) == 37, len(QUESTS)  # 30 + the 7 Heroic trials
     for qid, q in QUESTS.items():
         assert q["target"]["kind"] in ("mob", "npc", "area", "boss"), qid
         if q["giver"] is not None:

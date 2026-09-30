@@ -19,6 +19,7 @@ Conversation (quest grants are authoritative) and sends view() dicts to the clie
 """
 from game.npcs import NPCS, WILDLIFE_TALK, WILDLIFE_DEFAULT
 from game.sidequests import QUESTS
+from game import forge
 
 BYE = "Bye."
 BACK = "Back."
@@ -37,6 +38,8 @@ class Conversation:
         self.done = False
         self.msgs = []           # feed lines produced by the last start()/choose()
         self.granted = []        # quest ids accepted in this conversation (for callers/tests)
+        self.sfx = []            # sound keys the caller should play (forging) - drained by main/server
+        self.forged = []         # items made at the Anvil in this conversation (for callers/tests)
 
     # ------------------------------------------------------------------ data --
     @property
@@ -85,6 +88,9 @@ class Conversation:
             return opts
         d = NPCS[self.npc_id]
         heard = self._heard()
+        if d.get("anvil"):  # Brother Hammerstein: whatever the backpack can forge right now comes first
+            for i, r in enumerate(forge.forge_options(self.player)):
+                opts.append((r["label"], ("forge", i)))
         # quest hand-ins first - that's what you came back for
         for qid in d.get("quests", {}):
             q = QUESTS[qid]
@@ -124,6 +130,8 @@ class Conversation:
             return d["again"] if self._root_options() else d["exhausted"]
         if kind == "topic":
             return next(t[2] for t in d["topics"] if t[0] == self.node[1])
+        if kind == "forged":
+            return "CLANG! CLANG! ...CLANG. There. Mind, it's hot."
         offer = d["quests"][self.node[1]]
         return {"offer": offer["offer"], "accepted": offer["accept"], "remind": offer["remind"],
                 "thanks": offer["thanks"]}.get(kind, "...")
@@ -178,6 +186,19 @@ class Conversation:
             ok, msgs = self.progress.turn_in(key[1], self.player)
             self.msgs.extend(msgs)
             self.node = ("thanks", key[1]) if ok else ("root",)
+        elif act == "forge":
+            self.used.discard(key)  # the same slot can forge again with whatever is left
+            recipes = forge.forge_options(self.player)
+            if key[1] < len(recipes):
+                ok, msg, res = forge.apply_forge(self.player, recipes[key[1]])
+                self.msgs.append((msg, res.color if res else (220, 150, 90)))
+                if ok:
+                    self.forged.append(res)
+                    self.sfx.append("forge_success")
+                    sp = getattr(self.player, "story", None)
+                    if sp is not None:
+                        self.msgs.extend(sp.on_event("forge"))
+            self.node = ("forged",)
         return self.view()
 
     def bye(self):

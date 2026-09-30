@@ -1707,6 +1707,24 @@ _ASHENREACH_DEVOURER_NEW = _mirror([
 _ASHENREACH_DEVOURER_NEW_PAL = dict(_ASHENREACH_DEVOURER_PAL, T=(245, 240, 225))
 
 # --- NPC people (16 wide, same scale as the class sprites) -------------------
+_NPC_HAMMERSTEIN = (_pad([   # Brother Hammerstein: bald monk-smith, grey beard, leather apron, big hammer
+    "      hhhh      ",
+    "     hhhhhh     ",
+    "     hEhhEh  ss ",
+    "     gggggg sSss",
+    "    gggggggg ss ",
+    "   rrggggggrr t ",
+    "  rrrraaaarrr t ",
+    "  hrraaaaaarr t ",
+    "   rraaaaaarrht ",
+    "   rraaooaarr   ",
+    "    raaaaaar    ",
+    "    rrr  rrr    ",
+    "     ll  ll     ",
+    "     kk  kk     ",
+]), {"h": (228, 178, 138), "E": (30, 25, 25), "g": (196, 196, 204), "r": (122, 72, 42), "a": (72, 50, 34),
+     "o": (255, 150, 60), "s": (150, 156, 168), "S": (205, 210, 220), "t": (112, 80, 50), "l": (70, 50, 40),
+     "k": (35, 28, 20)})
 _NPC_BARKEEP = (_pad([
     "      hhhh      ",
     "     hhhhhh     ",
@@ -1882,7 +1900,7 @@ ENEMY_GRIDS.update({
     "npc_barkeep": _NPC_BARKEEP, "npc_mossbeard": _NPC_MOSSBEARD, "npc_sandy_sal": _NPC_SANDY_SAL,
     "npc_frostine": _NPC_FROSTINE, "npc_driftwood": _NPC_DRIFTWOOD, "npc_murk": _NPC_MURK,
     "npc_tipsy": _NPC_TIPSY, "npc_cinder_pete": _NPC_CINDER_PETE, "npc_fernleaf": _NPC_FERNLEAF,
-    "npc_glimmer": _NPC_GLIMMER,
+    "npc_glimmer": _NPC_GLIMMER, "npc_hammerstein": _NPC_HAMMERSTEIN,
 })
 
 
@@ -2608,6 +2626,25 @@ def item_icon(tier_color, shape="sword") -> pygame.Surface:
         pygame.draw.polygon(surf, (95, 35, 135), [(21, 13), (16, 25), (14, 14)])
         pygame.draw.line(surf, (225, 190, 250), (14, 6), (14, 19), 1)
         pygame.draw.polygon(surf, OUTLINE, outer, width=1)
+    elif shape == "ingot":
+        # a Forge Ingot: a glowing trapezoid bar of star-iron, hot along its top edge
+        bar = [(5, 19), (9, 11), (21, 11), (24, 19)]
+        pygame.draw.polygon(surf, (70, 62, 76), bar)
+        pygame.draw.polygon(surf, (120, 112, 132), [(9, 11), (21, 11), (19, 14), (11, 14)])
+        pygame.draw.line(surf, (255, 170, 80), (10, 12), (20, 12), 1)
+        pygame.draw.line(surf, (255, 230, 160), (12, 12), (17, 12), 1)
+        pygame.draw.polygon(surf, OUTLINE, bar, width=1)
+        for (sx, sy) in ((8, 8), (22, 7), (15, 6)):
+            pygame.draw.circle(surf, (255, 200, 120), (sx, sy), 1)
+    elif shape == "key":
+        # the Mad God's Room Key: a heavy crimson-and-gold key with a crowned bow
+        pygame.draw.circle(surf, (120, 20, 40), (9, 10), 6)
+        pygame.draw.circle(surf, (230, 60, 80), (9, 10), 6, 2)
+        pygame.draw.circle(surf, (30, 10, 16), (9, 10), 2)
+        pygame.draw.line(surf, (230, 190, 70), (13, 13), (23, 23), 3)
+        pygame.draw.line(surf, (230, 190, 70), (19, 19), (22, 16), 2)
+        pygame.draw.line(surf, (230, 190, 70), (21, 21), (24, 18), 2)
+        pygame.draw.polygon(surf, (255, 215, 90), [(5, 4), (7, 1), (9, 4), (11, 1), (13, 4)])
     elif shape == "egg":
         pygame.draw.ellipse(surf, (60, 45, 30), (7, 4, 15, 21))
         pygame.draw.ellipse(surf, tier_color, (8, 5, 13, 19), width=1)

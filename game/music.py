@@ -113,6 +113,22 @@ TRACKS = {
                                 "pulse", "soaring lydian tremolo rock in G"),
     "dungeon_forge": _spec("Closing Time", 40, "harmonic_minor", 176, "punk", 353, [0, 5, 4, 0], [5, 3, 4, 4],
                            [1, 4], "square", "frantic finale speed-rock in E harmonic minor"),
+    # --- Heroic dungeons: the same dungeon's family, pushed harder (faster, darker, heavier)
+    "dungeon_heroic_generic": _spec("Vault of No Return", 38, "harmonic_minor", 132, "gallop", 401, [0, 5, 6, 4],
+                                    [5, 6, 4, 0], [3, 1], "square",
+                                    "heavier galloping take on the vault crawl in D harmonic minor"),
+    "dungeon_heroic_cave": _spec("Warren Collapse", 36, "phrygian", 104, "halftime", 409, [0, 1, 5, 1],
+                                 [6, 1, 0, 5], [3, 6], "square", "crushing half-time sludge in C phrygian"),
+    "dungeon_heroic_frozen_crypt": _spec("Crypt Blizzard", 39, "aeolian", 152, "punk", 419, [0, 6, 5, 6],
+                                         [3, 6, 0, 4], [5, 3], "pulse", "blasting ice-punk in D# minor"),
+    "dungeon_heroic_jungle_ruins": _spec("Idol's Wrath", 42, "phrygian", 144, "tribal", 421, [0, 1, 4, 1],
+                                         [6, 1, 0, 4], [5, 1], "square", "furious tribal war-drums in F# phrygian"),
+    "dungeon_heroic_ember_den": _spec("Caldera", 40, "harmonic_minor", 184, "punk", 431, [0, 1, 5, 4],
+                                      [5, 4, 1, 0], [6, 4], "pulse", "white-hot speed metal in E harmonic minor"),
+    "dungeon_heroic_sunken_grotto": _spec("Undertow Hymn", 41, "phrygian", 90, "doom", 433, [0, 6, 1, 0],
+                                          [1, 6, 5, 6], [3, 5], "triangle", "drowning doom hymn in F phrygian"),
+    "dungeon_heroic_wind_spire": _spec("Eye of the Gale", 43, "dorian", 160, "gallop", 439, [0, 6, 3, 6],
+                                       [2, 3, 6, 0], [4, 5], "square", "storm-front power gallop in G dorian"),
 }
 
 # the dungeon label a co-op client receives over the network -> track key
@@ -121,6 +137,8 @@ DUNGEON_LABEL_TO_KEY = {
     "Ember Den": "ember_den", "Sunken Grotto": "sunken_grotto", "Wind Spire": "wind_spire",
     "Forgotten Vault": "generic", "The Forge": "forge",
 }
+DUNGEON_LABEL_TO_KEY.update({f"{label} (Heroic)": f"heroic_{key}" for label, key in list(DUNGEON_LABEL_TO_KEY.items())
+                             if key != "forge"})
 BIOMES = ("forest", "desert", "tundra", "swamp", "highlands", "ashlands", "jungle", "wasteland", "ice", "cave")
 
 

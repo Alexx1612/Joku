@@ -302,6 +302,8 @@ BONUS_DIFFICULTIES = [
     {"name": "Easy", "weight": 55, "enemy_scale": 1.15, "cap": 10, "loot_rolls": 1},
     {"name": "Medium", "weight": 32, "enemy_scale": 1.6, "cap": 13, "loot_rolls": 2},
     {"name": "Hard", "weight": 13, "enemy_scale": 2.3, "cap": 16, "loot_rolls": 3},
+    # never rolled (weight 0): only a Heroic Shard opens this (see shard_difficulty)
+    {"name": "Heroic", "weight": 0, "enemy_scale": 3.6, "cap": 18, "loot_rolls": 3},
 ]
 
 # Dungeon themes ("try to make more dungeons for each mob to drop almost"): which
@@ -353,6 +355,48 @@ THEME_FOR_KIND = {
     "troll": "sunken_grotto", "skeleton": "sunken_grotto", "bog_crawler": "sunken_grotto",
     "harpy": "wind_spire", "scorpion": "wind_spire", "cliff_strider": "wind_spire", "dune_stalker": "wind_spire",
 }
+
+# ------------------------------------------------------------ Heroic dungeons --
+# Every dungeon (bar the story Forge) has a Heroic version: same look, music family and
+# boss pool, but elite-only rooms, two more rooms, 3.6x HP (the "Heroic" difficulty),
+# faster, denser fire (HEROIC_BULLET_SPEED / HEROIC_FIRE_RATE) and the "heroic" loot
+# source (mythic T12-T13, Forge Ingots). Unlocked per theme by that dungeon's Heroic
+# trial side quest (game/sidequests.HEROIC_TRIALS), opened with a Heroic Shard, level
+# 16+ (game/gates.py).
+HEROIC_PREFIX = "heroic_"
+HEROIC_BASES = ("generic", "cave", "frozen_crypt", "jungle_ruins", "ember_den", "sunken_grotto", "wind_spire")
+HEROIC_EXTRA_ROOMS = 2
+HEROIC_BULLET_SPEED = 1.25
+HEROIC_FIRE_RATE = 0.8   # cooldown multiplier (lower = more often)
+HEROIC_SHARD_FROM_HARD = 0.15    # a Hard clear of an UNLOCKED theme can drop that theme's Heroic Shard
+HEROIC_SHARD_FROM_HEROIC = 0.25  # a Heroic boss re-drops one
+
+
+def _heroic_theme(base_key):
+    b = DUNGEON_THEMES[base_key]
+    pairs = [(k, w) for k, w in zip(b["kinds"], b["weights"]) if ENEMY_KINDS.get(k, {}).get("rank") == "elite"]
+    if not pairs:
+        pairs = list(zip(b["kinds"], b["weights"]))
+    return dict(b, label=f"{b['label']} (Heroic)", kinds=[k for k, _w in pairs], weights=[w for _k, w in pairs],
+                heroic=True, base=base_key)
+
+
+for _base in HEROIC_BASES:
+    DUNGEON_THEMES[HEROIC_PREFIX + _base] = _heroic_theme(_base)
+
+
+def heroic_label(base_key):
+    return DUNGEON_THEMES[HEROIC_PREFIX + base_key]["label"]
+
+
+def shard_difficulty(theme_name):
+    """The difficulty a shard's portal opens at, rolled when the shard is USED (so it can
+    be shown on the portal): Heroic Shards are always "Heroic", the rest roll Easy/Medium/Hard."""
+    if theme_name.startswith(HEROIC_PREFIX):
+        return "Heroic"
+    rollable = [d for d in BONUS_DIFFICULTIES if d["weight"] > 0]
+    return random.choices(rollable, weights=[d["weight"] for d in rollable])[0]["name"]
+
 
 # ------------------------------------------------------ secret dungeon quest --
 # A dungeon instance has a chance to hide a "???" secret quest (RotMG's classic
@@ -434,19 +478,23 @@ class RealmSim:
         self.theme_key = theme_key
         self.theme = DUNGEON_THEMES.get(theme, DUNGEON_THEMES["generic"])
         self.theme_name = self.theme["label"]
+        self.is_heroic = bool(self.theme.get("heroic"))
+        self.base_theme = self.theme.get("base", theme_key)  # layout / props / ambience come from the base
+        self.loot_source = "heroic" if self.is_heroic else None  # items.LOOT_SOURCES extras for every kill here
         self.rooms = []      # [{"rect": pygame.Rect, "enemies": [Enemy,...], "cleared": bool}, ...] - fixed,
         # non-respawning mob pods per dungeon room (bonus rooms only; always empty in the open Realm)
         self.obstacles = []  # destructible one-shot wall props (bonus rooms only)
         if bonus:
             grid, dinfo = world.make_bonus_room(floor_tile=self.theme["floor"], wall_tile=self.theme["wall"],
-                                                 theme_name=theme_key)
+                                                 theme_name=self.base_theme,
+                                                 room_bonus=HEROIC_EXTRA_ROOMS if self.is_heroic else 0)
             self.realm_map = world.TileMap(grid)
             ex, ey = dinfo["entrance"]
             bx, by = dinfo["boss_room"]
             self._entrance_pos = pygame.Vector2(ex * TILE + TILE / 2, ey * TILE + TILE / 2)
             self._boss_room_pos = pygame.Vector2(bx * TILE + TILE / 2, by * TILE + TILE / 2)
             self._ambient_bounds = (0, 0, len(grid[0]) * TILE, len(grid) * TILE)
-            self._ambient = vfx.AmbientEvents(vfx.DUNGEON_AMBIENT_KINDS.get(theme_key,
+            self._ambient = vfx.AmbientEvents(vfx.DUNGEON_AMBIENT_KINDS.get(self.base_theme,
                                                                               vfx.DUNGEON_AMBIENT_KINDS["generic"]))
         else:
             self.realm_map = world.TileMap(world.make_realm())
@@ -1293,6 +1341,10 @@ class RealmSim:
                 # everything inside a dungeon room fights with its named special moves;
                 # the same kinds roaming the open Realm / islands only use basic shots
                 e.set_special(True)
+            if self.is_heroic and not getattr(e, "_heroic", False):
+                e._heroic = True  # Heroic: faster bullets, more often (HP comes from the "Heroic" difficulty)
+                e.bullet_speed_mult = HEROIC_BULLET_SPEED
+                e.fire_rate_mult *= HEROIC_FIRE_RATE
             target = min(alive, key=lambda p: p.pos.distance_to(e.pos))
             if not self.is_bonus_room and target.pos.distance_to(e.pos) > ACTIVE_SIM_RADIUS:
                 continue  # dormant - too far from every player to be worth simulating this tick
@@ -1377,6 +1429,12 @@ class RealmSim:
         self._resolve_pending_ability_effects(dt)
         self._update_bullets(dt, alive)
         self._tick_enemy_zones(dt, alive)
+        for p in alive:
+            if getattr(p, "second_wind_fired", False):
+                p.second_wind_fired = False
+                self.events.append((p.pid, "Second Wind! The Divine armor refuses to let you die.", (255, 246, 196)))
+                self.vfx_events.append(("divine_second_wind", p.pos.x, p.pos.y, (255, 246, 196)))
+                self.sound_events.append(("sfx", "second_wind", p.pos.x, p.pos.y))
         self._trigger_wildlife_flee()
         self._resolve_bullet_hits(players)
         self._maybe_spawn_boss(alive)
@@ -1704,6 +1762,24 @@ class RealmSim:
                 continue
             for msg, color in progress.on_event(kind, key):
                 self.events.append((p.pid, msg, color))
+
+    def _boss_key_drops(self, p):
+        """Heroic Shards (and, from Batch 6, the Mad God's Room Key) a dungeon boss adds to
+        ONE player's personal bag."""
+        out = []
+        if p is None or self.base_theme not in HEROIC_BASES:
+            return out
+        label = heroic_label(self.base_theme)
+        chance = 0.0
+        if self.is_heroic:
+            chance = HEROIC_SHARD_FROM_HEROIC
+        elif (self.difficulty or {}).get("name") == "Hard" and sidequests.heroic_unlocked(
+                getattr(p, "sidequests", None), self.base_theme):
+            chance = HEROIC_SHARD_FROM_HARD
+        if chance and random.random() < chance:
+            out.append(("purple", make_dungeon_shard(HEROIC_PREFIX + self.base_theme, label)))
+            self.events.append((p.pid, f"A Heroic Shard ({label}) dropped!", (230, 90, 120)))
+        return out
 
     def _story_personal(self, p, kind, key=None):
         """A story event that only counts for this one player (sightseeing, fishing, gear)."""
@@ -2115,19 +2191,34 @@ class RealmSim:
         for p in (credited or [None]):
             pid = p.pid if p is not None else None
             rolled_items = []
-            for _ in range(loot_rolls):
+            src = getattr(enemy, "loot_source", None) or self.loot_source
+            for roll_i in range(loot_rolls):
+                # the source's extras (mythic tier / ingots / Divine) ride the FIRST roll only
                 for bag_color, item in roll_loot(p.cls_name if p else cls_for_loot, enemy.rank,
-                                                 enemy.difficulty_fraction):
+                                                 enemy.difficulty_fraction, source=src if roll_i == 0 else None):
                     rolled_items.append((bag_color, item))
                     if item.is_ut:
                         self.events.append((pid, f"{item.name} dropped!", TIER_COLORS["ut"]))
+                    elif item.divine:
+                        self.events.append((pid, f"A DIVINE item dropped: {item.name}!", TIER_COLORS["divine"]))
+                        self.vfx_events.append(("divine_drop", enemy.pos.x, enemy.pos.y, TIER_COLORS["divine"]))
+                        self.sound_events.append(("sfx", "divine_drop", enemy.pos.x, enemy.pos.y))
+                    elif item.tier >= 12 and item.slot in ("weapon", "armor", "ring", "ability"):
+                        self.events.append((pid, f"{item.display_name} dropped!", item.color))
+                        self.vfx_events.append(("mythic_drop", enemy.pos.x, enemy.pos.y, item.color))
+                        self.sound_events.append(("sfx", "mythic_drop", enemy.pos.x, enemy.pos.y))
             if not self.is_bonus_room and enemy.rank == "elite" and (story_shard or random.random() < MOB_PORTAL_CHANCE):
                 theme_name = THEME_FOR_KIND.get(enemy.kind, "generic")
                 dropped_shard_label = DUNGEON_THEMES[theme_name]["label"]
                 rolled_items.append(("brown", make_dungeon_shard(theme_name, dropped_shard_label)))
                 self.events.append((pid, f"A Dungeon Shard ({dropped_shard_label}) dropped!", (190, 120, 230)))
             if p is not None and getattr(p, "sidequests", None) is not None:
-                for qit in sidequests.quest_drops(p.sidequests, p, enemy.kind, biome, enemy.rank):
+                if enemy is self.boss and self.is_bonus_room:
+                    rolled_items.extend(self._boss_key_drops(p))
+                for qit in sidequests.quest_drops(p.sidequests, p, enemy.kind, biome, enemy.rank,
+                                                  theme=self.base_theme if self.is_bonus_room else None,
+                                                  difficulty=(self.difficulty or {}).get("name"),
+                                                  is_boss=enemy is self.boss):
                     rolled_items.append(("brown", qit))
                     self.events.append((pid, f"{qit.name} dropped! (quest item)", (255, 215, 120)))
             if rolled_items:
@@ -2157,6 +2248,8 @@ class RealmSim:
             return
         if enemy is self.boss and self.is_bonus_room and not enemy.kind.endswith("_phase2")                 and self.theme_key != "forge":
             self._story_credit("dungeon", None, killer=killer)
+            if self.is_heroic:
+                self._story_credit("heroic_dungeon", self.base_theme, killer=killer)
             for p in self._story_players:
                 self._side_event(p, "dungeon", self.theme_key)
         if enemy is self.boss and enemy.kind == "mad_god_phase2":
@@ -2529,6 +2622,17 @@ class RealmSim:
             color = (150, 120, 255) if p.cls_name == "wizard" else (150, 255, 180)  # necromancer
             made.append(_mk_bullet(p.pos, direction, 380, dmg, color, owner=p.pid, pierce=pierce, radius=5,
                                     motion=motion, status_effect=status_effect, shape=shape))
+        if p.weapon.divine_proc == "starfall":
+            # Divine weapon: every Nth shot also looses a fan of piercing star bolts
+            from game.items import DIVINE_STARFALL_EVERY
+            p._starfall_n = getattr(p, "_starfall_n", 0) + 1
+            if p._starfall_n >= DIVINE_STARFALL_EVERY:
+                p._starfall_n = 0
+                for off in (-14, 0, 14):
+                    made.append(_mk_bullet(p.pos, direction.rotate(off), 460, max(1, int(dmg * 0.7)),
+                                            (255, 240, 170), owner=p.pid, pierce=3, radius=6, lifetime=0.9,
+                                            shape="star"))
+                self.sound_events.append(("sfx", "starfall", p.pos.x, p.pos.y))
         self.bullets.extend(made)
         return made
 

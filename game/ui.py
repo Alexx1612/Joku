@@ -239,8 +239,12 @@ def draw_hud(surf, zone_name, kill_count, boss_alive):
         surf.blit(panel, hr.topleft)
     _HEADER_PANEL_DRAWN[0] = False
     rect = zone_info_rect()
-    kc = _FONT_S.render("" if kill_count is None else f"kills: {kill_count}" + ("  BOSS!" if boss_alive else ""),
-                        True, (230, 150, 70) if boss_alive else (190, 190, 200))
+    heroic = zone_name.endswith(" (Heroic)")
+    if heroic:  # the label is long - show the dungeon's name in crimson and say HEROIC by the kills
+        zone_name = zone_name[:-len(" (Heroic)")]
+    kc = _FONT_S.render(("HEROIC  " if heroic else "")
+                        + ("" if kill_count is None else f"kills: {kill_count}" + ("  BOSS!" if boss_alive else "")),
+                        True, (255, 110, 120) if heroic else (230, 150, 70) if boss_alive else (190, 190, 200))
     room = rect.w - kc.get_width() - 10
     font = _FONT_M if _FONT_M.size(zone_name)[0] <= room else _FONT_S
     name = zone_name
@@ -248,7 +252,7 @@ def draw_hud(surf, zone_name, kill_count, boss_alive):
         while font.size(name + "...")[0] > room and len(name) > 3:
             name = name[:-1]
         name = name.rstrip() + "..."
-    t = font.render(name, True, (240, 228, 200))
+    t = font.render(name, True, (255, 130, 140) if heroic else (240, 228, 200))
     surf.blit(t, (rect.x, rect.centery - t.get_height() // 2))
     surf.blit(kc, (rect.right - kc.get_width(), rect.centery - kc.get_height() // 2))
     hint = _FONT_S.render("WASD move | mouse aim+click fire | Space ability | Enter chat", True, (150, 150, 160))

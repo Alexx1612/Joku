@@ -58,6 +58,7 @@ def _E():
 def _bullet(e, pos, direction, speed_mult=1.0, dmg_mult=1.0, color=RED, size=0, life=2.4, **kw):
     E = _E()
     dmg = max(1, int(round(random.randint(*e.dmg) * dmg_mult)))
+    speed_mult *= getattr(e, "bullet_speed_mult", 1.0)  # Heroic dungeons fire faster bullets
     b = E._mk_bullet(pos, pygame.Vector2(direction), BASE_SPEED * speed_mult, dmg, color,
                      radius=e._bullet_radius() + size, lifetime=life, **kw)
     return b
@@ -333,9 +334,10 @@ def tele_for(e, m, target, lead, aim):
         return d.normalize() if d.length_squared() > 1 else pygame.Vector2(aim)
 
     br = e._bullet_radius() + m.get("size", 0)
+    fast = getattr(e, "bullet_speed_mult", 1.0)  # lanes / spokes are drawn as far as the real shots fly
     if tele == "line":
         d = toward(lead if m.get("lead") else target)
-        length = max(m.get("tele_len", 420), reach(m))
+        length = max(m.get("tele_len", 420), reach(m) * fast)
         if m["fn"] == "wall":
             n = m.get("n", 7)
             spacing = m.get("spacing", 26)
@@ -351,7 +353,7 @@ def tele_for(e, m, target, lead, aim):
         return d, None
     if tele == "cone":
         d = toward(target)
-        _zone(e, "cone", e.pos, run, ORANGE, r=max(m.get("tele_len", 170), reach(m) * 1.12),
+        _zone(e, "cone", e.pos, run, ORANGE, r=max(m.get("tele_len", 170), reach(m) * 1.12 * fast),
               width=m.get("arc", 40) + 10, ang=d.as_polar()[1], sfx=None)
         return d, None
     if tele == "dash":

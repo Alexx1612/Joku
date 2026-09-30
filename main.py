@@ -50,6 +50,7 @@ from game import options_menu
 from game.panel_drag import PanelDrag
 from game.chat_input import ChatInput, LogSelection
 from game import story
+from game import gates
 from game import dialogue
 from game import npcs
 from game import journal
@@ -57,7 +58,7 @@ from game import codex
 from game import sidequests
 from game.entities import (Player, Bag, Portal, NexusBot, find_nearby_bag, bag_by_id,
                             withdraw_from_bag, BazaarChest, deposit_to_bag, spawn_bazaar_chests)
-from game.realm_sim import (RealmSim, audible_mob_speech, auto_aim_direction, DUNGEON_THEMES, BONUS_DIFFICULTIES, AUTO_AIM_CONE_DEG,
+from game.realm_sim import (RealmSim, shard_difficulty, audible_mob_speech, auto_aim_direction, DUNGEON_THEMES, BONUS_DIFFICULTIES, AUTO_AIM_CONE_DEG,
                              FORGE_DIFFICULTY)
 from game.items import (load_vault, save_vault, vault_exists, VAULT_SLOTS, VAULT_CHEST_SIZE,
                          PERMANENT_POTION_CAP, identify_proc_kind, apply_socket, SLOT_WEAPON)
@@ -272,6 +273,12 @@ class Game:
         self.state = STATE_BAZAAR
 
     def enter_bonus_room(self, theme="generic", kind=None, difficulty=None):
+        ok, gate_msg = gates.can_enter(self.player, theme)
+        if gate_msg:
+            self.push_feed(gate_msg, (230, 120, 120) if not ok else (240, 210, 140))
+        if not ok:
+            audio.play_event("gate_denied")
+            return
         self.bonus_sim = RealmSim(bonus=True, theme=theme, difficulty_name=difficulty, story_act=self.player.story.act)
         self._bonus_from_nexus = False
         self.bonus_minimap = minimap.MinimapState()
@@ -1280,6 +1287,9 @@ class Game:
         view = conv.choose(idx)
         for msg, color in conv.msgs:
             self.push_feed(msg, color)
+        for key in conv.sfx:  # e.g. the Anvil's forge_success
+            audio.play_event(key)
+        conv.sfx = []
         if view is None:
             self.dialogue = None
 
@@ -1475,10 +1485,13 @@ class Game:
                 theme_label = DUNGEON_THEMES.get(theme_name, DUNGEON_THEMES["generic"])["label"]
                 # rolled NOW (not on arrival) so the difficulty can be shown as a
                 # label on the portal itself before anyone steps through it
-                diff_name = random.choices(BONUS_DIFFICULTIES, weights=[d["weight"] for d in BONUS_DIFFICULTIES])[0]["name"]
+                diff_name = shard_difficulty(theme_name)
                 self.realm_sim.portals.append(Portal(p.pos, theme=theme_name, kind="dungeon_shard",
                                                       difficulty=diff_name))
                 self.push_feed(f"A {diff_name} portal to the {theme_label} tears open!", (190, 120, 230))
+                if gates.zone_kind(theme_name) is not None:
+                    self.realm_sim.vfx_events.append(("heroic_portal", p.pos.x, p.pos.y, (230, 60, 90)))
+                    audio.play_event("heroic_portal")
         else:
             p.backpack.pop(idx)
             p.equip(it, backpack_idx=idx)
@@ -1675,6 +1688,8 @@ class Game:
                 audio.play_enemy_attack(family)
             elif kind == "ability":
                 audio.play_ability(family)
+            elif kind == "sfx":
+                audio.play_event(family)
         for kind, text in audible_mob_speech(sim.mob_speech_events, self.player.pos):
             self.chat_log.append({"name": kind.replace("_", " ").title(), "text": text, "age": 0.0})
             self.chat_log = self.chat_log[-ui.CHAT_LOG_STORE_CAP:]
@@ -1962,6 +1977,8 @@ class Game:
         torch_positions = [self.cam(pos) for pos in
                            world.nearby_torch_world_positions(sim.realm_map, self.player.pos.x, self.player.pos.y)]
         ui.draw_day_night_overlay(s, sim.light_level, sim.blood_moon_active, torch_positions)
+        if getattr(sim, "is_heroic", False):
+            vfx.draw_heroic_tint(s)
         self.weather_fx.draw(s)
         ui.draw_dock_frame(s, self.player)
         if not sim.is_bonus_room:

@@ -35,7 +35,9 @@ from game import codex
 from game import sidequests
 from game.entities import (Player, Bag, Portal, NexusBot, find_nearby_bag, bag_by_id,
                             withdraw_from_bag, BazaarChest, deposit_to_bag, spawn_bazaar_chests)
-from game.realm_sim import RealmSim, DUNGEON_THEMES, BONUS_DIFFICULTIES, FORGE_DIFFICULTY, audible_mob_speech
+from game.realm_sim import (RealmSim, DUNGEON_THEMES, BONUS_DIFFICULTIES, FORGE_DIFFICULTY, audible_mob_speech,
+                            shard_difficulty)
+from game import gates
 from game.items import (load_vault, save_vault, VAULT_SLOTS, VAULT_CHEST_SIZE, VAULT_CHEST_COUNT,
                          wish_fountain, apply_socket, PET_KINDS)
 from game.netmsg import send_msg, MessageReader
@@ -520,12 +522,14 @@ def step(state, dt):
 def _send_dialogue(s):
     conv = s.conversation
     view = conv.view() if conv is not None else None
+    sfx = []
     if conv is not None:
         s.story_feed.extend(conv.msgs)
         conv.msgs = []
+        sfx, conv.sfx = list(conv.sfx), []
         if view is None:
             s.conversation = None
-    send_msg(s.sock, {"type": "dialogue", "view": view})
+    send_msg(s.sock, {"type": "dialogue", "view": view, "sfx": sfx})
 
 
 def _npcs_for_session(state, s):
@@ -589,10 +593,12 @@ def _apply_action(state, s, action):
                     theme_label = DUNGEON_THEMES.get(theme_name, DUNGEON_THEMES["generic"])["label"]
                     # rolled NOW (not on arrival) so the difficulty can be shown as a
                     # label on the portal itself before anyone steps through it
-                    diff_name = random.choices(BONUS_DIFFICULTIES,
-                                                weights=[d["weight"] for d in BONUS_DIFFICULTIES])[0]["name"]
+                    diff_name = shard_difficulty(theme_name)
                     state.realm_sim.portals.append(Portal(p.pos, theme=theme_name, kind="dungeon_shard",
                                                            difficulty=diff_name))
+                    if gates.zone_kind(theme_name) is not None:
+                        state.realm_sim.vfx_events.append(("heroic_portal", p.pos.x, p.pos.y, (230, 60, 90)))
+                        state.realm_sim.sound_events.append(("sfx", "heroic_portal", p.pos.x, p.pos.y))
                     state.chat_queue.append((None, s.zone,
                                               f"[A {diff_name} portal to the {theme_label} tears open!]"))
             elif it.slot == action.get("slot", it.slot):
@@ -835,6 +841,13 @@ def _apply_action(state, s, action):
             s.portal_prompt = None
             return
         if s.zone == ZONE_REALM:
+            ok, gate_msg = gates.can_enter(s.player, theme)
+            if gate_msg:
+                s.story_feed.append((gate_msg, (230, 120, 120) if not ok else (240, 210, 140)))
+            if not ok:
+                state.realm_sim.sound_events.append(("sfx", "gate_denied", s.player.pos.x, s.player.pos.y))
+                s.portal_prompt = None
+                return
             # each dungeon-shard portal gets its OWN instance, keyed by the specific
             # Portal object's own id - a second player who touches the SAME physical
             # portal joins the SAME instance (portal_instance_map already has it);

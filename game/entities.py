@@ -524,6 +524,7 @@ class Player:
         self._dash_time = max(0.0, self._dash_time - dt)
         self._dash_cd = max(0.0, self._dash_cd - dt)
         self._dash_iframes = max(0.0, self._dash_iframes - dt)
+        self._second_wind_cd = max(0.0, getattr(self, "_second_wind_cd", 0.0) - dt)
         self.haste_time = max(0.0, self.haste_time - dt)
         self.root_time = max(0.0, self.root_time - dt)
         if self.shield_time > 0:
@@ -562,6 +563,14 @@ class Player:
             real -= absorbed
         self.hp -= real
         self._hit_flash = 0.15
+        if self.hp <= 0 and self.armor is not None and self.armor.divine_proc == "second_wind" \
+                and getattr(self, "_second_wind_cd", 0.0) <= 0:
+            # Divine armor: the killing blow leaves you at 1 HP with a moment of invulnerability
+            from game.items import DIVINE_SECOND_WIND_CD
+            self.hp = 1
+            self._dash_iframes = 2.0
+            self._second_wind_cd = DIVINE_SECOND_WIND_CD
+            self.second_wind_fired = True  # one-tick flag the sim turns into a banner + vfx + sound
         if self.hp <= 0:
             self.hp = 0
             self.alive = False

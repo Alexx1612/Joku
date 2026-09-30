@@ -391,6 +391,23 @@ ABILITY_STYLES = {
 }
 
 
+def _extend_endgame_ability_styles():
+    """The endgame abilities (T12 "... of the Undertow", T14 "Anvil-Wrought ...", Divine
+    "The Mad God's ...") cast with the look of their class's T9 capstone."""
+    from game.items import ABILITIES
+    for rows in ABILITIES.values():
+        cap = ABILITY_STYLES.get(rows[2][0])
+        if cap is None:
+            continue
+        for r in rows[3:]:
+            ABILITY_STYLES.setdefault(r[0], cap)
+        noun = rows[4][0].replace("Anvil-Wrought ", "")
+        ABILITY_STYLES.setdefault(f"The Mad God's {noun}", cap)
+
+
+_extend_endgame_ability_styles()
+
+
 def _around(pos, r):
     ang = random.uniform(0, math.tau)
     d = random.uniform(0, r)
@@ -515,6 +532,42 @@ def dispatch(vfx_events):
             spawn_ring(pos, (255, 230, 180), max_radius=110, life=0.45)
             if _listener_dist(x, y) <= BOSS_SHAKE_RANGE:
                 trigger_shake(0.6, 12)
+        elif kind == "divine_second_wind":
+            # the Divine armor saving you: a golden pillar + halo rings rising off the player
+            _add_shape("pillar", pos, color, 0.7, w=26, h=120)
+            spawn_ring(pos, color, max_radius=90, life=0.6)
+            spawn_ring(pos, (255, 255, 255), max_radius=55, life=0.45)
+            spawn_rise(pos, color, count=24, life=(0.6, 1.1), speed=(40, 90), radius=(2, 4), spread=18)
+        elif kind == "forge_sparks":
+            # the Anvil: a spray of hot sparks upward plus a quick flash ring
+            spawn_burst(pos, (255, 190, 90), count=30, speed=(80, 240), life=(0.25, 0.6), radius=(1, 3),
+                        angle_range=(math.pi * 1.1, math.pi * 1.9))
+            spawn_ring(pos, color, max_radius=40, life=0.3)
+        elif kind == "heroic_portal":
+            # a Heroic portal tearing open: an inward swirl, then a crimson shockwave
+            spawn_converge(pos, color, count=36, radius=110, life=(0.45, 0.8), pradius=(2, 4))
+            spawn_ring(pos, color, max_radius=120, life=0.7)
+            spawn_ring(pos, (255, 200, 220), max_radius=70, life=0.5)
+        elif kind == "mg_transform":
+            # the Mad God changing form: everything rushes in, then blows out, with a big shake
+            spawn_converge(pos, color, count=60, radius=220, life=(0.5, 0.9), pradius=(3, 6))
+            spawn_burst(pos, color, count=90, speed=(120, 380), life=(0.6, 1.3), radius=(3, 8))
+            spawn_ring(pos, color, max_radius=260, life=1.0)
+            spawn_ring(pos, (255, 255, 255), max_radius=160, life=0.7)
+            if _listener_dist(x, y) <= BOSS_SHAKE_RANGE:
+                trigger_shake(0.9, 16)
+        elif kind == "divine_drop":
+            # a Divine item hit the floor: a tall white-gold beam that's hard to miss
+            _add_shape("pillar", pos, color, 1.6, w=18, h=260)
+            spawn_rise(pos, color, count=30, life=(0.8, 1.5), speed=(30, 80), radius=(1, 3), spread=10)
+            spawn_ring(pos, color, max_radius=60, life=0.8)
+        elif kind == "mythic_drop":
+            _add_shape("pillar", pos, color, 1.0, w=12, h=160)
+            spawn_ring(pos, color, max_radius=40, life=0.6)
+        elif kind == "harbour_ferry":
+            # boarding / leaving an island's ferry: a splash of sea spray
+            spawn_burst(pos, (170, 220, 255), count=34, speed=(60, 200), life=(0.3, 0.7), radius=(2, 4))
+            spawn_ring(pos, color, max_radius=90, life=0.6)
         elif kind == "boss_death":
             spawn_ring(pos, color, max_radius=200, life=0.8)
             if _listener_dist(x, y) <= BOSS_SHAKE_RANGE:
@@ -753,6 +806,29 @@ class NexusAmbience(AmbientEvents):
 
     def __init__(self):
         super().__init__(NEXUS_AMBIENT_KINDS, cooldown_range=(15, 45))
+
+
+# ------------------------------------------------------------ heroic tint --
+_HEROIC_TINT = {}
+
+
+def draw_heroic_tint(surf):
+    """Heroic dungeons: a crimson vignette over the whole view - same rooms, but it
+    reads instantly as 'this is the nasty version'."""
+    size = surf.get_size()
+    layer = _HEROIC_TINT.get(size)
+    if layer is None:
+        # a small radial gradient smooth-scaled up to the screen: an even crimson wash
+        # in the middle that deepens toward the edges, with no visible rings
+        gw, gh = 48, 30
+        small = pygame.Surface((gw, gh), pygame.SRCALPHA)
+        for y in range(gh):
+            for x in range(gw):
+                d = min(1.0, math.hypot((x + 0.5) / gw - 0.5, (y + 0.5) / gh - 0.5) / 0.7071)
+                small.set_at((x, y), (int(120 - 60 * d), 8, 26, int(30 + 120 * d ** 2.2)))
+        layer = pygame.transform.smoothscale(small, size)
+        _HEROIC_TINT[size] = layer
+    surf.blit(layer, (0, 0))
 
 
 # ------------------------------------------------------ enemy telegraph zones --

@@ -224,6 +224,24 @@ NPCS = {
             "Three cave spots, please! I've drawn the frame already. It's the easy part.",
             "Now my map has THINGS on it! Look at all those things. Here, take this for your trouble.")},
         barks=["Left at the stalagmite... no, the OTHER stalagmite.", "Is it dark in here or is it me?"]),
+    "hammerstein": dict(
+        name="Brother Hammerstein", kind="person", sprite=("enemy", "npc_hammerstein"), tint=None,
+        zone="nexus", area="nexus:anvil", wander=1, anvil=True,
+        greeting="Welcome to the Anvil! I was a monk once. Took a vow of silence. Then I found hammers.",
+        again="Back for more hammering? The Anvil never gets tired. I do. Constantly.",
+        exhausted="That's all the forging wisdom I have. The rest is just hitting things.",
+        topics=[("temper", "How does tempering work?",
+                 "Bring me three things of the same kind and the same tier - three swords, three rings, "
+                 "whatever - and I'll hammer them into one of the next tier. From T12 up I need Forge Ingots too.", False),
+                ("ingots", "Where do Forge Ingots come from?",
+                 "Heroic dungeon bosses, the bosses on the big islands, and the Mad God's Room. Star-iron. "
+                 "It never cools down, which is great for forging and terrible for pockets.", False),
+                ("t14", "What's the best thing you can make?",
+                 "Tier fourteen. Nobody finds T14 lying around - it only comes off this Anvil. Three T13s and "
+                 "two Ingots. Also I can reforge a UT with two Ingots so it hits harder.", False)],
+        quests={},
+        barks=["CLANG. Sorry. CLANG.", "Three of a kind beats one of a kind. That's forging AND poker.",
+               "Mind the sparks. They're very enthusiastic."]),
     # ---------------------------------------------------------- friendly creatures --
     "elk_herd": dict(
         name="Grand Elk Herd", kind="creature", sprite=("enemy", "elk"), tint=None, count=3, scale=1.25,
@@ -333,9 +351,42 @@ WILDLIFE_TALK = {
 WILDLIFE_DEFAULT = ("*It looks at you blankly.*", "Hello?", "*It keeps looking at you blankly.*")
 
 
+# Heroic trials (game/sidequests.HEROIC_TRIALS): each dungeon's local offers its trial
+_TRIAL_OFFERS = {
+    "bitterwick": ("There's a Forgotten Vault under half the Realm. Bring me three Vault Keystones and I'll "
+                   "tell you how to open the NASTY version. Drinks on me. Well. On the barrel.",
+                   "Keystones. Three. They hum. Don't let them hum at the barrel."),
+    "glimmer": ("The Cave Warren has a deeper level. I've mapped it: it's black, and angrier. Three Warren "
+                "Lantern Shards would light the way in.", "Three lantern shards! Mind the lurkers. They mind you."),
+    "frostine": ("The Frozen Crypt has a sealed wing. Three Crypt Frost Seals and I can show you the way in. "
+                 "Wear a scarf.", "Three seals. Cold hands, warm heart. Mostly cold hands."),
+    "fernleaf": ("The Jungle Ruins' idols have a second temple, and it has opinions. Bring me three Ruin Idol "
+                 "Eyes and I'll open it.", "Three eyes. Don't let them look at you for too long."),
+    "pete": ("The Ember Den has a hotter den. Yes, hotter. Three Cinder Crown Fragments and it's all yours.",
+             "Three crown bits. Oven mitts recommended. I recommend everything with oven mitts."),
+    "murk": ("The Sunken Grotto goes deeper than the fish admit. Three Grotto Black Pearls and I'll brew you the "
+             "way down.", "Three black pearls, dearie. The grotto will want them back. Don't let it."),
+    "tipsy": ("The Wind Spire has a higher spire. Higher spirits too. Bring me three Spire Wind Chimes and I'll "
+              "show you the stairs.", "Three chimes! Hic. They play themselves. Badly. Like me."),
+}
+
+
+def _add_heroic_trials():
+    from game.sidequests import HEROIC_TRIALS
+    for theme, (qid, npc_id, _relic, label) in HEROIC_TRIALS.items():
+        offer, remind = _TRIAL_OFFERS[npc_id]
+        NPCS[npc_id]["quests"][qid] = _offer(
+            offer, f"The Heroic {label} awaits - well, it will. Bring me the relics.", remind,
+            f"That's all three! The Heroic {label} is open to you now. Here - take this Heroic Shard. "
+            "Level 16 at least, or it'll open YOU.", label=f"Heroic trial: {label}")
+
+
+_add_heroic_trials()
+
 # Nexus spots (tile offsets from the Nexus centre) - Phase 3 enlarges the Nexus and
 # only needs to change these
-NEXUS_AREAS = {"nexus:tavern": (-34, 12)}   # inside the tavern district (game/areas.NEXUS_DISTRICTS)
+NEXUS_AREAS = {"nexus:tavern": (-34, 12),    # inside the tavern district (game/areas.NEXUS_DISTRICTS)
+               "nexus:anvil": (26, 16)}      # the Anvil, between the park and the docks
 
 
 def nexus_positions(nexus_map):

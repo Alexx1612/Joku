@@ -1,5 +1,9 @@
 """
-Side quests (Batch 15): 30 optional quests layered on top of the story (game/story.py).
+Side quests (Batch 15): 30 optional quests layered on top of the story (game/story.py),
+plus the 7 Heroic trials (V0.2 final): one per dungeon, given by the local who lives
+nearest that dungeon's biome - bring back 3 of the dungeon's relics (its boss always
+drops one, two on Hard; its elites sometimes do) and the Heroic version of that
+dungeon unlocks (plus a first Heroic Shard). See HEROIC_TRIALS.
 
 Two sources:
   * the random BOARD - BOARD_SIZE quests with no giver are always active; when one is
@@ -45,7 +49,28 @@ QUEST_ITEMS = {
     "camel_bell": ("Sandy Sal's Camel Bell", "A dented brass bell. Somewhere, a camel is very quiet about it."),
     "driftwood_rum": ("Bottle of Driftwood Rum", "Aged in a shipwreck. Tastes like a shipwreck."),
     "ember_core": ("Ember Core", "Still warm. Cinder Pete says it's 'the good stuff'."),
+    # Heroic trial relics (dungeon-only drops, see quest_drops)
+    "vault_keystone": ("Vault Keystone", "A keystone from a Forgotten Vault arch. It hums when you lie."),
+    "warren_lantern": ("Warren Lantern Shard", "Glass from a lantern nobody in the Cave Warren admits to lighting."),
+    "crypt_seal": ("Crypt Frost Seal", "A wax seal frozen so hard it rings when you flick it."),
+    "ruin_idol_eye": ("Ruin Idol Eye", "A jade eye pried from a Jungle Ruins idol. It's still watching."),
+    "cinder_crown": ("Cinder Crown Fragment", "A shard of the Ember Den's crown. Too hot to wear, too pretty to drop."),
+    "grotto_pearl": ("Grotto Black Pearl", "A pearl from the Sunken Grotto. Smells like low tide and regret."),
+    "spire_chime": ("Spire Wind Chime", "A chime from the top of the Wind Spire. It plays itself, badly."),
 }
+
+# theme -> (quest id, giver/turn-in NPC, relic quest item, dungeon label)
+HEROIC_TRIALS = {
+    "generic": ("trial_generic", "bitterwick", "vault_keystone", "Forgotten Vault"),
+    "cave": ("trial_cave", "glimmer", "warren_lantern", "Cave Warren"),
+    "frozen_crypt": ("trial_frozen_crypt", "frostine", "crypt_seal", "Frozen Crypt"),
+    "jungle_ruins": ("trial_jungle_ruins", "fernleaf", "ruin_idol_eye", "Jungle Ruins"),
+    "ember_den": ("trial_ember_den", "pete", "cinder_crown", "Ember Den"),
+    "sunken_grotto": ("trial_sunken_grotto", "murk", "grotto_pearl", "Sunken Grotto"),
+    "wind_spire": ("trial_wind_spire", "tipsy", "spire_chime", "Wind Spire"),
+}
+TRIAL_RELICS_NEEDED = 3
+TRIAL_RELIC_ELITE_CHANCE = 0.1
 
 QUESTS = {
     # ---- board (no giver): wildlife groups, hunting, exploring ----------------------
@@ -133,6 +158,12 @@ QUESTS = {
                      "near", 30, _t("npc", "elk_herd", "Grand Elk Herd"), _r(240, 2), key="npc:elk_herd",
                      group=1, giver="elk_herd"),
 }
+for _theme, (_qid, _npc, _relic, _label) in HEROIC_TRIALS.items():
+    QUESTS[_qid] = _q(f"Heroic Trial: {_label}",
+                      f"Bring {TRIAL_RELICS_NEEDED} {QUEST_ITEMS[_relic][0]}s out of the {_label} (its boss always "
+                      f"drops one - two on Hard). Unlocks the Heroic {_label}.",
+                      "deliver", TRIAL_RELICS_NEEDED, _t("area", f"dungeon:{_theme}", _label), _r(700, 5, "boss"),
+                      giver=_npc, turn_in=_npc, item=_relic, heroic_theme=_theme)
 
 BOARD_POOL = [qid for qid, q in QUESTS.items() if q["giver"] is None]
 
@@ -287,6 +318,8 @@ class SideQuestProgress:
         msgs = [(f"Quest complete: {q['title']}!", (255, 225, 120))]
         if player is not None:
             msgs.extend(grant_reward(self, player, q["reward"]))
+            if q.get("heroic_theme"):
+                msgs.extend(_unlock_heroic(self, player, q["heroic_theme"]))
         if q["giver"] is None:
             self.ensure_board(exclude=(qid,))  # a different quest takes the slot
         return msgs
@@ -367,9 +400,38 @@ def grant_reward(progress, player, reward):
     return msgs
 
 
-def quest_drops(progress, player, enemy_kind, biome, rank):
-    """Quest items a kill drops for THIS player (added to their personal loot)."""
+def heroic_unlocked(progress, theme):
+    """Has this character finished `theme`'s Heroic trial?"""
+    trial = HEROIC_TRIALS.get(theme)
+    return bool(progress is not None and trial and trial[0] in progress.done)
+
+
+def _unlock_heroic(progress, player, theme):
+    """A finished Heroic trial: a first Heroic Shard + the story's Act III credit."""
+    from game.items import make_dungeon_shard
+    label = f"{HEROIC_TRIALS[theme][3]} (Heroic)"
+    shard = make_dungeon_shard("heroic_" + theme, label)
+    if len(player.backpack) < player.backpack_size:
+        player.backpack.append(shard)
+    else:
+        progress.pending_items.append(shard)
+    msgs = [(f"The {label} is unlocked! Here's a Heroic Shard to open it (level 16+).", (230, 90, 120))]
+    sp = getattr(player, "story", None)
+    if sp is not None:
+        msgs.extend(sp.on_event("heroic_unlock", theme))
+    return msgs
+
+
+def quest_drops(progress, player, enemy_kind, biome, rank, theme=None, difficulty=None, is_boss=False):
+    """Quest items a kill drops for THIS player (added to their personal loot).
+    theme/difficulty/is_boss: set for kills inside a dungeon (the Heroic trial relics)."""
     out = []
+    trial = HEROIC_TRIALS.get(theme) if theme else None
+    if trial is not None and difficulty != "Heroic" and progress.wants_item(trial[2], player):
+        if is_boss:
+            out.extend(make_quest_item(trial[2]) for _ in range(2 if difficulty == "Hard" else 1))
+        elif rank == "elite" and random.random() < TRIAL_RELIC_ELITE_CHANCE:
+            out.append(make_quest_item(trial[2]))
     if biome == "forest" and progress.wants_item("glowcap", player) and random.random() < 0.4:
         out.append(make_quest_item("glowcap"))
     if enemy_kind in ("salamander", "cinder_wisp") and progress.wants_item("ember_core", player) \

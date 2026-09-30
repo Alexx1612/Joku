@@ -2849,7 +2849,7 @@ def _carve_blob(grid, rect, floor_tile):
                     break
 
 
-def make_bonus_room(floor_tile=None, wall_tile=None, theme_name="generic"):
+def make_bonus_room(floor_tile=None, wall_tile=None, theme_name="generic", room_bonus=0):
     """
     A real multi-room dungeon (not one small arena) a mob-death portal leads
     into: several chambers carved out of solid rock and connected by
@@ -2872,7 +2872,7 @@ def make_bonus_room(floor_tile=None, wall_tile=None, theme_name="generic"):
     w, h = BONUS_W, BONUS_H
     grid = [[wall_tile for _ in range(w)] for _ in range(h)]
 
-    count = ROOM_COUNT_BY_THEME.get(theme_name, BONUS_ROOM_COUNT)
+    count = ROOM_COUNT_BY_THEME.get(theme_name, BONUS_ROOM_COUNT) + room_bonus  # Heroic: +2 rooms
     size_range = ROOM_SIZE_BY_THEME.get(theme_name, DEFAULT_ROOM_SIZE)
     is_cave = theme_name == "cave"
     is_chain = theme_name in CHAIN_THEMES

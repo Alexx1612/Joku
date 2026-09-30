@@ -1712,6 +1712,8 @@ class CoopClient:
         dmsg = self.link.pop_dialogue()
         if dmsg is not None:
             self.dialogue_view = dmsg.get("view")
+            for key in dmsg.get("sfx", []):  # the Anvil's forge_success etc.
+                audio.play_event(key)
             if self.dialogue_view is not None:
                 self._cancel_drag()
         self.sidequest_log = snap.get("sidequests") or []
@@ -1791,6 +1793,8 @@ class CoopClient:
                     audio.play_enemy_attack(family)
                 elif kind == "ability":
                     audio.play_ability(family)
+                elif kind == "sfx":
+                    audio.play_event(family)
             for kind, text in snap.get("mob_speech", []):
                 self.chat_log.append({"name": kind.replace("_", " ").title(), "text": text, "age": 0.0})
             self.chat_log = self.chat_log[-ui.CHAT_LOG_STORE_CAP:]
@@ -2143,6 +2147,8 @@ class CoopClient:
         torch_positions = [self.cam(pos) for pos in
                            world.nearby_torch_world_positions(self.tilemap, self.you.pos.x, self.you.pos.y)]
         ui.draw_day_night_overlay(s, self.light_level, self.blood_moon, torch_positions)
+        if self.zone == "bonus" and (self.theme_name or "").endswith("(Heroic)"):
+            vfx.draw_heroic_tint(s)
         self.weather_fx.draw(s)
         ui.draw_dock_frame(s, self.you)
         if self.zone != "bonus":

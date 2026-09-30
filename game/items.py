@@ -31,7 +31,11 @@ def tier_band(tier: int) -> str:
         return "t_mid"
     if tier <= 9:
         return "t_high"
-    return "t_top"
+    if tier <= 11:
+        return "t_top"
+    if tier <= 13:
+        return "t_mythic"
+    return "t_forged"
 
 
 @dataclass
@@ -63,9 +67,15 @@ class Item:
     pet_state: dict = None
     # quest items only (slot "quest", see game/sidequests.QUEST_ITEMS): which quest item this is
     quest_key: str = ""
+    # the Mad God's Room's Divine items (see make_divine): divine_proc = "starfall" (weapons) /
+    # "second_wind" (armor) / "" - the effects live in realm_sim.player_fire / Player.take_damage
+    divine: bool = False
+    divine_proc: str = ""
 
     @property
     def band(self) -> str:
+        if self.divine:
+            return "divine"
         return "ut" if self.is_ut else tier_band(self.tier)
 
     @property
@@ -74,7 +84,9 @@ class Item:
 
     @property
     def display_name(self) -> str:
-        prefix = f"[T{self.tier}] " if not self.is_ut and self.shape not in ("carrier", "quest") else ""
+        if self.divine:
+            return f"[Divine] {self.name}"
+        prefix = f"[T{self.tier}] " if not self.is_ut and self.shape not in ("carrier", "quest", "ingot") else ""
         return f"{prefix}{self.name}"
 
     def to_json(self):
@@ -84,7 +96,7 @@ class Item:
                     effect=self.effect, mp_cost=self.mp_cost, magnitude=self.magnitude,
                     description=self.description, pet_kind=self.pet_kind, shard_theme=self.shard_theme,
                     socketed_proc=self.socketed_proc, pet_state=self.pet_state,
-                    quest_key=self.quest_key)
+                    quest_key=self.quest_key, divine=self.divine, divine_proc=self.divine_proc)
 
     @staticmethod
     def from_json(d):
@@ -669,7 +681,7 @@ def _pick_drop_class(killer_cls):
     return random.choice(others) if others else killer_cls
 
 
-def roll_loot(cls_name: str, enemy_rank: str, difficulty: float = 0.5) -> list:
+def roll_loot(cls_name: str, enemy_rank: str, difficulty: float = 0.5, source: str = None) -> list:
     """
     enemy_rank: 'trash' | 'elite' | 'boss' - controls bag odds AND how many
     tiers drop at once, mirroring RotMG's brown (common) / purple (mid,
@@ -686,15 +698,19 @@ def roll_loot(cls_name: str, enemy_rank: str, difficulty: float = 0.5) -> list:
     time and merging the results, rather than inflating each individual
     random.random() < X chance past 1.0 - so a "double" event really means
     twice the drops, not diminishing-returns odds tweaks.
+
+    source: where the kill happened ("heroic" / "island" / "mg_room_1..3", or None) -
+    adds that source's extra drops (LOOT_SOURCES: the mythic T12-T13 tier, Forge Ingots,
+    Divine items) on top of the normal rank roll.
     """
-    drops = _roll_loot_once(cls_name, enemy_rank, difficulty)
+    drops = _roll_loot_once(cls_name, enemy_rank, difficulty, source)
     extra_rolls = int(round(live_events.get_multiplier("loot_rolls"))) - 1
     for _ in range(max(0, extra_rolls)):
-        drops.extend(_roll_loot_once(cls_name, enemy_rank, difficulty))
+        drops.extend(_roll_loot_once(cls_name, enemy_rank, difficulty, source))
     return drops
 
 
-def _roll_loot_once(cls_name: str, enemy_rank: str, difficulty: float = 0.5) -> list:
+def _roll_loot_once(cls_name: str, enemy_rank: str, difficulty: float = 0.5, source: str = None) -> list:
     # Rates rehauled alongside the tier-ladder/cross-class expansion above: elite's
     # brown/purple split shifted toward purple (more to find now that purple's own
     # band is denser), trash pulled back slightly since its pool is denser too, and
@@ -733,6 +749,8 @@ def _roll_loot_once(cls_name: str, enemy_rank: str, difficulty: float = 0.5) -> 
             drops.append(("purple", _random_potion()))
         if random.random() < 0.20:
             drops.append(("purple", _random_temp_potion()))
+    if source:
+        drops.extend(_source_extras(cls_name, enemy_rank, source))
     return drops
 
 
@@ -921,6 +939,10 @@ def make_dungeon_shard(theme_name: str, theme_label: str) -> Item:
     kill spot - RotMG-authentic "mobs drop dungeons" as a real carried item,
     used later from the backpack (like a potion/egg) to open a themed portal
     wherever the player happens to be standing."""
+    if theme_name.startswith("heroic_"):
+        return Item(f"{theme_label} Shard", SLOT_SHARD, 0, "shard", shard_theme=theme_name,
+                    description=f"A blood-red fragment of the {theme_label}. Use it in the Realm to open the "
+                                f"Heroic version (level 16+). Much harder. Much better loot.")
     return Item(f"{theme_label} Shard", SLOT_SHARD, 0, "shard", shard_theme=theme_name,
                 description=f"A fragment of the {theme_label}. Use it to tear open a portal there.")
 
@@ -1017,3 +1039,153 @@ def save_vault(player_name: str, items: list) -> None:
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump([(it.to_json() if it is not None else None) for it in items], f)
     os.replace(tmp, path)
+
+
+# ------------------------------------------------------ endgame tiers (V0.2 final) --
+# T12-T13 ("mythic", cyan badge) only drop from Heroic dungeons, the big islands and the
+# Mad God's Room (see LOOT_SOURCES / roll_loot's `source`); T14 ("forged", red-hot badge)
+# never drops at all - Brother Hammerstein's Anvil makes it (game/forge.py). Normal loot
+# rolls stop at T11, so nothing below changes what the old sources drop.
+_ENDGAME_WEAPON_NAMES = {
+    "wizard": ("Staff of Drowned Stars", "Staff of the Seventh Tide", "Anvil-Wrought Starstaff"),
+    "archer": ("Bow of the Salt Wind", "Bow of the Longest Night", "Anvil-Wrought Skybow"),
+    "warrior": ("Tidebreaker Greatsword", "Blade of the Last Round", "Anvil-Wrought Kingsblade"),
+    "priest": ("Rod of the Quiet Harbour", "Staff of the Second Dawn", "Anvil-Wrought Halo Staff"),
+    "rogue": ("Dagger of the Undertow", "Fang of the Closing Bell", "Anvil-Wrought Whisperfang"),
+    "necromancer": ("Staff of the Drowned Choir", "Staff of the Final Toast", "Anvil-Wrought Gravestaff"),
+    "paladin": ("Mace of the Harbour Light", "Mace of the Last Call", "Anvil-Wrought Judgement"),
+    "assassin": ("Kris of the Riptide", "Blade of the Empty Glass", "Anvil-Wrought Nightkris"),
+}
+_ENDGAME_DMG_MULT = {12: 1.12, 13: 1.25, 14: 1.42}
+for _cls, _names in _ENDGAME_WEAPON_NAMES.items():
+    _n11, _shape, _t11, (_mn, _mx) = WEAPONS[_cls][10]
+    for _tier, _nm in zip((12, 13, 14), _names):
+        _k = _ENDGAME_DMG_MULT[_tier]
+        WEAPONS[_cls].append((_nm, _shape, _tier, (int(round(_mn * _k)), int(round(_mx * _k)))))
+_WEAPON_TIER_FLAVOR.extend([
+    "Mythic work, pulled out of a Heroic vault or an island that did not want to give it up.",
+    "The kind of weapon the Mad God's own lieutenants carry. Carried. Past tense. You have it now.",
+    "Anvil-wrought: three legends melted down and hammered into one. Nothing drops like this - it's made.",
+])
+HEAVY_ARMORS.extend([
+    ("Harbourmaster's Plate", 12, {"deF": 24, "vit": 6}, "Plate that has stood on a storm pier and not moved."),
+    ("Plate of the Tidal Throne", 13, {"deF": 27, "vit": 7}, "Worn by whoever sat the throne the sea took back."),
+    ("Anvil-Wrought Bulwark", 14, {"deF": 31, "vit": 8, "att": 2}, "Three suits of plate, one very patient smith."),
+])
+LIGHT_ARMORS.extend([
+    ("Saltwind Leathers", 12, {"deF": 16, "spd": 6, "dex": 1}, "Cured in sea air until it forgot how to tear."),
+    ("Coat of the Last Current", 13, {"deF": 18, "spd": 7, "dex": 2}, "Moves before you do, and usually in the right direction."),
+    ("Anvil-Wrought Shadowmail", 14, {"deF": 20, "spd": 8, "dex": 3}, "Hammered so thin it's mostly a rumour with rivets."),
+])
+ROBES.extend([
+    ("Robe of the Drowned Library", 12, {"deF": 7, "wis": 10, "vit": 4}, "Still damp. Still smarter than you."),
+    ("Robe of the Night Bell", 13, {"deF": 8, "wis": 11, "vit": 5}, "Hums the hour, every hour, to nobody in particular."),
+    ("Anvil-Wrought Starmantle", 14, {"deF": 9, "wis": 13, "vit": 6}, "Stitched with wire drawn from a fallen star."),
+])
+RINGS.extend([
+    ("Ring of the Undertow", 12, {"att": 7, "wis": 6, "vit": 2}, "Pulls a little. Toward trouble, mostly."),
+    ("Ring of the Closing Hour", 13, {"att": 8, "wis": 7, "vit": 3}, "Warm at last orders, cold at dawn."),
+    ("Anvil-Wrought Signet", 14, {"att": 9, "wis": 8, "vit": 4, "deF": 2}, "Three rings melted into one very opinionated band."),
+])
+# abilities: T12 drops with the mythic tier, T14 is forge-only - both upgrade that class's T9 capstone
+for _cls, _rows in ABILITIES.items():
+    _n9, _effect, _t9, _mp, _mag, _desc = _rows[2]
+    _noun = _n9.split(" of ")[0]
+    _rows.append((f"{_noun} of the Undertow", _effect, 12, _mp + 10, int(round(_mag * 1.3)),
+                  f"A mythic {_noun.lower()}: {_desc[0].lower() + _desc[1:]}"))
+    _rows.append((f"Anvil-Wrought {_noun}", _effect, 14, _mp + 15, int(round(_mag * 1.6)),
+                  f"Forged at the Anvil from three lesser {_noun.lower()}s - the same spell, turned up past eleven."))
+
+# ------------------------------------------------------------ forge materials --
+SLOT_MATERIAL = "material"
+
+
+def make_forge_ingot() -> Item:
+    """The Anvil's fuel: T12+ tempering and UT reforging need these (game/forge.py)."""
+    return Item("Forge Ingot", SLOT_MATERIAL, 12, "ingot",
+                description="A bar of star-iron that never quite cools. Brother Hammerstein will want this. "
+                            "Dropped by Heroic bosses, big-island bosses and the Mad God's Room.")
+
+
+# ------------------------------------------------------------------ Divine items --
+# The Mad God's Room's special drops (evolution 1: a small chance, evolution 2: always
+# one). Each piece is better than T14 AND carries a unique effect:
+#   weapons: "starfall"    - every 4th shot also looses 3 piercing star bolts (realm_sim.player_fire)
+#   armor:   "second_wind" - a killing blow leaves you at 1 HP with 2 s of invulnerability, once
+#                            every DIVINE_SECOND_WIND_CD seconds (entities.Player.take_damage)
+#   ring:    huge all-round stats
+#   ability: the class's capstone spell at Divine strength
+DIVINE_TIER = 15  # sorts / feeds above everything; the badge says "Divine", never a number
+DIVINE_SECOND_WIND_CD = 90.0
+DIVINE_STARFALL_EVERY = 4
+DIVINE_WEAPON_NAMES = {
+    "wizard": "The Mad God's Spare Wand", "archer": "The Mad God's Party Bow",
+    "warrior": "The Mad God's Bottle Opener", "priest": "The Mad God's Last Rites",
+    "rogue": "The Mad God's Cocktail Pick", "necromancer": "The Mad God's Hangover",
+    "paladin": "The Mad God's Gavel", "assassin": "The Mad God's Swizzle Stick",
+}
+DIVINE_ARMOR = {
+    "heavy": ("The Mad God's Doorman Plate", {"deF": 34, "vit": 10, "att": 3}),
+    "light": ("The Mad God's Last-Orders Coat", {"deF": 22, "spd": 9, "dex": 4}),
+    "robe": ("The Mad God's Dressing Gown", {"deF": 10, "wis": 15, "vit": 7}),
+}
+DIVINE_RING = ("The Mad God's Wedding Ring", {"att": 10, "wis": 9, "vit": 6, "deF": 4, "dex": 4, "spd": 3})
+
+
+def make_divine(cls_name, piece=None) -> Item:
+    """One Divine item for `cls_name` (piece: weapon/armor/ring/ability, random if None)."""
+    piece = piece or random.choice(("weapon", "weapon", "armor", "ring", "ability"))
+    if piece == "weapon":
+        _n, shape, _t, (mn, mx) = WEAPONS[cls_name][13]  # T14
+        return Item(DIVINE_WEAPON_NAMES[cls_name], SLOT_WEAPON, DIVINE_TIER, shape, min_dmg=int(mn * 1.15),
+                    max_dmg=int(mx * 1.15), divine=True, divine_proc="starfall",
+                    proc=f"Starfall: every {DIVINE_STARFALL_EVERY}th shot adds 3 piercing star bolts",
+                    description="He dropped it on the way out. He'll be back for it. Don't give it back.")
+    if piece == "armor":
+        name, bonus = DIVINE_ARMOR[CLASS_ARMOR_ARCHETYPE[cls_name]]
+        return Item(name, SLOT_ARMOR, DIVINE_TIER, "armor", stat_bonus=dict(bonus), divine=True,
+                    divine_proc="second_wind",
+                    proc=f"Second Wind: a killing blow leaves you at 1 HP (once per {int(DIVINE_SECOND_WIND_CD)} s)",
+                    description="Smells faintly of divine cologne and bad decisions.")
+    if piece == "ring":
+        name, bonus = DIVINE_RING
+        return Item(name, SLOT_RING, DIVINE_TIER, "ring", stat_bonus=dict(bonus), divine=True,
+                    description="Engraved on the inside: 'To me. Love, me.'")
+    n14, effect, _t, mp, mag, _desc = ABILITIES[cls_name][4]  # the T14 row
+    noun = n14.replace("Anvil-Wrought ", "")
+    return Item(f"The Mad God's {noun}", SLOT_ABILITY, DIVINE_TIER, "ability", effect=effect, mp_cost=mp,
+                magnitude=int(round(mag * 1.25)), divine=True,
+                description="His own spell, borrowed permanently. Casts like it's still angry.")
+
+
+# --------------------------------------------------------------- loot sources --
+# Extra drops ON TOP of the normal rank roll, by where the kill happened. Rows are
+# (bag, what, tier range, chance): what = "tier" (a tiered item in that range),
+# "ingot" (a Forge Ingot) or "divine". "heroic"/"island" also cover their elites.
+LOOT_SOURCES = {
+    "heroic": {"boss": [("cyan", "tier", (11, 12), 1.0), ("cyan", "tier", (12, 13), 0.35),
+                        ("brown", "ingot", None, 0.3)],
+               "elite": [("cyan", "tier", (12, 12), 0.06)]},
+    "island": {"boss": [("cyan", "tier", (12, 13), 0.45), ("brown", "ingot", None, 0.3)],
+               "elite": [("cyan", "tier", (12, 12), 0.04)]},
+    "mg_room_1": {"boss": [("cyan", "tier", (12, 13), 1.0), ("brown", "ingot", None, 0.6)],
+                  "elite": [("cyan", "tier", (12, 12), 0.1)]},
+    "mg_room_2": {"boss": [("cyan", "tier", (13, 13), 1.0), ("brown", "ingot", None, 1.0),
+                           ("gold", "divine", None, 0.15)]},
+    "mg_room_3": {"boss": [("cyan", "tier", (13, 13), 1.0), ("cyan", "tier", (13, 13), 1.0),
+                           ("brown", "ingot", None, 1.0), ("gold", "divine", None, 1.0)]},
+}
+
+
+def _source_extras(cls_name, enemy_rank, source):
+    out = []
+    for bag, what, rng, chance in LOOT_SOURCES.get(source, {}).get(enemy_rank, ()):
+        if random.random() >= chance:
+            continue
+        if what == "tier":
+            out.append((bag, _random_tiered(cls_name, lo=rng[0], hi=rng[1])))
+        elif what == "ingot":
+            out.append((bag, make_forge_ingot()))
+        elif what == "divine":
+            out.append((bag, make_divine(cls_name)))
+    return out
