@@ -450,7 +450,7 @@ docs/unity-rebuild/  feature-by-feature docs for rebuilding the game in Unity (0
 `run_all_checks.py` finds every `tests/check_*.py` and runs each as its own
 headless process (`SDL_VIDEODRIVER=dummy`, throwaway settings, no music
 rendering, no event rotation) and prints a PASS/FAIL summary - currently
-**70/70**. The checks are plain asserts that drive the real game objects:
+**71/71**. The checks are plain asserts that drive the real game objects:
 single-player `Game`, the co-op server's action handler and real
 client-server sockets, rendered screenshots, timing budgets (e.g. world
 generation < 3 s) and fixed-seed input fuzzing.
@@ -473,13 +473,13 @@ and CoopClient specs); output lands in `dist/`.
   plus network latency (fine on a LAN or Tailscale, noticeable on slow links).
 - No auth or encryption, and movement is client-trusted - play with friends,
   don't expose the port to strangers.
-- The co-op world map is sent as uncompressed JSON (~5.5 MB) once per zone
-  instance.
+- The co-op world map is still sent whole once per zone instance, but
+  zlib-packed (`game/netmap.py`): ~0.17 MB instead of ~8 MB of JSON.
 - Only Windows and Linux x86_64 builds (no macOS build; macOS can run from
   source). The Linux build is smoke-tested in CI but has had less real play.
 - Python 3.13+ removed `audioop`; the music renderer falls back to a much
   slower pure-Python path there. The builds use Python 3.12.
-- World generation takes ~2-2.5 s at startup. (The old "second build is 3x
+- World generation takes ~1.4 s at startup. (The old "second build is 3x
   slower" note was Windows 11 power-throttling headless test processes, not
   the game - the timing checks now opt out of it, see `tests/_timing.py`.)
 - Story length hasn't been re-measured for the 7-act arc (the old 5-act arc

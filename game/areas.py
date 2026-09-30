@@ -434,15 +434,22 @@ def _score(grid, rect, biome):
     good = total = 0
     r = rect.inflate(4, 4)
     h, w = len(grid), len(grid[0])
+    if r.left < 0 or r.top < 0 or r.right > w or r.bottom > h:
+        # any sample off the map scores 0 (same as bailing out at the first one)
+        xs, ys = range(r.left, r.right, 5), range(r.top, r.bottom, 5)
+        if any(not (0 <= x < w) for x in xs) or any(not (0 <= y < h) for y in ys):
+            return 0.0
+    biome_of = world.TILE_TO_BIOME_NAME.get
+    water = world.WATER
+    xs = range(r.left, r.right, 5)
     for y in range(r.top, r.bottom, 5):
-        for x in range(r.left, r.right, 5):
+        row = grid[y]
+        for x in xs:
             total += 1
-            if not (0 <= x < w and 0 <= y < h):
-                return 0.0
-            t = grid[y][x]
-            if world.TILE_TO_BIOME_NAME.get(t) == biome:
+            t = row[x]
+            if biome_of(t) == biome:
                 good += 1
-            elif t == world.WATER:
+            elif t == water:
                 good -= 1
     return good / max(1, total)
 

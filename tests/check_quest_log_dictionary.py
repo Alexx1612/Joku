@@ -231,6 +231,11 @@ def check_coop_client_windows_and_snapshot_areas():
     assert "sidequests_done" in snap
     snap2 = server._snapshot_for(state, s)
     assert snap2["map"] is None and snap2["areas"] is None  # only once
+    # the map rides zlib-packed (game/netmap.py) and unpacks to the server's exact grid
+    from game import netmap
+    assert isinstance(snap["map"], dict) and snap["map"]["enc"] == netmap.ENC
+    grid = netmap.decode_map(snap["map"])
+    assert grid == state.realm_sim.realm_map.grid
 
     class FakeLink:
         error = None
@@ -238,7 +243,7 @@ def check_coop_client_windows_and_snapshot_areas():
 
         def __init__(self):
             self.sent = []
-            self.map, self.areas = snap["map"], snap["areas"]
+            self.map, self.areas = grid, snap["areas"]  # NetLink hands the client the decoded grid
 
         def send(self, obj):
             self.sent.append(obj)

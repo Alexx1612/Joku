@@ -25,6 +25,7 @@ import pygame
 
 from game import constants as C
 from game import world
+from game import netmap
 from game import ui
 from game import sprites
 from game import audio
@@ -221,6 +222,9 @@ class NetLink:
                 for msg in self.reader.read_available():
                     t = msg.get("type")
                     if t == "snapshot":
+                        if msg.get("map") is not None:
+                            # zlib-packed on the wire (game/netmap.py) - unpacked here, off the lock
+                            msg["map"] = netmap.decode_map(msg["map"])
                         with self.lock:
                             prev = self.latest_snapshot
                             if prev is not None and not self._snap_read:
@@ -233,7 +237,7 @@ class NetLink:
                             self._snap_stale = None
                             # the realm/bonus map rides inside a snapshot message but is only
                             # sent once per zone-instance (see server.py's sent_map_id) - it's
-                            # ~2-3MB of JSON at the current map size, big enough to take longer
+                            # ~0.2MB zlib-packed (8MB as plain JSON), and can still take longer
                             # than one tick to arrive+parse over the socket. Because this class
                             # only ever exposes the LATEST snapshot (see get_snapshot()), a
                             # smaller, faster-arriving snapshot from a tick or two later could
