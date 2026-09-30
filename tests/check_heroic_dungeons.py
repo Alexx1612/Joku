@@ -249,10 +249,50 @@ def check_level_gate_single_player_and_coop():
     print("check_level_gate_single_player_and_coop: PASSED")
 
 
+def check_heroic_boss_sprites():
+    """Heroic bosses get their own look (obsidian/crimson recolour, glowing rim, spiked crown),
+    the same size as the normal sprite; normal mobs keep theirs (they get the aura only)."""
+    from game import sprites
+    from game.entities import Enemy
+    bosses = sorted({b for t in DUNGEON_THEMES.values() if t.get("heroic") for b in t["bosses"]})
+    for kind in bosses + [f"{k}_phase2" for k in bosses]:
+        for scale in (1.0, 2.0):
+            a, b = sprites.enemy_sprite(kind, scale), sprites.heroic_sprite(kind, scale)
+            assert a.get_size() == b.get_size(), (kind, a.get_size(), b.get_size())
+            assert pygame.image.tobytes(a, "RGBA") != pygame.image.tobytes(b, "RGBA"), kind
+        assert sprites.heroic_sprite(kind, 2.0) is sprites.heroic_sprite(kind, 2.0), "cached"
+    # the draw path picks it for a Heroic boss only
+    surf = pygame.Surface((400, 300), pygame.SRCALPHA)
+    cam = lambda p: (int(p[0]), int(p[1]))
+    calls = []
+    real = sprites.heroic_sprite
+    sprites.heroic_sprite = lambda k, sc=1.0: calls.append(k) or real(k, sc)
+    try:
+        boss = Enemy("frost_monarch", pygame.Vector2(200, 150))
+        mob = Enemy("yeti", pygame.Vector2(100, 150))
+        for e in (boss, mob):
+            e._heroic = True
+            e.draw(surf, cam)
+        plain = Enemy("frost_monarch", pygame.Vector2(200, 150))
+        plain.draw(surf, cam)
+    finally:
+        sprites.heroic_sprite = real
+    assert calls == ["frost_monarch"], calls
+    if SHOT_DIR:
+        sheet = pygame.Surface((160 * len(bosses), 330))
+        sheet.fill((70, 90, 70))
+        for i, k in enumerate(bosses):
+            sheet.blit(sprites.enemy_sprite(k, 2.0), (i * 160 + 4, 4))
+            sheet.blit(sprites.heroic_sprite(k, 2.0), (i * 160 + 4, 168))
+        pygame.image.save(sheet, os.path.join(SHOT_DIR, "heroic_boss_sprites.png"))
+    print(f"check_heroic_boss_sprites: PASSED ({len(bosses) * 2} boss kinds)")
+
+
 if __name__ == "__main__":
     check_heroic_themes()
     check_heroic_instance_is_much_harder()
     check_trial_quest_unlocks_the_heroic_dungeon()
     check_heroic_shard_drops_and_heroic_loot()
     check_level_gate_single_player_and_coop()
+    check_heroic_boss_sprites()
     print("PASSED: heroic dungeon checks all green.")

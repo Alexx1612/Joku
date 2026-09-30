@@ -1830,6 +1830,8 @@ class Enemy:
         # back to the kind's own scale so every boss is drawn big on every client
         scale = getattr(self, "scale", None) or ENEMY_KINDS.get(self.kind, {}).get("scale", 1.0)
         img = sprites.enemy_sprite(self.kind, scale)
+        if getattr(self, "_heroic", False) and getattr(self, "rank", None) == "boss":
+            img = sprites.heroic_sprite(self.kind, scale)  # Heroic dungeon bosses look the part
 
         # --- draw-only idle/walk animation (Batch 13, Track P) ---
         # getattr(..., default) throughout: a co-op GhostEnemy reuses this exact

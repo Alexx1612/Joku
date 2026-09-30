@@ -2200,6 +2200,79 @@ def enemy_sprite(kind: str, scale: float = 1.0) -> pygame.Surface:
     return _cache[skey]
 
 
+# Heroic dungeon bosses: an obsidian-and-crimson recolour of the boss's own sprite with a
+# glowing crimson rim and a spiked iron crown - same size as the normal sprite, so hitboxes
+# and layout never change. Built procedurally from the base sprite, cached per (kind, scale).
+_HEROIC_TINT_COL = (150, 18, 40)
+_HEROIC_RIM = (255, 52, 78)
+
+
+def _heroic_color(c):
+    """The boss's own colour, darkened toward obsidian with a crimson cast - it keeps its
+    identity (a frost monarch is still icy under the red) but reads as the nasty version."""
+    r, g, b, a = c
+    lum = (0.3 * r + 0.59 * g + 0.11 * b) / 255.0
+    if lum > 0.88:  # eyes / hot highlights stay bright, just hotter
+        return (255, 232, 196, a)
+    k = 0.74
+    t = 0.3
+    return (int(r * k * (1 - t) + _HEROIC_TINT_COL[0] * t), int(g * k * (1 - t) + _HEROIC_TINT_COL[1] * t),
+            int(b * k * (1 - t) + _HEROIC_TINT_COL[2] * t), a)
+
+
+def heroic_sprite(kind: str, scale: float = 1.0) -> pygame.Surface:
+    scale = scale or 1.0
+    skey = ("heroic", kind, round(scale, 2))
+    if skey in _cache:
+        return _cache[skey]
+    base = enemy_sprite(kind, scale)
+    w, h = base.get_size()
+    out = pygame.Surface((w, h), pygame.SRCALPHA)
+    solid = [[False] * w for _ in range(h)]
+    for y in range(h):
+        row = solid[y]
+        for x in range(w):
+            c = base.get_at((x, y))
+            if c[3] > 40:
+                row[x] = True
+                out.set_at((x, y), _heroic_color(c))
+    # a glowing crimson rim just outside the silhouette, two pixels deep (inside the same bounds)
+    ring = set()
+    for y in range(h):
+        for x in range(w):
+            if solid[y][x]:
+                continue
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1), (2, 0), (-2, 0), (0, 2), (0, -2)):
+                xx, yy = x + dx, y + dy
+                if 0 <= xx < w and 0 <= yy < h and solid[yy][xx]:
+                    ring.add((x, y, abs(dx) + abs(dy)))
+                    break
+    for x, y, d in ring:
+        out.set_at((x, y), (*_HEROIC_RIM, 230 if d == 1 else 110))
+    # a spiked black-iron crown sitting on the top of the silhouette (drawn over it)
+    top = next((y for y in range(h) if any(solid[y])), 0)
+    band = [x for yy in range(top, min(h, top + max(3, h // 10))) for x in range(w) if solid[yy][x]] or [w // 2]
+    cx = (min(band) + max(band)) // 2
+    spike_h = max(8, h // 5)
+    half = max(10, min(w // 4, (max(band) - min(band)) // 2 + 4))
+    base_y = min(h - 2, top + spike_h)
+    n = 5
+    for k in range(n):
+        sx = cx - half + k * (2 * half) // (n - 1)
+        tip_y = top + (0 if k == n // 2 else (2 if k % 2 else 4))
+        wbase = max(3, half // 4)
+        pts = [(sx - wbase, base_y), (sx, tip_y), (sx + wbase, base_y)]
+        pygame.draw.polygon(out, (34, 14, 24), pts)
+        pygame.draw.polygon(out, _HEROIC_RIM, pts, 1)
+        out.set_at((sx, tip_y), (255, 210, 170, 255))
+    pygame.draw.rect(out, (34, 14, 24), (cx - half - wbase, base_y - 1, 2 * (half + wbase) + 1, 4))
+    pygame.draw.rect(out, _HEROIC_RIM, (cx - half - wbase, base_y - 1, 2 * (half + wbase) + 1, 4), 1)
+    for gx in (cx - half // 2, cx, cx + half // 2):  # crimson gems in the band
+        out.set_at((gx, base_y + 1), (255, 90, 110, 255))
+    _cache[skey] = out
+    return out
+
+
 def _radial_shade(surf, center, radius, base_color, steps=None):
     """Concentric-ring radial gradient (bright core -> base color at the rim) -
     at bullet scale (radius ~4-8px) there's no room for real per-pixel painted
