@@ -58,7 +58,7 @@ It is committed **locally only**: not pushed, and the release has not been rebui
 - `cf3a9ec`: telegraphs, story v2, NetLink fix
 - `50cc80d`: gear, forge, Divine, Heroic, gates
 - `68eda5f`: big islands and timing
-- (last): Mad God's Room, effects wiring, docs
+- `2b134b5`: Mad God's Room, effects wiring, docs
 
 ## Conventions (unchanged, keep following)
 - Run `python tests/run_all_checks.py` after every batch. There are now **70 scripts**, all green.
