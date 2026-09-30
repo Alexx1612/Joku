@@ -79,7 +79,7 @@ Constants in `server.py`:
 | # | Title | Objectives |
 |---|---|---|
 | 0 | Prologue: Welcome, Sucker | talk to Father Given (F); enter the Realm |
-| 1 | Act I: The Rim Job | defeat the Landmark Guardian of each outer biome: forest, desert, tundra, swamp |
+| 1 | Act I (old arc - later renamed and reworked, see doc 32) | defeat the Landmark Guardian of each outer biome: forest, desert, tundra, swamp |
 | 2 | Act II: Last Call | calm any `ISLANDS_NEEDED` = 7 distinct islands |
 | 3 | Act III: The Deep End | defeat `INNER_GUARDIANS_NEEDED` = 4 inner-biome guardians; clear `DUNGEONS_NEEDED` = 3 dungeons |
 | 4 | Finale: Closing Time | defeat the Mad God in the Forge (phase 1, then phase 2) |

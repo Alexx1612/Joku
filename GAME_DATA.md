@@ -7,7 +7,166 @@ not just whatever's currently in the code. Numbers are read from the code
 (file named in each heading). Update this alongside README.md's version
 history when any of them change.
 
-## Ends of V0.2 (current - still v0.2, release tag `v0.2`)
+## Ends of V0.2 - "final final" content update (current - still v0.2)
+
+Everything in the "Ends of V0.2" section below still applies, except where this section replaces it (story, tiers,
+islands, dungeon list).
+
+### Story (`game/story.py`, 7 acts)
+
+| Act | Objectives |
+|---|---|
+| Prologue: Welcome, Sucker | Talk to Father Given (F); step through the Realm portal |
+| Act I: The Grand Tour | Visit 5 big named places; spot the landmark in each outer biome; chat with 3 locals; catch a fish |
+| Act II: Bouncer Problems | Defeat the Guardians of the Sunken Idol (forest), Buried Obelisk (desert), Frozen Watchpost (tundra), Drowned Shrine (swamp); clear 1 dungeon |
+| Act III: Retail Therapy | Wear a T8+ item; clear 2 dungeons; finish a Heroic trial; forge an item at the Anvil |
+| Act IV: The Deep End | Defeat 4 inner-biome Landmark Guardians; clear 2 Heroic dungeons |
+| Act V: Last Call | Calm any 7 of the 10 big islands (level 20) |
+| Finale: Closing Time | Defeat the Mad God in the Forge |
+
+- `act_scale`: 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6.
+- Old 5-act saves map `{0:0, 1:1, 2:3, 3:4, 4:6, 5:7}`.
+
+### Tiers and loot sources (`game/items.py`)
+
+| Tier | Badge | Source |
+|---|---|---|
+| T1-T11 | white / blue / purple / orange | normal loot (unchanged) |
+| T12-T13 | cyan "mythic" | `LOOT_SOURCES`: heroic, island, mg_room_1..3 |
+| T14 | red-hot "forged" | the Anvil only |
+| Divine | cream `[Divine]` | mg_room_2 (15%), mg_room_3 (always) |
+
+| Source | Boss extras | Elite extras |
+|---|---|---|
+| heroic | T11-12 (100%), T12-13 (35%), Forge Ingot (30%) | T12 (6%) |
+| island | T12-13 (45%), Ingot (30%) | T12 (4%) |
+| mg_room_1 | T12-13 (100%), Ingot (60%) | T12 (10%) |
+| mg_room_2 | T13 (100%), Ingot (100%), Divine (15%) | - |
+| mg_room_3 | T13 x2, Ingot, Divine (all 100%) | - |
+
+New T12 / T13 / T14 names:
+
+| Line | T12 | T13 | T14 |
+|---|---|---|---|
+| Wizard | Staff of Drowned Stars | Staff of the Seventh Tide | Anvil-Wrought Starstaff |
+| Archer | Bow of the Salt Wind | Bow of the Longest Night | Anvil-Wrought Skybow |
+| Warrior | Tidebreaker Greatsword | Blade of the Last Round | Anvil-Wrought Kingsblade |
+| Priest | Rod of the Quiet Harbour | Staff of the Second Dawn | Anvil-Wrought Halo Staff |
+| Rogue | Dagger of the Undertow | Fang of the Closing Bell | Anvil-Wrought Whisperfang |
+| Necromancer | Staff of the Drowned Choir | Staff of the Final Toast | Anvil-Wrought Gravestaff |
+| Paladin | Mace of the Harbour Light | Mace of the Last Call | Anvil-Wrought Judgement |
+| Assassin | Kris of the Riptide | Blade of the Empty Glass | Anvil-Wrought Nightkris |
+| Heavy armor | Harbourmaster's Plate | Plate of the Tidal Throne | Anvil-Wrought Bulwark |
+| Light armor | Saltwind Leathers | Coat of the Last Current | Anvil-Wrought Shadowmail |
+| Robe | Robe of the Drowned Library | Robe of the Night Bell | Anvil-Wrought Starmantle |
+| Ring | Ring of the Undertow | Ring of the Closing Hour | Anvil-Wrought Signet |
+| Abilities | "<T9 noun> of the Undertow" (x1.3) | - | "Anvil-Wrought <noun>" (x1.6) |
+
+Divine items:
+
+| Piece | Name(s) | Effect |
+|---|---|---|
+| Weapon | one per class, e.g. The Mad God's Bottle Opener (warrior), ... Party Bow (archer), ... Spare Wand (wizard) | T14 damage x1.15, Starfall (every 4th shot + 3 piercing star bolts) |
+| Armor | Doorman Plate / Last-Orders Coat / Dressing Gown | T14+ stats, Second Wind (1 HP instead of death, 90 s cooldown) |
+| Ring | The Mad God's Wedding Ring | att +10, wis +9, vit +6, def +4, dex +4, spd +3 |
+| Ability | The Mad God's <noun> | T14 magnitude x1.25 |
+
+### The Anvil (`game/forge.py`)
+
+| Recipe | Input | Result |
+|---|---|---|
+| Temper | 3 items, same slot and tier (not UT or Divine) | the next tier of the first item's line |
+| Temper, T12-13 result | as above + 1 Forge Ingot | T12-T13 |
+| Temper, T14 result | as above + 2 Forge Ingots | T14 |
+| Reforge | 1 UT weapon + 2 Forge Ingots | "Reforged <name>": damage x1.2, proc kept; once only |
+
+### Dungeons, Heroic and the Mad God's Room (`game/realm_sim.py`)
+
+| Difficulty | HP | Cap | Loot rolls | How |
+|---|---|---|---|---|
+| Easy / Medium / Hard | x1.15 / x1.6 / x2.3 | 10 / 13 / 16 | 1 / 2 / 3 | rolled 55 / 32 / 13 |
+| Heroic | x3.6 | 18 | 3 | Heroic Shards only |
+| Godly | x3.0 | 18 | 2 | the Mad God's Room Key only |
+
+| Heroic dungeon | Trial giver | Relic (x3) |
+|---|---|---|
+| Forgotten Vault (Heroic) | Barkeep Bitterwick | Vault Keystone |
+| Cave Warren (Heroic) | Glimmer the Cartographer | Warren Lantern Shard |
+| Frozen Crypt (Heroic) | Frostine | Crypt Frost Seal |
+| Jungle Ruins (Heroic) | Fernleaf | Ruin Idol Eye |
+| Ember Den (Heroic) | Cinder Pete | Cinder Crown Fragment |
+| Sunken Grotto (Heroic) | Madame Murk | Grotto Black Pearl |
+| Wind Spire (Heroic) | Brother Tipsy | Spire Wind Chime |
+
+- **Heroic dungeons:** elites only, +2 rooms, bullets x1.25, cooldowns x0.8.
+- **Heroic Shards:** drop from 15% of Hard clears of an unlocked theme and 25% of Heroic bosses.
+- **Mad God's Room Key:** drops from 2% of Heroic bosses and 1% of calmed big islands (per player).
+- **Mad God's Room forms:**
+
+| Form | Base HP | Look | Moves |
+|---|---|---|---|
+| Mad God | 2200 | the Forge fight's figure | the Forge fight's moves |
+| Unhinged | 4840 | four arms, violet robe | Unhinged Volley, Tantrum Wall, Throne Leap, Star Storm, Mad Dash (x3), Unhinged Nova |
+| Absolutely Livid | 7040 | crimson wings | Livid Volley, Spiral of Spite, Meteor Hell, Rage Beam, Closing Walls, Livid Nova, Sycophants |
+
+  - Livid enrages after 150 s.
+
+**Level gates** (`game/gates.py`):
+
+| Content | Requirement |
+|---|---|
+| Heroic | level 16 |
+| Big islands | level 20 (warning below average T11 gear) |
+| Mad God's Room | level 20 + a T12+ item equipped |
+
+### World
+
+| | Before | Now |
+|---|---|---|
+| Map | 1308 x 1308 | 1560 x 1560 (`CONTINENT_OFFSET` 330) |
+| Island radius | 52 | 150 (islands ~252-267 tiles across) |
+| Island plaza radius | 10 | 14 |
+| Camps per island | 4 | 12 (two rings) |
+| Camp HP | x1.6 | x3.2 |
+| Wave HP | x1.0 | x2.6 |
+
+- New Nexus NPC: Brother Hammerstein (the Anvil).
+- Side quests: 30 -> 37 (the 7 Heroic trials).
+
+### New music (`game/music.py`)
+
+| Key | Title | Style |
+|---|---|---|
+| dungeon_heroic_generic | Vault of No Return | gallop, D harmonic minor, 132 |
+| dungeon_heroic_cave | Warren Collapse | halftime, C phrygian, 104 |
+| dungeon_heroic_frozen_crypt | Crypt Blizzard | punk, D# minor, 152 |
+| dungeon_heroic_jungle_ruins | Idol's Wrath | tribal, F# phrygian, 144 |
+| dungeon_heroic_ember_den | Caldera | punk, E harmonic minor, 184 |
+| dungeon_heroic_sunken_grotto | Undertow Hymn | doom, F phrygian, 90 |
+| dungeon_heroic_wind_spire | Eye of the Gale | gallop, G dorian, 160 |
+| dungeon_mad_god_room | Throne of Nonsense | gallop, D phrygian-dominant, 140 |
+| dungeon_mad_god_room_unhinged | Unhinged | punk, C# harmonic minor, 168 |
+| dungeon_mad_god_room_livid | Absolutely Livid | punk, E phrygian, 192 |
+
+### New sound effects (`game/audio.py` `EVENT_SOUND`, `play_event`)
+
+| Key | When |
+|---|---|
+| forge_hammer | forging |
+| forge_success | an item comes off the Anvil |
+| forge_fail | a forge attempt fails |
+| gate_denied | a level/gear gate refuses you |
+| heroic_portal | a Heroic Shard or the Room Key opens a portal |
+| harbour_bell | an island hub portal takes you across |
+| mg_transform | the Mad God changes form |
+| mg_enrage | Absolutely Livid enrages |
+| divine_drop | a Divine item drops |
+| mythic_drop | a T12+ item drops |
+| starfall | the Divine weapon's Starfall bolts |
+| second_wind | the Divine armor's Second Wind |
+| trial_done | a Heroic trial is turned in |
+
+## Ends of V0.2 (release tag `v0.2`)
 
 ### Sound effects (`game/audio.py`)
 
@@ -243,7 +402,7 @@ Landmark Guardians).
 | Act | Objectives |
 |---|---|
 | Prologue: Welcome, Sucker | Talk to Father Given (F); step through the Realm portal |
-| Act I: The Rim Job | Defeat the Guardians of the Sunken Idol (forest), Buried Obelisk (desert), Frozen Watchpost (tundra), Drowned Shrine (swamp) |
+| Act I (old arc; now Act II "Bouncer Problems") | Defeat the Guardians of the Sunken Idol (forest), Buried Obelisk (desert), Frozen Watchpost (tundra), Drowned Shrine (swamp) |
 | Act II: Last Call | Calm any 7 islands |
 | Act III: The Deep End | Defeat 4 inner-biome Landmark Guardians; clear 3 dungeons |
 | Finale: Closing Time | Defeat the Mad God in the Forge |
@@ -347,6 +506,9 @@ Shard, Abyssal Rumnal. Each island's wave re-arms every 300 s.
   re-bark limit; class-archetype growth ranges; the `reforger` achievement;
   per-zone ~20 s themes (Batch 14), then the 23 one-minute tracks above;
   pets, bosses, story, side quests, NPCs and areas added as listed.
+- **"Final final" content update (still v0.2)**: the 7-act story (Act I renamed
+  "The Grand Tour"), T12-T14 + Divine items, the Anvil, Heroic dungeons + trials,
+  ~260-tile islands, the Mad God's Room, 10 new tracks, 13 new event sounds.
 
 ## Audio file exports
 

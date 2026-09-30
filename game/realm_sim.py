@@ -32,7 +32,7 @@ from game.entities import (Enemy, Bag, Portal, Obstacle, _mk_bullet, RANK_XP, BO
                             BAG_MERGE_WINDOW, find_nearby_bag as _find_nearby_bag, bag_by_id as _bag_by_id,
                             withdraw_from_bag as _withdraw_from_bag, ENEMY_KINDS, GUARDIAN_SCALE)
 from game.items import (roll_loot, BAG_COLOR_FOR, _random_tiered, _random_egg, _random_ut,
-                         make_dungeon_shard, UT_WEAPONS, _random_junk_catch)
+                         make_dungeon_shard, UT_WEAPONS, _random_junk_catch, make_mad_god_key)
 from game.constants import TIER_COLORS, TILE
 from game.audio import sound_family  # pure classification lookup, no pygame.mixer side effects -
 # safe to use here even though this module is shared with the (headless) co-op server
@@ -307,6 +307,8 @@ BONUS_DIFFICULTIES = [
     {"name": "Hard", "weight": 13, "enemy_scale": 2.3, "cap": 16, "loot_rolls": 3},
     # never rolled (weight 0): only a Heroic Shard opens this (see shard_difficulty)
     {"name": "Heroic", "weight": 0, "enemy_scale": 3.6, "cap": 18, "loot_rolls": 3},
+    # never rolled: the Mad God's Room (its three forms carry their own loot sources)
+    {"name": "Godly", "weight": 0, "enemy_scale": 3.0, "cap": 18, "loot_rolls": 2},
 ]
 
 # Dungeon themes ("try to make more dungeons for each mob to drop almost"): which
@@ -388,6 +390,29 @@ for _base in HEROIC_BASES:
     DUNGEON_THEMES[HEROIC_PREFIX + _base] = _heroic_theme(_base)
 
 
+# ------------------------------------------------------------ the Mad God's Room --
+# The endgame after the story: the Mad God, then "Unhinged", then "Absolutely Livid",
+# back to back in his own room (the Forge's layout, his own music, a violet-gold tint).
+# Opened by the rare Mad God's Room Key (items.make_mad_god_key) - level 20 and T12+ gear
+# (game/gates.py). Every form drops its own loot tier (items.LOOT_SOURCES mg_room_1..3:
+# mythic gear and Forge Ingots, then Divine items).
+MAD_GOD_ROOM = "mad_god_room"
+MG_ROOM_FORMS = ("mad_god", "mad_god_unhinged", "mad_god_livid")
+MG_ROOM_FORM_TITLES = {"mad_god_unhinged": "Unhinged", "mad_god_livid": "Absolutely Livid"}
+MG_TRANSFORM_INVULN = 1.6   # the transform "cutscene": the new form can't be hurt and doesn't attack yet
+MG_LIVID_ENRAGE_AFTER = 150.0  # seconds into the last form before it enrages (fires much faster)
+MG_KEY_FROM_HEROIC = 0.02   # per player, per Heroic boss kill
+MG_KEY_FROM_ISLAND = 0.01   # per player, per calmed big island
+DUNGEON_THEMES[MAD_GOD_ROOM] = dict(label="The Mad God's Room", floor=world.ASH, wall=world.WALL_EMBER,
+                                    kinds=["salamander", "cinder_wisp", "ghoul", "husk_wanderer"],
+                                    weights=[25, 25, 25, 25], bosses=["mad_god"], base="forge", mg_room=True)
+
+
+def mg_room_title(kind):
+    t = MG_ROOM_FORM_TITLES.get(kind)
+    return DUNGEON_THEMES[MAD_GOD_ROOM]["label"] + (f": {t}" if t else "")
+
+
 def heroic_label(base_key):
     return DUNGEON_THEMES[HEROIC_PREFIX + base_key]["label"]
 
@@ -397,6 +422,8 @@ def shard_difficulty(theme_name):
     be shown on the portal): Heroic Shards are always "Heroic", the rest roll Easy/Medium/Hard."""
     if theme_name.startswith(HEROIC_PREFIX):
         return "Heroic"
+    if theme_name == MAD_GOD_ROOM:
+        return "Godly"
     rollable = [d for d in BONUS_DIFFICULTIES if d["weight"] > 0]
     return random.choices(rollable, weights=[d["weight"] for d in rollable])[0]["name"]
 
@@ -484,6 +511,11 @@ class RealmSim:
         self.is_heroic = bool(self.theme.get("heroic"))
         self.base_theme = self.theme.get("base", theme_key)  # layout / props / ambience come from the base
         self.loot_source = "heroic" if self.is_heroic else None  # items.LOOT_SOURCES extras for every kill here
+        self.is_mg_room = bool(self.theme.get("mg_room"))
+        if self.is_mg_room:
+            self.loot_source = "mg_room_1"
+        self._mg_form_t = 0.0      # seconds the current Mad God's Room form has been up
+        self._mg_enraged = False
         self.rooms = []      # [{"rect": pygame.Rect, "enemies": [Enemy,...], "cleared": bool}, ...] - fixed,
         # non-respawning mob pods per dungeon room (bonus rooms only; always empty in the open Realm)
         self.obstacles = []  # destructible one-shot wall props (bonus rooms only)
@@ -592,9 +624,11 @@ class RealmSim:
             self._populate_fixed_rooms(dinfo)
             self._hidden_room = dinfo.get("hidden_room")
             self._phase2_pocket = dinfo.get("phase2_pocket")
-            if theme_key == "forge":
-                self._phase2_pocket = None  # the Mad God's phase 2 is immediate, not door-gated
-            if self._hidden_room and random.random() < SECRET_QUEST_CHANCE and theme_key != "forge":
+            if theme_key in ("forge", MAD_GOD_ROOM):
+                self._phase2_pocket = None  # the Mad God's later forms are immediate, not door-gated
+            if self.is_mg_room and self.boss is not None:
+                self.boss.loot_source = "mg_room_1"
+            if self._hidden_room and random.random() < SECRET_QUEST_CHANCE and theme_key not in ("forge", MAD_GOD_ROOM):
                 self._start_secret_quest()
             if self._phase2_pocket is not None:
                 self._start_phase2_quest()
@@ -1437,6 +1471,7 @@ class RealmSim:
         self._update_bullets(dt, alive)
         self._tick_enemy_zones(dt, alive)
         self._gate_islands(dt, alive)
+        self._tick_mg_room(dt)
         for p in alive:
             if getattr(p, "second_wind_fired", False):
                 p.second_wind_fired = False
@@ -1710,6 +1745,9 @@ class RealmSim:
                 self._spawn_loot_bag(bonus_items, enemy.pos, owner_pid=p.pid if p else None)
             if p is not None:
                 self._grant_achievement(p, "reforger")
+                if random.random() < MG_KEY_FROM_ISLAND:
+                    self._spawn_loot_bag([("gold", make_mad_god_key())], enemy.pos, owner_pid=p.pid)
+                    self.events.append((p.pid, "The Mad God's Room Key washed up with the loot!", (255, 120, 140)))
         theme = ISLAND_THEMES[isl["theme"]]
         self.events.append((None, f"{isl['label']} has been calmed. The Reforging continues.", theme["color"]))
         self._story_credit("island", isl["idx"], near=isl["pos"], radius=STORY_CREDIT_RADIUS, killer=killer,
@@ -1799,6 +1837,48 @@ class RealmSim:
                                            f"{p.level}). The tide pushes you back.", (230, 140, 120)))
                 self.sound_events.append(("sfx", "gate_denied", p.pos.x, p.pos.y))
 
+    @property
+    def music_key(self):
+        """The dungeon track key - the Mad God's Room switches song with each form."""
+        if self.is_mg_room and self.boss is not None and self.boss.kind in MG_ROOM_FORM_TITLES:
+            return MAD_GOD_ROOM + ("_unhinged" if self.boss.kind == "mad_god_unhinged" else "_livid")
+        return self.theme_key
+
+    def _mg_next_form(self, enemy):
+        """The Mad God's Room: a form fell - the next one rises on the spot, after a short
+        invulnerable transform (flash, roar, the room's name - and its music - change)."""
+        i = MG_ROOM_FORMS.index(enemy.kind) + 1
+        kind = MG_ROOM_FORMS[i]
+        nxt = Enemy(kind, enemy.pos, level_scale=self.difficulty["enemy_scale"] * self.story_scale)
+        nxt.loot_source = f"mg_room_{i + 1}"
+        nxt.aggro = True
+        nxt._phase_invuln = MG_TRANSFORM_INVULN
+        nxt._atk_gap = MG_TRANSFORM_INVULN + 0.3
+        self.boss = nxt
+        self.enemies.append(nxt)
+        self._mg_form_t = 0.0
+        self._mg_enraged = False
+        self.theme_name = mg_room_title(kind)
+        line = {"mad_god_unhinged": "The Mad God: \"Oh, you want to see UNHINGED? I'll show you unhinged.\"",
+                "mad_god_livid": "The Mad God: \"That's IT. I am ABSOLUTELY LIVID.\""}[kind]
+        self.events.append((None, line, (255, 120, 90)))
+        self.events.append((None, f"{self.theme_name}!", (255, 200, 120)))
+        self.vfx_events.append(("mg_transform", enemy.pos.x, enemy.pos.y,
+                                (190, 110, 255) if kind == "mad_god_unhinged" else (255, 90, 50)))
+        self.sound_events.append(("sfx", "mg_transform", enemy.pos.x, enemy.pos.y))
+
+    def _tick_mg_room(self, dt):
+        b = self.boss
+        if not self.is_mg_room or b is None or b.kind != MG_ROOM_FORMS[-1]:
+            return
+        self._mg_form_t += dt
+        if not self._mg_enraged and self._mg_form_t >= MG_LIVID_ENRAGE_AFTER:
+            self._mg_enraged = True
+            b.fire_rate_mult *= 0.6
+            self.events.append((None, "The Mad God is ENRAGED. Finish this. Now.", (255, 70, 60)))
+            self.vfx_events.append(("boss_phase", b.pos.x, b.pos.y, (255, 70, 60)))
+            self.sound_events.append(("sfx", "mg_enrage", b.pos.x, b.pos.y))
+
     def _boss_key_drops(self, p):
         """Heroic Shards (and, from Batch 6, the Mad God's Room Key) a dungeon boss adds to
         ONE player's personal bag."""
@@ -1815,6 +1895,10 @@ class RealmSim:
         if chance and random.random() < chance:
             out.append(("purple", make_dungeon_shard(HEROIC_PREFIX + self.base_theme, label)))
             self.events.append((p.pid, f"A Heroic Shard ({label}) dropped!", (230, 90, 120)))
+        if self.is_heroic and random.random() < MG_KEY_FROM_HEROIC:
+            out.append(("gold", make_mad_god_key()))
+            self.events.append((p.pid, "The Mad God's Room Key dropped! ...he's going to want that back.",
+                                (255, 120, 140)))
         return out
 
     def _story_personal(self, p, kind, key=None):
@@ -2273,6 +2357,9 @@ class RealmSim:
                                extra=credited)
             for p in credited:
                 self._side_event(p, "guardian", guardian_biome)
+        if enemy is self.boss and self.is_mg_room and enemy.kind in MG_ROOM_FORMS[:-1]:
+            self._mg_next_form(enemy)
+            return
         if enemy is self.boss and enemy.kind == "mad_god":
             # the finale's phase 2 is immediate - he gets back up, angrier, right where he fell
             self.boss = Enemy("mad_god_phase2", enemy.pos,
@@ -2282,7 +2369,11 @@ class RealmSim:
                                  (255, 90, 60)))
             self.vfx_events.append(("boss_appear", enemy.pos.x, enemy.pos.y, (255, 90, 60)))
             return
-        if enemy is self.boss and self.is_bonus_room and not enemy.kind.endswith("_phase2")                 and self.theme_key != "forge":
+        if enemy is self.boss and self.is_mg_room:
+            self.events.append((None, "The Mad God is... actually done. For now. He'll be back. He always is.",
+                                (255, 246, 196)))
+        if enemy is self.boss and self.is_bonus_room and not enemy.kind.endswith("_phase2") \
+                and self.theme_key not in ("forge", MAD_GOD_ROOM):
             self._story_credit("dungeon", None, killer=killer)
             if self.is_heroic:
                 self._story_credit("heroic_dungeon", self.base_theme, killer=killer)

@@ -299,7 +299,11 @@ def _portal_entries():
     from game import realm_sim
     out = []
     for key, th in realm_sim.DUNGEON_THEMES.items():
-        if th.get("heroic"):
+        if th.get("mg_room"):
+            opened = ("The endgame: the Mad God, then 'Unhinged', then 'Absolutely Livid', back to back. Opened "
+                      "by the rare Mad God's Room Key (Heroic bosses, calmed big islands). Level 20 and a T12+ "
+                      "item equipped. Each form drops better loot - the last ALWAYS drops a Divine item.")
+        elif th.get("heroic"):
             opened = (f"The Heroic version of the {realm_sim.DUNGEON_THEMES[th['base']]['label']}: elites only, two "
                       "more rooms, 3.6x HP, faster bullets - and mythic T12-T13 loot plus Forge Ingots. Level 16+. "
                       "Opened by a Heroic Shard: finish that dungeon's Heroic trial quest for the first one; Hard "

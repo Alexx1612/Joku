@@ -1096,6 +1096,18 @@ for _cls, _rows in ABILITIES.items():
     _rows.append((f"Anvil-Wrought {_noun}", _effect, 14, _mp + 15, int(round(_mag * 1.6)),
                   f"Forged at the Anvil from three lesser {_noun.lower()}s - the same spell, turned up past eleven."))
 
+# ------------------------------------------------------------ the Mad God's Room key --
+MAD_GOD_ROOM_THEME = "mad_god_room"
+
+
+def make_mad_god_key() -> Item:
+    """Used in the Realm like a Dungeon Shard: opens the Mad God's Room (realm_sim). Rare:
+    Heroic dungeon bosses (MG_KEY_FROM_HEROIC) and calmed big islands (MG_KEY_FROM_ISLAND)."""
+    return Item("Mad God's Room Key", SLOT_SHARD, 0, "key", shard_theme=MAD_GOD_ROOM_THEME,
+                description="Heavy, warm, and it hums a song nobody likes. Use it in the Realm to open the Mad "
+                            "God's Room - level 20 and at least one T12+ item, or it won't turn.")
+
+
 # ------------------------------------------------------------ forge materials --
 SLOT_MATERIAL = "material"
 

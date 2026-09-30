@@ -66,6 +66,8 @@ class Conversation:
             self.msgs = self.progress.on_event("talk", self.npc_id,
                                                ctx={"npc": self.npc_id, "person": person, "uid": self.npc_id},
                                                player=self.player)
+            if NPCS[self.npc_id].get("anvil"):
+                self.sfx.append("forge_hammer")
             story_progress = getattr(self.player, "story", None)
             if story_progress is not None and story_progress.wants("npc", self.npc_id):
                 self.msgs = list(self.msgs) + story_progress.on_event("npc", self.npc_id)  # Act I: meet the locals
@@ -185,6 +187,8 @@ class Conversation:
         elif act == "turnin":
             ok, msgs = self.progress.turn_in(key[1], self.player)
             self.msgs.extend(msgs)
+            if ok and QUESTS[key[1]].get("heroic_theme"):
+                self.sfx.append("trial_done")
             self.node = ("thanks", key[1]) if ok else ("root",)
         elif act == "forge":
             self.used.discard(key)  # the same slot can forge again with whatever is left
@@ -198,6 +202,8 @@ class Conversation:
                     sp = getattr(self.player, "story", None)
                     if sp is not None:
                         self.msgs.extend(sp.on_event("forge"))
+                else:
+                    self.sfx.append("forge_fail")
             self.node = ("forged",)
         return self.view()
 

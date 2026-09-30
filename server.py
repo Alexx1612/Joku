@@ -842,8 +842,10 @@ def _apply_action(state, s, action):
             if not ok:
                 state.realm_sim.sound_events.append(("sfx", "gate_denied", s.player.pos.x, s.player.pos.y))
             elif target_pos is not None:
+                state.realm_sim.vfx_events.append(("harbour_ferry", s.player.pos.x, s.player.pos.y, (120, 200, 255)))
                 s.player.pos = pygame.Vector2(target_pos)
                 state.realm_sim.sound_events.append(("sfx", "harbour_bell", s.player.pos.x, s.player.pos.y))
+                state.realm_sim.vfx_events.append(("harbour_ferry", s.player.pos.x, s.player.pos.y, (120, 200, 255)))
             s.portal_prompt = None
             return
         if s.zone == ZONE_REALM:

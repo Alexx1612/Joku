@@ -1573,6 +1573,53 @@ _MAD_GOD_FIGURE = _mirror([
     "   KKKKKKKK",
 ])
 
+# the Mad God's Room evolutions (V0.2 final): same silhouette family as _MAD_GOD_FIGURE,
+# pushed further - "Unhinged" grows a jagged crown, four arms and a cracked violet robe;
+# "Absolutely Livid" sprouts crimson wings and a burning crown
+_MAD_GOD_UNHINGED = _mirror([
+    "   O   O  O",
+    "   OO OOOOO",
+    "    OOrOrOO",
+    "     KKKKKK",
+    "     KEEKKE",
+    "     KKmmKK",
+    "OO    ooooo",
+    " OO  oopoop",
+    "  OOoooppoo",
+    "   ooo KpOo",
+    "  OO   KpOo",
+    " OO   KooOo",
+    "      KppOo",
+    "     KooopO",
+    "    KooppOo",
+    "    K99999p",
+    "   KKKKKKKK",
+])
+_MAD_GOD_UNHINGED_PAL = {"O": (255, 214, 90), "K": (30, 10, 34), "o": (150, 88, 212), "p": (232, 124, 255),
+                         "E": (255, 70, 70), "9": (255, 196, 60), "r": (255, 90, 200), "m": (250, 240, 240)}
+_MAD_GOD_LIVID = _mirror([
+    "  f   f  f ",
+    "  ff fOfOfO",
+    "W   OOrOrOO",
+    "WW   KKKKKK",
+    "WWW  KEEKKE",
+    "WWWW KKmmKK",
+    "WWWWW ooooo",
+    " WWWWoofoof",
+    "  WWooooffo",
+    "   WWoo Kfo",
+    "     o  Kfo",
+    "       KooO",
+    "      KoffO",
+    "     KooofO",
+    "    KoofffO",
+    "    K99999f",
+    "   KKKKKKKK",
+])
+_MAD_GOD_LIVID_PAL = {"f": (255, 140, 40), "O": (255, 222, 110), "W": (126, 18, 32), "K": (28, 6, 8),
+                      "o": (204, 40, 44), "E": (255, 255, 130), "9": (255, 190, 60), "r": (255, 250, 200),
+                      "m": (255, 230, 120)}
+
 # magma golem: rock head with gold eye slits, huge shoulders, glowing fists
 _CINDER_COLOSSUS_NEW = _mirror([
     "       tttt",
@@ -1890,6 +1937,7 @@ _NPC_GLIMMER = (_pad([
 ENEMY_GRIDS.update({
     "boss": (_DEMON_LORD, _BOSS_PAL), "boss_phase2": (_DEMON_LORD, _BOSS_PHASE2_PAL),
     "mad_god": (_MAD_GOD_FIGURE, _MAD_GOD_PAL), "mad_god_phase2": (_MAD_GOD_FIGURE, _MAD_GOD_PHASE2_PAL),
+    "mad_god_unhinged": (_MAD_GOD_UNHINGED, _MAD_GOD_UNHINGED_PAL), "mad_god_livid": (_MAD_GOD_LIVID, _MAD_GOD_LIVID_PAL),
     "cinder_colossus": (_CINDER_COLOSSUS_NEW, _CINDER_COLOSSUS_NEW_PAL),
     "rubble_warlord": (_RUBBLE_WARLORD_NEW, _RUBBLE_WARLORD_PAL),
     "ashreach_revenant": (_ASHREACH_REVENANT_NEW, _ASHREACH_REVENANT_PAL),
@@ -2116,7 +2164,8 @@ BOSS_KINDS = {"boss", "frost_monarch", "ash_behemoth", "void_reaper", "thorn_war
               "cinder_colossus", "rubble_warlord", "ashreach_revenant", "choir_sovereign", "coral_leviathan",
               # Batch 14 Track B2 - same treatment for the last 5 islands' mini-bosses
               "thornrock_colossus", "ashenreach_devourer", "tideglass_warden",
-              "driftbell_matriarch", "abyssal_choirmaster", "mad_god", "mad_god_phase2"}
+              "driftbell_matriarch", "abyssal_choirmaster", "mad_god", "mad_god_phase2",
+              "mad_god_unhinged", "mad_god_livid"}
 
 
 def _fit(size_wh, longest):

@@ -1275,6 +1275,7 @@ class Game:
         if npc is None and wild is None:
             return False
         self.dialogue = dialogue.start_conversation(self.player, npc=npc, wildlife=wild)
+        self._play_dialogue_sfx(self.dialogue)
         self._cancel_drag()
         for msg, color in self.dialogue.msgs:
             self.push_feed(msg, color)
@@ -1287,11 +1288,20 @@ class Game:
         view = conv.choose(idx)
         for msg, color in conv.msgs:
             self.push_feed(msg, color)
-        for key in conv.sfx:  # e.g. the Anvil's forge_success
-            audio.play_event(key)
-        conv.sfx = []
+        self._play_dialogue_sfx(conv)
         if view is None:
             self.dialogue = None
+
+    def _play_dialogue_sfx(self, conv):
+        """A conversation's sound cues (the Anvil's hammer / forge_success, a trial's sting),
+        plus a burst of forge sparks at the NPC when something came off the Anvil."""
+        for key in conv.sfx:
+            audio.play_event(key)
+            if key == "forge_success":
+                npc = next((n for n in getattr(self, "nexus_npcs", ()) if n.npc_id == conv.npc_id), None)
+                at = npc.pos if npc is not None else self.player.pos
+                vfx.dispatch([("forge_sparks", at.x, at.y, (255, 190, 90))])
+        conv.sfx = []
 
     def _talk_to_given(self):
         """F next to Father Given: he says the current act's hint (and the act intro the
@@ -1457,8 +1467,12 @@ class Game:
                 audio.play_event("gate_denied")
                 return
             if target_pos is not None:
+                if self.realm_sim is not None:
+                    self.realm_sim.vfx_events.append(("harbour_ferry", self.player.pos.x, self.player.pos.y,
+                                                      (120, 200, 255)))
                 self.player.pos = pygame.Vector2(target_pos)
                 audio.play_event("harbour_bell")
+                vfx.dispatch([("harbour_ferry", self.player.pos.x, self.player.pos.y, (120, 200, 255))])
             return
         on_portal_fn(theme, kind, difficulty)
 
@@ -1847,7 +1861,7 @@ class Game:
         if self.state == STATE_BONUS and self.bonus_sim is not None:
             sim = self.bonus_sim
             return zone_banner.dungeon_place(sim.theme_name, sim.difficulty.get("name"),
-                                             audio.dungeon_zone_for_key(sim.theme_key))
+                                             audio.dungeon_zone_for_key(sim.music_key))
         if self.state == STATE_REALM and self.realm_sim is not None:
             sim = self.realm_sim
             tx, ty = self.player.pos.x / C.TILE, self.player.pos.y / C.TILE
@@ -1986,6 +2000,8 @@ class Game:
         ui.draw_day_night_overlay(s, sim.light_level, sim.blood_moon_active, torch_positions)
         if getattr(sim, "is_heroic", False):
             vfx.draw_heroic_tint(s)
+        elif getattr(sim, "is_mg_room", False):
+            vfx.draw_heroic_tint(s, "mg_room")
         self.weather_fx.draw(s)
         ui.draw_dock_frame(s, self.player)
         if not sim.is_bonus_room:

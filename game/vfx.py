@@ -812,11 +812,12 @@ class NexusAmbience(AmbientEvents):
 _HEROIC_TINT = {}
 
 
-def draw_heroic_tint(surf):
+def draw_heroic_tint(surf, style="heroic"):
     """Heroic dungeons: a crimson vignette over the whole view - same rooms, but it
-    reads instantly as 'this is the nasty version'."""
+    reads instantly as 'this is the nasty version'. style="mg_room": the Mad God's
+    Room's violet-gold version."""
     size = surf.get_size()
-    layer = _HEROIC_TINT.get(size)
+    layer = _HEROIC_TINT.get((size, style))
     if layer is None:
         # a small radial gradient smooth-scaled up to the screen: an even crimson wash
         # in the middle that deepens toward the edges, with no visible rings
@@ -825,9 +826,13 @@ def draw_heroic_tint(surf):
         for y in range(gh):
             for x in range(gw):
                 d = min(1.0, math.hypot((x + 0.5) / gw - 0.5, (y + 0.5) / gh - 0.5) / 0.7071)
-                small.set_at((x, y), (int(120 - 60 * d), 8, 26, int(30 + 120 * d ** 2.2)))
+                if style == "mg_room":
+                    small.set_at((x, y), (int(150 - 90 * d), int(60 + 40 * (1 - d)), int(170 - 60 * d),
+                                          int(40 + 110 * d ** 2.2)))
+                else:
+                    small.set_at((x, y), (int(120 - 60 * d), 8, 26, int(30 + 120 * d ** 2.2)))
         layer = pygame.transform.smoothscale(small, size)
-        _HEROIC_TINT[size] = layer
+        _HEROIC_TINT[(size, style)] = layer
     surf.blit(layer, (0, 0))
 
 

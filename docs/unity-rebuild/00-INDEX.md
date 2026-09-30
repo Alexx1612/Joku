@@ -52,6 +52,10 @@ pipeline history), both in
 | 28 | [28-living-world-batch15.md](28-living-world-batch15.md) | Batch 15 living world (released in Ends of V0.2, 65552b4): 15 NPCs/creature groups + finite dialogue trees, 30 side quests + board, Quest Log/Dictionary/Quest Map, co-op personal loot + shared credit, island chests, spells x2.5 + per-ability VFX, mob chat radius, Esc/quit flow, chat cursor/selection/cross-zone /msg, 12-chest vault, wider HUD, 1308 map + 100x100 islands, 10 big areas, 96x72 Nexus, multi-tile props/canopies, 2x bosses | "v0.2 final touch" | **done** |
 | 29 | [29-music-banners-saves-release.md](29-music-banners-saves-release.md) | Ends of V0.2 follow-ups (65552b4, 30fb143, d09df8d): 23 one-minute loopable rock tracks + background render/cache, zone-entry banners, save location next to the executable (`game/paths.py`), Windows + Linux GitHub Actions release pipeline and launch scripts, small-map draw crash fix | "v0.2 final touch" | **done** |
 | 30 | [30-combat-feel.md](30-combat-feel.md) | V0.2 polish: per-mob named attack sets + boss/mini-boss enrage phases, sine/accel/homing/split bullets, red/orange/purple ground telegraphs, dash/leap wind-ups, screen-shake policy (local hits, slams, boss phases only), per-weapon/ability/enemy-attack SFX | "v0.2 final touch" | **done** |
+| 31 | [31-telegraph-accuracy.md](31-telegraph-accuracy.md) | Warnings never lie: aim / ring gaps / wall gap / burst facing fixed at wind-up start, new `spokes` telegraph for bullet moves, chained-dash lanes, Crossfire from its circles, accuracy test | "v0.2 final final" | **done** |
+| 32 | [32-story-arc-v2.md](32-story-arc-v2.md) | 7-act arc: Act I "The Grand Tour" (exploration) -> combat -> gear/forge -> deep end -> big islands -> Mad God; save/account migration | "v0.2 final final" | **done** |
+| 33 | [33-endgame-gear-forge-heroic.md](33-endgame-gear-forge-heroic.md) | T12-T14 tiers + loot sources, Brother Hammerstein's Anvil (temper / reforge), Divine items (Starfall, Second Wind), Heroic dungeons + trial quests, level gates, new SFX/VFX | "v0.2 final final" | **done** |
+| 34 | [34-big-islands-mad-god-room.md](34-big-islands-mad-god-room.md) | ~260-tile level-20 islands (12 camps, island loot), faster island stamping, power-throttle-proof budget checks; the Mad God's Room with Unhinged + Absolutely Livid forms | "v0.2 final final" | **done** |
 
 **All batches 1-10 now have a doc, and rotmg-03's full assigned scope (Batch 1
 parts 1-4 + the art/VFX pipeline) is complete - no gaps remain in the
@@ -192,3 +196,5 @@ etc.) is a fresh ask, not a continuation of an open item.
 
 ---
 Session handoff (what the "v0.2 final touch" session did, conventions, open items): [../HANDOFF-v0.2-final-touch.md](../HANDOFF-v0.2-final-touch.md)
+
+Latest handoff ("v0.2 final final": docs 31-34): [../HANDOFF-v0.2-final-final.md](../HANDOFF-v0.2-final-final.md)

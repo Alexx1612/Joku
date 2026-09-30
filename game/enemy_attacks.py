@@ -708,6 +708,32 @@ ATTACKS.update({
                   spread=288, sweep_step=12, speed=0.8, p2=True, bkw=dict(status_effect="armor_pierce"))],
 })
 
+# ---------------- the Mad God's Room: two evolutions, each a full new move set ----------------
+ATTACKS.update({
+    "mad_god_unhinged": [
+        M("Unhinged Volley", "fan", windup=0.25, cd=0.85, repeat=3, gap=0.15, n=4, spread=34, speed=1.3,
+          bkw=dict(status_effect="armor_pierce"), sfx="shotgun"),
+        M("Tantrum Wall", "wall", windup=0.8, cd=3.5, tele="line", n=11, speed=0.75, tele_len=320, tele_w=290),
+        M("Throne Leap", "leap", windup=0.7, cd=6.0, tele="zone", r=90, dmgm=1.4, dash_time=0.4,
+          burst=dict(kind="ring", n=14, gaps=2, gap_w=2, speed=0.8)),
+        M("Star Storm", "rain", windup=0.9, cd=5.0, tele="zone", n=8, r=50, spread=170, dmgm=1.3),
+        M("Mad Dash", "dash", windup=0.45, cd=6.0, tele="dash", dash_time=0.35, dash_mult=3.6, repeat=3, gap=0.4,
+          phase=2),
+        M("Unhinged Nova", "ring", windup=1.1, cd=7.0, tele="ring", n=26, gaps=3, gap_w=2, speed=0.85, dmgm=1.3,
+          phase=2)],
+    "mad_god_livid": [
+        M("Livid Volley", "fan", windup=0.2, cd=0.75, repeat=4, gap=0.12, n=5, spread=40, speed=1.35,
+          bkw=dict(status_effect="armor_pierce"), sfx="shotgun"),
+        M("Spiral of Spite", "fan", windup=0.6, cd=6.0, tele="ring", repeat=16, gap=0.09, n=6, spread=300,
+          sweep_step=10, speed=0.8, color=(255, 90, 60)),
+        M("Meteor Hell", "rain", windup=0.9, cd=4.5, tele="zone", n=10, r=52, spread=200, stagger=0.1, dmgm=1.4),
+        M("Rage Beam", "beam", windup=0.7, cd=3.5, tele="line", n=10, lead=True, dmgm=1.3),
+        M("Closing Walls", "eruption", windup=1.0, cd=8.0, tele="zone", rings=4),
+        M("Livid Nova", "ring", windup=1.2, cd=7.0, tele="ring", n=30, gaps=3, gap_w=2, speed=0.9, dmgm=1.5,
+          phase=2),
+        M("Sycophants", "summon", windup=0.8, cd=16.0, tele="ring", tele_r=100, kind="imp", n=4, phase=2)],
+})
+
 
 # telegraph styles that mark a DANGEROUS move (ground AoE, slam/nova, beam/lance line, dash/leap, big
 # boss specials). "none" = an ordinary shot with no visual hint at all.

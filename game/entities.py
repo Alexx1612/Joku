@@ -1019,6 +1019,17 @@ ENEMY_KINDS["mad_god_phase2"] = dict(
     dmg=(int(_mg_lo * 1.15), int(_mg_hi * 1.15)), fire_rate_mult=PHASE2_FIRE_RATE_MULT,
     deF=round(ENEMY_KINDS["mad_god"].get("deF", 0) * PHASE2_HP_MULT))
 
+# The Mad God's Room (V0.2 final endgame): the Mad God, then two evolutions, fought back
+# to back (see realm_sim.MG_ROOM_FORMS). Each is its own boss kind with its own sprite and
+# move set (game/enemy_attacks.py); the room's "Godly" difficulty scales their HP further.
+ENEMY_KINDS["mad_god_unhinged"] = dict(
+    ENEMY_KINDS["mad_god"], kind="mad_god_unhinged", hp=int(ENEMY_KINDS["mad_god"]["hp"] * 2.2), speed=58,
+    dmg=(int(_mg_lo * 1.4), int(_mg_hi * 1.4)), radius=32, fire_rate_mult=0.8)
+ENEMY_KINDS["mad_god_livid"] = dict(
+    ENEMY_KINDS["mad_god"], kind="mad_god_livid", hp=int(ENEMY_KINDS["mad_god"]["hp"] * 3.2), speed=64,
+    dmg=(int(_mg_lo * 1.8), int(_mg_hi * 1.8)), radius=34, fire_rate_mult=0.65)
+MAD_GOD_KINDS = ("mad_god", "mad_god_phase2", "mad_god_unhinged", "mad_god_livid")
+
 # Batch 15 (E4): bosses read as BIG. An optional per-kind "scale" multiplies both the
 # drawn sprite (sprites.enemy_sprite(kind, scale)) and the bullet hitbox radius; terrain
 # movement keeps a capped radius (ENEMY_MOVE_RADIUS_CAP) so a huge boss can still use
@@ -1030,7 +1041,7 @@ ISLAND_MINI_BOSS_KINDS = ("cinder_colossus", "choir_sovereign", "rubble_warlord"
                           "ashreach_revenant", "tideglass_warden", "thornrock_colossus", "driftbell_matriarch",
                           "ashenreach_devourer", "abyssal_choirmaster")
 ENEMY_MOVE_RADIUS_CAP = 26
-for _bk in BOSS_KINDS + [f"{k}_phase2" for k in BOSS_KINDS] + ["mad_god", "mad_god_phase2"]:
+for _bk in BOSS_KINDS + [f"{k}_phase2" for k in BOSS_KINDS] + list(MAD_GOD_KINDS):
     ENEMY_KINDS[_bk]["scale"] = BOSS_SCALE
 for _bk in ISLAND_MINI_BOSS_KINDS:
     if _bk in ENEMY_KINDS:
@@ -1083,7 +1094,7 @@ def _mob_difficulty_score(d):
 _DIFFICULTY_SCORE_BY_KIND = {k: _mob_difficulty_score(d) for k, d in ENEMY_KINDS.items()}
 _DIFFICULTY_RANGE_BY_RANK = {}
 for _kind, _d in ENEMY_KINDS.items():
-    if _kind.endswith("_phase2") or _kind == "mad_god":
+    if _kind.endswith("_phase2") or _kind in MAD_GOD_KINDS:
         continue  # excluded from ranking - see difficulty_fraction()'s early-return for these;
         # including them would inflate the "boss" rank's max score and silently nerf every
         # ORDINARY boss's difficulty_fraction (and therefore its loot-roll tier), which is
@@ -1099,7 +1110,7 @@ def difficulty_fraction(kind):
     of them - a neutral midpoint, not an arbitrary top/bottom pick. A "_phase2"
     variant always returns 1.0 (top of its rank's loot band) rather than
     participating in the ranking itself - see the exclusion above."""
-    if kind.endswith("_phase2") or kind == "mad_god":
+    if kind.endswith("_phase2") or kind in MAD_GOD_KINDS:
         return 1.0
     d = ENEMY_KINDS[kind]
     lo, hi = _DIFFICULTY_RANGE_BY_RANK[d["rank"]]
@@ -1848,6 +1859,14 @@ class Enemy:
         if self.moonlit:
             pulse = 1.0 + 0.12 * math.sin(pygame.time.get_ticks() / 200.0)
             pygame.draw.circle(surf, (220, 225, 255), r.center, int(r.width * 0.7 * pulse), 2)
+        if getattr(self, "_heroic", False):
+            # Heroic dungeons: a smouldering crimson aura, so a Heroic mob never reads as the normal one
+            pulse = 0.5 + 0.5 * math.sin(pygame.time.get_ticks() / 260.0 + (self.pos.x + self.pos.y) * 0.01)
+            rad = int(r.width * (0.55 + 0.06 * pulse))
+            aura = pygame.Surface((rad * 2 + 4, rad * 2 + 4), pygame.SRCALPHA)
+            pygame.draw.circle(aura, (200, 20, 50, int(40 + 40 * pulse)), (rad + 2, rad + 2), rad)
+            pygame.draw.circle(aura, (255, 70, 90, int(120 + 80 * pulse)), (rad + 2, rad + 2), rad, 2)
+            surf.blit(aura, (r.centerx - rad - 2, r.centery - rad - 2))
         if self.invulnerable and not getattr(self, "_shelled_vis", False):
             # burrowed - a faint dust-ring at its feet instead of the full sprite,
             # so it clearly reads as "underground and untouchable" not just dim
@@ -1919,7 +1938,8 @@ class Enemy:
                     speech=self.speech, speech_age=round(self.speech_age, 2), neutral=self.neutral,
                     pretelegraph=self._pretelegraph, scale=self.scale,
                     wk=self._windup_kind if (self._pretelegraph or self._dash is not None) else None,
-                    wf=round(self._windup_frac, 2), ds=self._dash is not None, sh=self._shell_t > 0)
+                    wf=round(self._windup_frac, 2), ds=self._dash is not None, sh=self._shell_t > 0,
+                    hero=getattr(self, "_heroic", False))
 
 
 def _mk_bullet(pos, direction, speed, dmg, color, owner="enemy", pierce=0, radius=5, lifetime=2.4,

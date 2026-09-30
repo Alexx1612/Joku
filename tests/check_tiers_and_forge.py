@@ -211,7 +211,8 @@ def check_icons_and_sounds():
         b = sprites.item_icon(TIER_COLORS["t_mythic"], "sword")
         assert pygame.image.tobytes(a, "RGBA") != pygame.image.tobytes(b, "RGBA"), shape
     for key in ("forge_success", "forge_hammer", "gate_denied", "heroic_portal", "harbour_bell", "mg_transform",
-                "divine_drop", "mythic_drop", "starfall", "second_wind", "ring_warn", "trial_done"):
+                "divine_drop", "mythic_drop", "starfall", "second_wind", "trial_done", "forge_fail",
+                "mg_enrage"):
         assert key in audio.EVENT_SOUND, key
         samples = audio._event_sound(key)
         assert len(samples) > 1000 and max(abs(v) for v in samples) > 500, key

@@ -195,7 +195,11 @@ def check_singleplayer_session():
         p.gain_xp(10 ** 5)
     assert p.level == 20
 
-    # --- every dungeon theme: enter, boss exists, leave back to the realm
+    # --- every dungeon theme: enter, boss exists, leave back to the realm (a T12 weapon so the
+    # Mad God's Room gate - level 20 + a T12+ item - lets this level-20 hero in too)
+    from game import items as _items
+    _r = next(r for r in _items.WEAPONS[p.cls_name] if r[2] == 12)
+    p.weapon = _items.Item(_r[0], _items.SLOT_WEAPON, 12, _r[1], min_dmg=_r[3][0], max_dmg=_r[3][1])
     for theme in DUNGEON_THEMES:
         if theme == "forge":
             continue

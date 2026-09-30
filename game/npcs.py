@@ -226,7 +226,7 @@ NPCS = {
         barks=["Left at the stalagmite... no, the OTHER stalagmite.", "Is it dark in here or is it me?"]),
     "hammerstein": dict(
         name="Brother Hammerstein", kind="person", sprite=("enemy", "npc_hammerstein"), tint=None,
-        zone="nexus", area="nexus:anvil", wander=1, anvil=True,
+        zone="nexus", area="nexus:anvil", wander=0, anvil=True,  # he stays at his anvil
         greeting="Welcome to the Anvil! I was a monk once. Took a vow of silence. Then I found hammers.",
         again="Back for more hammering? The Anvil never gets tired. I do. Constantly.",
         exhausted="That's all the forging wisdom I have. The rest is just hitting things.",
@@ -532,6 +532,8 @@ class NPC:
         if d.get("tint"):
             img = img.copy()
             img.fill((*d["tint"], 255), special_flags=pygame.BLEND_RGBA_MULT)
+        if d.get("anvil"):
+            _draw_anvil(surf, cam((self.pos.x + 30, self.pos.y + 8)), self._t)
         count = d.get("count", 1)
         offsets = [(0, 0), (-22, 10), (22, 12), (-6, 22)][:count]
         bob = math.sin(self._t * 2.2) * 1.5
@@ -550,6 +552,28 @@ class NPC:
         n.speech = d.get("speech", "")
         n.speech_age = d.get("speech_age", 99.0)
         return n
+
+
+def _draw_anvil(surf, center, t):
+    """Brother Hammerstein's anvil: an iron anvil on a stump with a glowing bar on it and
+    the odd rising ember (procedural pixel art, drawn under/next to him)."""
+    cx, cy = int(center[0]), int(center[1])
+    pygame.draw.rect(surf, (92, 62, 38), (cx - 8, cy + 4, 16, 10))                     # stump
+    pygame.draw.rect(surf, (60, 40, 24), (cx - 8, cy + 4, 16, 10), 1)
+    body = [(cx - 14, cy - 6), (cx + 12, cy - 6), (cx + 18, cy - 3), (cx + 8, cy - 1),
+            (cx + 5, cy + 4), (cx - 5, cy + 4), (cx - 8, cy - 1), (cx - 14, cy - 3)]
+    pygame.draw.polygon(surf, (78, 80, 92), body)                                      # iron
+    pygame.draw.line(surf, (140, 144, 160), (cx - 13, cy - 6), (cx + 11, cy - 6), 1)   # top highlight
+    pygame.draw.polygon(surf, (22, 22, 28), body, 1)
+    glow = 0.5 + 0.5 * math.sin(t * 3.0)
+    hot = (255, int(120 + 80 * glow), 50)
+    pygame.draw.rect(surf, hot, (cx - 6, cy - 9, 10, 3))                               # the hot bar
+    pygame.draw.rect(surf, (255, 240, 180), (cx - 4, cy - 9, 4, 1))
+    for k in range(3):                                                                 # embers
+        ph = (t * 0.9 + k * 0.37) % 1.0
+        ex = cx - 2 + int(6 * math.sin(k * 2.1 + t))
+        ey = cy - 10 - int(ph * 16)
+        pygame.draw.circle(surf, (255, int(200 - 120 * ph), 60), (ex, ey), 1)
 
 
 def spawn_realm_npcs(sim):

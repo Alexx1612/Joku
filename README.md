@@ -4,7 +4,7 @@ A from-scratch, original-code game inspired by **Realm of the Mad God**
 (RotMG) - a top-down bullet-hell MMO-lite you can play solo or in real
 client-server co-op. No RotMG assets, sprites, music or code are used: all
 art is original (hand-painted PNGs plus procedurally generated pixel art),
-every sound effect and all 23 music tracks are original procedurally
+every sound effect and all 33 music tracks are original procedurally
 synthesized compositions (no covers, no borrowed melodies), and the stat
 formulas are re-derived independently from the public RotMG wiki in
 `game/constants.py`.
@@ -207,10 +207,20 @@ zone), `/accept` / `/decline` (trade invites) and
   achievements, the vault and completed story acts survive.
 
 ### Items and loot
-- 11 weapon tiers per class, 11 armors per archetype (heavy / light / robe),
-  11 rings, abilities, and 4 untiered (UT) weapons per class with distinct
-  procs (bleed, boomerang, burn, vulnerable). 40% of drops can be for
-  another class.
+- 14 weapon tiers per class, 14 armors per archetype (heavy / light / robe),
+  14 rings, 5 ability tiers per class (1 / 5 / 9 / 12 / 14), and 4 untiered
+  (UT) weapons per class with distinct procs (bleed, boomerang, burn,
+  vulnerable). 40% of drops can be for another class.
+- **Tiers**: normal loot tops out at T11. **T12-T13** (cyan "mythic" badge)
+  only drop in Heroic dungeons, on the big islands and in the Mad God's Room.
+  **T14** (red-hot badge) never drops - it's forged.
+- **Brother Hammerstein's Anvil** (Nexus, talk with F): *temper* 3 items of
+  the same slot and tier into one of the next tier (Forge Ingots needed from
+  T12 up), or *reforge* a UT with 2 Ingots (+20% damage, proc kept).
+- **Divine items** (the Mad God's Room): a Divine weapon per class
+  (*Starfall*: every 4th shot adds 3 piercing star bolts), Divine armor
+  (*Second Wind*: a killing blow leaves you at 1 HP, once per 90 s), a Divine
+  ring and Divine abilities.
 - **Loot bags** (brown / purple / white by rarity), rolled per mob
   difficulty; ground-bag tooltips; right-click to open.
 - **UT sockets**: drag a spare UT onto a weapon and confirm with Enter to
@@ -234,18 +244,26 @@ zone), `/accept` / `/decline` (trade invites) and
   rarity -> a pet of the next rarity with the combined bond.
 
 ### Story campaign (`game/story.py`)
+Seven acts that go exploration -> combat -> gear -> the deep end -> the big
+islands -> the Mad God:
 - **Prologue: Welcome, Sucker** - talk to Father Given in the Nexus, enter the Realm.
-- **Act I: The Rim Job** - defeat the Landmark Guardians of the 4 outer
-  biomes (forest, desert, tundra, swamp).
-- **Act II: Last Call** - calm any 7 of the 10 islands.
-- **Act III: The Deep End** - defeat 4 inner-biome Landmark Guardians and
-  clear 3 dungeons (inner guardians always drop a Dungeon Shard).
+- **Act I: The Grand Tour** - sightseeing: visit 5 of the big named places,
+  spot the landmark in each outer biome, chat with 3 locals, catch a fish.
+- **Act II: Bouncer Problems** - defeat the Landmark Guardians of the 4 outer
+  biomes (forest, desert, tundra, swamp) and clear a dungeon (every
+  guardian drops a Dungeon Shard).
+- **Act III: Retail Therapy** - wear a T8+ item, clear 2 more dungeons,
+  finish a Heroic trial quest and forge something at the Anvil.
+- **Act IV: The Deep End** - defeat 4 inner-biome Landmark Guardians and clear
+  2 Heroic dungeons (level 16+).
+- **Act V: Last Call** - calm any 7 of the 10 big islands (level 20).
 - **Finale: Closing Time** - Father Given sends you to the Forge to fight the
   Mad God (two phases, armor-piercing volley and nova), then credits and free play.
+- **After the story**: the **Mad God's Room** (see World).
 - Completed acts are checkpointed on your account (they survive permadeath);
-  enemy HP scales x1.15 per completed act (up to x1.6). Bot playthroughs
-  measured a median of ~66 minutes. Quest log: **J** (HUD) or the full
-  Quest Log.
+  enemy HP scales x1.1 per completed act (up to x1.6). Old saves from the
+  5-act arc are moved onto the new arc automatically. Quest log: **J** (HUD)
+  or the full Quest Log.
 
 ### NPCs, dialogue and side quests
 - **11 NPCs** - Barkeep Bitterwick (Nexus tavern), Old Mossbeard, Sandy Sal,
@@ -274,7 +292,7 @@ zone), `/accept` / `/decline` (trade invites) and
   markers with hover tooltips, wheel zoom, right-drag pan).
 
 ### World
-- **The Realm**: 1308 x 1308 tiles - a 900 x 900 continent in an ocean ring.
+- **The Realm**: 1560 x 1560 tiles - a 900 x 900 continent in an ocean ring.
   Terrain is layered value-noise fBm (each octave rotated) with a 2-level
   domain warp; 10 biomes (outer: forest, desert, tundra, swamp; inner:
   highlands, ashlands, jungle, wasteland, ice, cave) picked from a
@@ -284,10 +302,13 @@ zone), `/accept` / `/decline` (trade invites) and
 - **10 big named areas** (42x42-50x46 tiles, safe from lairs): Tavern Town,
   Oasis Bazaar, Frozen Lake Camp, Witch's Hollow, Mountain Monastery, Forge
   Camp, Botanist's Glade, Scrapyard, Crystal Caverns, Elk Meadow.
-- **10 islands** (~100 x 100 tiles each, drink-pun names such as Coral Colada
-  Choir or Tidricane Sanctum), each with its own biome, 4 mob camps, a
-  mini-boss arena (a wave "awakens" every 5 minutes), a personal treasure
-  chest, a walkway to the mainland and hub/return portals.
+- **10 big islands** (~260 x 260 tiles each, drink-pun names such as Coral
+  Colada Choir or Tidricane Sanctum) - **level-20 content**: the tide pushes
+  anyone lower back off the beach, and the hub portals refuse them. Each has
+  its own biome, 12 tough mob camps, a mini-boss arena (a wave "awakens" every
+  5 minutes), a personal treasure chest, a walkway to the mainland and
+  hub/return portals; island kills can drop mythic T12-T13 gear and Forge
+  Ingots.
 - **Landmarks and guardians**: one landmark per biome plus a doored lair
   building and a terrace; 20 curated decoration vignettes per biome.
 - **Big multi-tile trees and props** (34 kinds in `game/big_props.py`):
@@ -297,6 +318,20 @@ zone), `/accept` / `/decline` (trade invites) and
   tavern, garden park, harbour and arena plaza, portals to the Realm, Bazaar
   and Vault. **Bazaar**: shared drop-and-grab room with permanent chests.
   **Vault room**: 12 permanent chests (8 slots each), opened one at a time.
+- **Heroic dungeons**: a much harder version of every dungeon (elites only,
+  more rooms, 3.6x HP, faster bullets, a crimson tint and aura, their own
+  music, mythic loot). Unlock one by finishing that dungeon's **Heroic trial**
+  (the local who lives near it wants 3 of the dungeon's relics); Heroic Shards
+  then re-drop from Hard clears and Heroic bosses. Level 16+.
+- **The Mad God's Room** (endgame): the Mad God, then **Unhinged**, then
+  **Absolutely Livid**, back to back - each form has its own look, attacks,
+  music and better loot; the last one always drops a Divine item. Opened by
+  the rare Mad God's Room Key (Heroic bosses, calmed big islands); level 20
+  and a T12+ item equipped.
+- **Honest telegraphs**: every warned attack fires exactly where its warning
+  pointed (ring gaps, wall gaps, lanes, cones and slam bursts are fixed when
+  the warning appears); bullet rings and sweeps are shown as arrows (spokes)
+  instead of a misleading circle.
 - **Dungeons** from Dungeon Shards (8% elite drop): Forgotten Vault, Cave
   Warren, Frozen Crypt, Jungle Ruins, Ember Den, Sunken Grotto, Wind Spire,
   plus the story's Forge. Easy / Medium / Hard (HP x1.15 / 1.6 / 2.3),
@@ -415,7 +450,7 @@ docs/unity-rebuild/  feature-by-feature docs for rebuilding the game in Unity (0
 `run_all_checks.py` finds every `tests/check_*.py` and runs each as its own
 headless process (`SDL_VIDEODRIVER=dummy`, throwaway settings, no music
 rendering, no event rotation) and prints a PASS/FAIL summary - currently
-**63/63**. The checks are plain asserts that drive the real game objects:
+**70/70**. The checks are plain asserts that drive the real game objects:
 single-player `Game`, the co-op server's action handler and real
 client-server sockets, rendered screenshots, timing budgets (e.g. world
 generation < 3 s) and fixed-seed input fuzzing.
@@ -444,10 +479,11 @@ and CoopClient specs); output lands in `dist/`.
   source). The Linux build is smoke-tested in CI but has had less real play.
 - Python 3.13+ removed `audioop`; the music renderer falls back to a much
   slower pure-Python path there. The builds use Python 3.12.
-- Building a second full Realm inside one long-lived process runs ~3x slower
-  than the first (seen in tests; startup generation is ~2 s).
-- Story length (~66 min) is measured by a scripted bot, not yet by human
-  playthroughs.
+- World generation takes ~2-2.5 s at startup. (The old "second build is 3x
+  slower" note was Windows 11 power-throttling headless test processes, not
+  the game - the timing checks now opt out of it, see `tests/_timing.py`.)
+- Story length hasn't been re-measured for the 7-act arc (the old 5-act arc
+  measured ~66 min by a scripted bot); the new acts and the endgame add a lot.
 - Some UT/class flavour text is still just flavour (e.g. Paladin's
   "mace hits heal"); only the four UT proc kinds are real mechanics.
 - Balance numbers (drop rates, spawn caps, XP curve) are tuned by feel.
@@ -484,7 +520,21 @@ Built in batches; each has a detailed doc in `docs/unity-rebuild/`.
 - **Balance/terrain/UI round (doc 27)** and **Batch 15 "living world"
   (doc 28)**, released together as **Ends of V0.2 (65552b4)**.
 
-### Ends of V0.2 (current)
+### Ends of V0.2 - "final final" content update (current, still v0.2)
+- **Honest telegraphs** (doc 31): no attack re-aims after its warning; spoke
+  telegraphs for bullet moves; chained-dash lanes; Crossfire only hits from
+  its circles; a test fires every warned move at a strafing player.
+- **Story v2** (doc 32): Act I renamed **The Grand Tour** and turned into an
+  exploration act; 7 acts total; old saves migrate.
+- **Gear** (doc 33): T12-T14, the Anvil (temper / reforge), Forge Ingots,
+  Divine items; **Heroic dungeons** with trial quests; level gates.
+- **Big islands + the Mad God's Room** (doc 34).
+- **Sound, music, effects**: 13 new synthesized event sounds, 10 new
+  original tracks (7 Heroic dungeons + 3 Mad God's Room forms), new VFX.
+- **Fix**: co-op clients lost (or replayed) one-shot events - chat lines,
+  sounds, popups - when snapshots arrived faster/slower than frames.
+
+### Ends of V0.2 (release tag `v0.2`)
 - **Living world**: 11 NPCs + talkable creatures with real dialogue menus,
   30 side quests, Quest Log / Dictionary / Quest Map.
 - **World**: terrain rewrite (organic biomes, rivers, lakes), 1308 x 1308

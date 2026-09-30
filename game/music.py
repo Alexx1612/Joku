@@ -113,6 +113,16 @@ TRACKS = {
                                 "pulse", "soaring lydian tremolo rock in G"),
     "dungeon_forge": _spec("Closing Time", 40, "harmonic_minor", 176, "punk", 353, [0, 5, 4, 0], [5, 3, 4, 4],
                            [1, 4], "square", "frantic finale speed-rock in E harmonic minor"),
+    # --- the Mad God's Room: one song per form, each angrier than the last
+    "dungeon_mad_god_room": _spec("Throne of Nonsense", 38, "phrygian_dominant", 140, "gallop", 501,
+                                  [0, 1, 4, 1], [5, 4, 1, 0], [6, 1], "square",
+                                  "regal, sneering boss gallop in D phrygian-dominant"),
+    "dungeon_mad_god_room_unhinged": _spec("Unhinged", 37, "harmonic_minor", 168, "punk", 509, [0, 1, 0, 5],
+                                           [4, 5, 1, 0], [6, 2], "pulse",
+                                           "lurching, off-kilter speed-punk in C# harmonic minor"),
+    "dungeon_mad_god_room_livid": _spec("Absolutely Livid", 40, "phrygian", 192, "punk", 521, [0, 1, 6, 1],
+                                        [5, 6, 1, 0], [3, 1], "square",
+                                        "all-out blast-beat finale in E phrygian"),
     # --- Heroic dungeons: the same dungeon's family, pushed harder (faster, darker, heavier)
     "dungeon_heroic_generic": _spec("Vault of No Return", 38, "harmonic_minor", 132, "gallop", 401, [0, 5, 6, 4],
                                     [5, 6, 4, 0], [3, 1], "square",
@@ -139,6 +149,9 @@ DUNGEON_LABEL_TO_KEY = {
 }
 DUNGEON_LABEL_TO_KEY.update({f"{label} (Heroic)": f"heroic_{key}" for label, key in list(DUNGEON_LABEL_TO_KEY.items())
                              if key != "forge"})
+DUNGEON_LABEL_TO_KEY.update({"The Mad God's Room": "mad_god_room",
+                             "The Mad God's Room: Unhinged": "mad_god_room_unhinged",
+                             "The Mad God's Room: Absolutely Livid": "mad_god_room_livid"})
 BIOMES = ("forest", "desert", "tundra", "swamp", "highlands", "ashlands", "jungle", "wasteland", "ice", "cave")
 
 

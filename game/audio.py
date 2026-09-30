@@ -642,10 +642,6 @@ EVENT_SOUND = {
     "second_wind": [(0.0, 330, 660, 0.35, "sine", 0.12, "linear", 0),
                     (0.3, 660, 990, 0.5, "sine", 0.1, "exp_decay", 4),
                     (0.0, 0, 0, 0.4, "noise", 0.04, "exp_decay", 6)],
-    # the new "ring with gaps" warning tone: a quick ticking pulse
-    "ring_warn": [(0.0, 740, 740, 0.05, "square", 0.05, "linear", 0),
-                  (0.1, 740, 740, 0.05, "square", 0.05, "linear", 0),
-                  (0.2, 988, 988, 0.08, "square", 0.05, "linear", 0)],
     # a heroic trial / island "calmed" / quest completion sting
     "trial_done": [(0.0, 392, 392, 0.15, "triangle", 0.1, "exp_decay", 10),
                    (0.12, 523, 523, 0.15, "triangle", 0.1, "exp_decay", 10),

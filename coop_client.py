@@ -83,6 +83,7 @@ class GhostEnemy:
         self._windup_frac = d.get("wf", 0.0)
         self._dashing_vis = d.get("ds", False)
         self._shelled_vis = d.get("sh", False)
+        self._heroic = d.get("hero", False)  # the Heroic-dungeon aura
 
 
 class GhostBullet:
@@ -1712,8 +1713,10 @@ class CoopClient:
         dmsg = self.link.pop_dialogue()
         if dmsg is not None:
             self.dialogue_view = dmsg.get("view")
-            for key in dmsg.get("sfx", []):  # the Anvil's forge_success etc.
+            for key in dmsg.get("sfx", []):  # the Anvil's hammer / forge_success, a trial's sting
                 audio.play_event(key)
+                if key == "forge_success":
+                    vfx.dispatch([("forge_sparks", self.you.pos.x, self.you.pos.y - 20, (255, 190, 90))])
             if self.dialogue_view is not None:
                 self._cancel_drag()
         self.sidequest_log = snap.get("sidequests") or []
@@ -2149,6 +2152,8 @@ class CoopClient:
         ui.draw_day_night_overlay(s, self.light_level, self.blood_moon, torch_positions)
         if self.zone == "bonus" and (self.theme_name or "").endswith("(Heroic)"):
             vfx.draw_heroic_tint(s)
+        elif self.zone == "bonus" and (self.theme_name or "").startswith("The Mad God's Room"):
+            vfx.draw_heroic_tint(s, "mg_room")
         self.weather_fx.draw(s)
         ui.draw_dock_frame(s, self.you)
         if self.zone != "bonus":

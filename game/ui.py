@@ -239,9 +239,9 @@ def draw_hud(surf, zone_name, kill_count, boss_alive):
         surf.blit(panel, hr.topleft)
     _HEADER_PANEL_DRAWN[0] = False
     rect = zone_info_rect()
-    heroic = zone_name.endswith(" (Heroic)")
+    heroic = "(Heroic)" in zone_name
     if heroic:  # the label is long - show the dungeon's name in crimson and say HEROIC by the kills
-        zone_name = zone_name[:-len(" (Heroic)")]
+        zone_name = zone_name.replace(" (Heroic)", "").replace(" [Heroic]", "")
     kc = _FONT_S.render(("HEROIC  " if heroic else "")
                         + ("" if kill_count is None else f"kills: {kill_count}" + ("  BOSS!" if boss_alive else "")),
                         True, (255, 110, 120) if heroic else (230, 150, 70) if boss_alive else (190, 190, 200))
