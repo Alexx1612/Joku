@@ -39,3 +39,22 @@ chests, walkways, hub portals, music and codex working unchanged.
 - **Enrage:** the last form enrages once after 150 s (fire rate x0.6).
 - **Loot:** each form's `loot_source` is `mg_room_1`, `mg_room_2` or `mg_room_3` (doc 33). Only the last form's death ends the room and opens the exit portal.
 - **Test:** `tests/check_mad_god_room.py`.
+
+## 3. Speed and network size (follow-up)
+| | Before | After |
+|---|---|---|
+| Fresh-process `RealmSim()` (seeds 11 / 7, throttling off) | 1.53 / 1.64 s | 1.34 / 1.42 s |
+| Co-op realm map payload | 8.08 MB of JSON (was ~5.5 MB at the old 1308² size) | 0.17 MB |
+
+- **World generation:**
+  - `stamp_island` now uses a per-process polar table (`_island_polar`: angle bucket and distance for every offset around an island's centre, shared by all 10 islands) instead of `atan2`/`sqrt` per tile.
+  - It inlines the tile hash and only scans each row out to that row's widest possible extent.
+  - Tile-for-tile output is identical (checked against the old function on all 10 islands).
+  - `areas._score` binds its lookups locally; its results are identical.
+- **Map payload** (`game/netmap.py`):
+  - The grid is packed as unsigned 16-bit tiles, zlib level 6, base64, under the same `"map"` key: `{"enc": "z16", "w", "h", "data"}`.
+  - The server encodes it fresh for every client entering an instance. It is not cached, because dungeon doors and secret rooms carve the grid at runtime.
+  - `NetLink._recv_loop` decodes it off the lock.
+  - `decode_map` still accepts a plain list.
+  - `tests/check_netmap.py` checks the round-trip, the size and bad payloads.
+

@@ -3,6 +3,7 @@ Tile world: a small safe "Nexus" hub (RotMG's social lobby) plus a large
 procedurally scattered open-field "Godlands"-style realm map with biome
 patches, where enemies spawn and roam.
 """
+import itertools
 import math
 import os
 import random
@@ -690,6 +691,25 @@ def island_coast_radius(idx, ang):
     return ISLAND_RADIUS * (0.82 + 0.18 * wob)
 
 
+_ISLAND_POLAR = {}
+
+
+def _island_polar(reach, nb):
+    """Per row dy in [-reach, reach]: ([angle bucket], [distance]) for dx in [-reach, reach] -
+    the same bucket stamp_island's coast table uses (int((atan2 + pi) * nb / tau) % nb).
+    Identical for every island, so it's built once per process."""
+    key = (reach, nb)
+    tab = _ISLAND_POLAR.get(key)
+    if tab is None:
+        to_bucket = nb / math.tau
+        tab = []
+        for dy in range(-reach, reach + 1):
+            tab.append(([int((math.atan2(dy, dx) + math.pi) * to_bucket) % nb for dx in range(-reach, reach + 1)],
+                        [math.sqrt(dx * dx + dy * dy) for dx in range(-reach, reach + 1)]))
+        _ISLAND_POLAR[key] = tab
+    return tab
+
+
 def stamp_island(grid, anchor_tile, theme, idx=0, rng=None):
     """Carves one big (~100x100) organic island into open ocean, centred on
     `anchor_tile`: a sand beach ring, an interior in the island's own mini-biome
@@ -718,41 +738,51 @@ def stamp_island(grid, anchor_tile, theme, idx=0, rng=None):
     sure_inner2 = sure_inner * sure_inner
     plaza_out2 = (ISLAND_PLAZA_RADIUS + 1.5) ** 2
     reach2 = (max(coast) + 1.5) ** 2
-    to_bucket = nb / math.tau
-    def coast_band(row, yy, dy, xs):
-        for xx in xs:
-            dx = xx - ax
-            d2 = dx * dx + dy * dy
-            if d2 > reach2:
+    polar = _island_polar(reach, nb)  # (dx, dy) -> (angle bucket, distance), shared by every island
+    far = max(coast) + 1.5  # beyond the biggest lobe + the widest jitter: open water for certain
+    add = claimed.add
+
+    def coast_band(row, yy, dy, x_from, x_to):
+        buckets, dists = polar[dy + reach]
+        hy = yy * 668265263
+        for xx in range(x_from, x_to):
+            k = xx - ax + reach
+            dist = dists[k]
+            if dist > far:
                 continue
-            dist = math.sqrt(d2)
-            edge = coast[int((math.atan2(dy, dx) + math.pi) * to_bucket) % nb]                 + (_tile_hash(xx, yy) % 300) / 100.0 - 1.5
+            n = (xx * 374761393 + hy) & 0xffffffff  # _tile_hash(xx, yy), inlined
+            n = (n ^ (n >> 13)) * 1274126177 & 0xffffffff
+            edge = coast[buckets[k]] + ((n ^ (n >> 16)) % 300) / 100.0 - 1.5
             if dist > edge:
                 continue
             row[xx] = beach_tile if dist >= edge - ISLAND_BEACH_WIDTH else inner_tile
-            claimed.add((xx, yy))
+            add((xx, yy))
 
     for yy in range(ay - reach, ay + reach + 1):
         if not (0 <= yy < grid_h):
             continue
         row = grid[yy]
         dy = yy - ay
-        lo, hi = max(0, ax - reach), min(grid_w - 1, ax + reach)
+        if dy * dy > reach2:
+            continue
+        span = int(math.sqrt(reach2 - dy * dy)) + 1  # this row's widest possible extent
+        lo, hi = max(0, ax - span), min(grid_w - 1, ax + span)
         if dy * dy < sure_inner2:
             # the part of this row that is inland for certain: one slice, no per-tile maths
             w = int(math.sqrt(sure_inner2 - dy * dy))
             x0, x1 = max(lo, ax - w), min(hi, ax + w)
             row[x0:x1 + 1] = [inner_tile] * (x1 - x0 + 1)
-            claimed.update((xx, yy) for xx in range(x0, x1 + 1))
-            coast_band(row, yy, dy, range(lo, x0))
-            coast_band(row, yy, dy, range(x1 + 1, hi + 1))
+            claimed.update(zip(range(x0, x1 + 1), itertools.repeat(yy)))
+            coast_band(row, yy, dy, lo, x0)
+            coast_band(row, yy, dy, x1 + 1, hi + 1)
         else:
-            coast_band(row, yy, dy, range(lo, hi + 1))
+            coast_band(row, yy, dy, lo, hi + 1)
     # the landmark plaza at the core (always well inland)
     pr = ISLAND_PLAZA_RADIUS + 2
     for yy in range(ay - pr, ay + pr + 1):
         for xx in range(ax - pr, ax + pr + 1):
-            if (xx - ax) ** 2 + (yy - ay) ** 2 <= plaza_out2 and                     math.hypot(xx - ax, yy - ay) <= ISLAND_PLAZA_RADIUS + (_tile_hash(yy, xx) % 150) / 100.0:
+            if (xx - ax) ** 2 + (yy - ay) ** 2 <= plaza_out2 and \
+                    math.hypot(xx - ax, yy - ay) <= ISLAND_PLAZA_RADIUS + (_tile_hash(yy, xx) % 150) / 100.0:
                 grid[yy][xx] = ground_tile
 
     # the interior's own biome decorations: a jittered grid (one candidate per

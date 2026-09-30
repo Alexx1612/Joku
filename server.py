@@ -32,6 +32,7 @@ from game import dialogue
 from game import npcs
 from game import live_events
 from game import codex
+from game import netmap
 from game import sidequests
 from game.entities import (Player, Bag, Portal, NexusBot, find_nearby_bag, bag_by_id,
                             withdraw_from_bag, BazaarChest, deposit_to_bag, spawn_bazaar_chests)
@@ -1050,7 +1051,10 @@ def _snapshot_core(state, s):
     # positions). Send it once per zone-instance instead; the client caches it by zone.
     map_payload = None
     if s.sent_map_id != id(sim):
-        map_payload = sim.realm_map.grid
+        # zlib-packed 16-bit tiles (game/netmap.py): ~0.2MB instead of ~8MB of JSON for the realm.
+        # Encoded fresh (not cached): dungeon doors/secret rooms carve the grid at runtime, and a
+        # player joining later must get the map as it is now.
+        map_payload = netmap.encode_map(sim.realm_map.grid)
         s.sent_map_id = id(sim)
     # the realm can now hold up to ~250 enemies map-wide (see game/realm_sim.py's
     # pre-populated ecosystem) - sending literally all of them to every client every
