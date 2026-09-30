@@ -1450,8 +1450,15 @@ class Game:
         if kind == "island_link":
             # a same-map teleport (see RealmSim._stamp_islands), not a dungeon-
             # instance swap - no on_portal_fn call, self.state/self.realm_sim untouched
+            ok, gate_msg = gates.island_link_check(self.player, self.realm_sim, target_pos)
+            if gate_msg:
+                self.push_feed(gate_msg, (230, 120, 120) if not ok else (240, 210, 140))
+            if not ok:
+                audio.play_event("gate_denied")
+                return
             if target_pos is not None:
                 self.player.pos = pygame.Vector2(target_pos)
+                audio.play_event("harbour_bell")
             return
         on_portal_fn(theme, kind, difficulty)
 

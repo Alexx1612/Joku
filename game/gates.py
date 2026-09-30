@@ -18,6 +18,18 @@ MAD_GOD_ROOM = "mad_god_room"
 ISLAND_PREFIX = "island_zone_"
 
 
+def island_link_check(player, sim, target_pos):
+    """A hub island_link portal: (ok, message) - only a trip ONTO an island is gated
+    (the "Return" portals on the islands always work)."""
+    tiles = getattr(sim, "island_tiles", None) or ()
+    if target_pos is None or not tiles:
+        return True, ""
+    from game.constants import TILE
+    if (int(target_pos[0] // TILE), int(target_pos[1] // TILE)) not in tiles:
+        return True, ""
+    return can_enter(player, ISLAND_PREFIX + "link")
+
+
 def zone_kind(theme):
     theme = theme or ""
     if theme.startswith(HEROIC_PREFIX):

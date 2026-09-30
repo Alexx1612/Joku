@@ -129,6 +129,15 @@ def check_island_link_teleport_single_player():
     game.state = main_module.STATE_REALM
     game.bonus_sim = None
     target = hub_portals[0].target_pos
+    game.feed = []
+    start = pygame.Vector2(game.player.pos)
+    # the big islands are level-20 content: a fresh character is turned away at the portal
+    game._portal_prompt = (game.enter_bonus_room, hub_portals[0].theme, hub_portals[0].kind,
+                            hub_portals[0].difficulty, target)
+    game._trigger_portal_prompt()
+    assert game.player.pos == start and any("level" in m[0] for m in game.feed), game.feed
+    while game.player.level < 20:
+        game.player.gain_xp(10 ** 5)
     game._portal_prompt = (game.enter_bonus_room, hub_portals[0].theme, hub_portals[0].kind,
                             hub_portals[0].difficulty, target)
     game._trigger_portal_prompt()
@@ -157,7 +166,15 @@ def check_island_link_teleport_coop_server():
     sess.pre_bonus_pos = None
     sess.portal_prompt = (hub_portal.theme, hub_portal.kind, hub_portal.difficulty,
                           hub_portal.id, hub_portal.target_pos)
+    sess.story_feed = []
     state.sessions = {"p1": sess}
+    # a level-1 character is turned away (the big islands are level-20 content)
+    server._apply_action(state, sess, {"action": "enter_portal"})
+    assert sess.player.pos == pygame.Vector2(hub_portal.pos) and any("level" in m for m, _c in sess.story_feed)
+    while sess.player.level < 20:
+        sess.player.gain_xp(10 ** 5)
+    sess.portal_prompt = (hub_portal.theme, hub_portal.kind, hub_portal.difficulty,
+                          hub_portal.id, hub_portal.target_pos)
     server._apply_action(state, sess, {"action": "enter_portal"})
     assert sess.zone == server.ZONE_REALM
     assert sess.bonus_sim_id is None

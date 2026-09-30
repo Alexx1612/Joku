@@ -256,9 +256,12 @@ ISLAND_NAMES = ["Emberball Shard", "Coral Colada Choir", "Frostquiri Shard", "Pe
                 "Driftai Cloister", "Ashioned Shard", "Abyssal Rumnal"]
 ISLAND_QUEST_INTERVAL = 300.0  # 5 minutes, per island independently
 ISLAND_WAVE_SIZE = 4           # guardians per flare/song wave, always including that theme's anchor mob
+ISLAND_MIN_RING = True        # keep every island far enough out that neighbours can't collide (tests may disable)
 ISLAND_WATER_GAP = 16          # Batch 15: min open water (tiles) between an island and the continent
 ISLAND_CAMP_CAP = 5            # mobs per island camp (world.ISLAND_CAMP_COUNT camps per island)
-ISLAND_CAMP_SCALE = 1.6        # island camp HP scale - islands are outer-ring, mid-difficulty content
+ISLAND_CAMP_SCALE = 3.2        # island camp HP scale - the big islands are level-20 endgame content
+ISLAND_WAVE_SCALE = 2.6        # the flare/song wave (anchor or mini-boss + escorts) HP scale
+ISLAND_GATE_MSG_CD = 4.0       # seconds between "level 20 to set foot here" reminders
 
 # Batch 14 Track B1/B2: island idx -> a named mini-boss kind (see
 # entities.ENEMY_DEFS, rank="boss") that leads that island's wave instead of
@@ -1094,6 +1097,10 @@ class RealmSim:
             half = min(0.3, (R + ISLAND_WATER_GAP) / max(1.0, r0))  # < half the 36deg island spacing
             span = [world.coastline_radius(angle + half * (k / 6.0 - 1.0), info) for k in range(13)]
             target_r = max(span) + ISLAND_WATER_GAP + R
+            # never so close to the centre that two neighbours (36 deg apart) could collide
+            # where the coastline dips in - the chord between them must clear 2.1 radii
+            if ISLAND_MIN_RING:
+                target_r = max(target_r, R * 2.1 / (2 * math.sin(math.pi / n)) + 6)
             # HARD bound: the whole island (incl. edge jitter) stays inside the map
             limit = min(grid_w, grid_h) / 2 - R - 6
             target_r = min(target_r, limit)
@@ -1429,6 +1436,7 @@ class RealmSim:
         self._resolve_pending_ability_effects(dt)
         self._update_bullets(dt, alive)
         self._tick_enemy_zones(dt, alive)
+        self._gate_islands(dt, alive)
         for p in alive:
             if getattr(p, "second_wind_fired", False):
                 p.second_wind_fired = False
@@ -1619,6 +1627,8 @@ class RealmSim:
             scale *= 2.0 if self.blood_moon_active else 1.6
         enemy = Enemy(kind, pos, scale, home_pos=lair["pos"])
         enemy.lair_idx = idx
+        if lair.get("island_camp") is not None:
+            enemy.loot_source = "island"
         enemy.moonlit = moonlit
         self.enemies.append(enemy)
         lair["respawn_cd"] = LAIR_RESPAWN_INTERVAL
@@ -1660,11 +1670,12 @@ class RealmSim:
             else:
                 wave = [theme["anchor"]] + [random.choice(theme["guardians"]) for _ in range(ISLAND_WAVE_SIZE - 1)]
             for kind in wave:
-                pos = self._find_spawn_pos_near(isl["pos"], min_tiles=40, max_tiles=220)
+                pos = self._find_spawn_pos_near(isl["pos"], min_tiles=12, max_tiles=60)
                 if pos is None:
                     pos = pygame.Vector2(isl["pos"])
-                enemy = Enemy(kind, pos, level_scale=self.story_scale)
+                enemy = Enemy(kind, pos, level_scale=self.story_scale * ISLAND_WAVE_SCALE)
                 enemy.island_idx = isl["slot"]
+                enemy.loot_source = "island"  # mythic T12-T13 odds + Forge Ingots (items.LOOT_SOURCES)
                 self.enemies.append(enemy)
                 isl["alive_guardians"] += 1
             if mini_boss is not None:
@@ -1694,7 +1705,7 @@ class RealmSim:
             return
         isl["cooldown"] = ISLAND_QUEST_INTERVAL
         for p in (list(credited) or [None]):
-            bonus_items = roll_loot(p.cls_name if p else "wizard", "elite", 1.0)
+            bonus_items = roll_loot(p.cls_name if p else "wizard", "boss", 1.0, source="island")
             if bonus_items:
                 self._spawn_loot_bag(bonus_items, enemy.pos, owner_pid=p.pid if p else None)
             if p is not None:
@@ -1762,6 +1773,31 @@ class RealmSim:
                 continue
             for msg, color in progress.on_event(kind, key):
                 self.events.append((p.pid, msg, color))
+
+    def _gate_islands(self, dt, alive):
+        """The big islands are level-20 content: a lower-level player can walk the plank
+        walkway right up to the beach, but not onto it (pushed back to where they last
+        stood off-island, with a reminder every few seconds)."""
+        tiles = getattr(self, "island_tiles", None)
+        if not tiles:
+            return
+        from game import gates
+        self._gate_clock = getattr(self, "_gate_clock", 0.0) + dt
+        for p in alive:
+            t = (int(p.pos.x // TILE), int(p.pos.y // TILE))
+            if t not in tiles:
+                p._off_island_pos = pygame.Vector2(p.pos)
+                continue
+            if p.level >= gates.ISLAND_LEVEL:
+                continue
+            back = getattr(p, "_off_island_pos", None)
+            p.pos = pygame.Vector2(back) if back is not None else self.spawn_point()
+            now = self._gate_clock
+            if now - getattr(p, "_island_gate_msg_t", -99.0) >= ISLAND_GATE_MSG_CD:
+                p._island_gate_msg_t = now
+                self.events.append((p.pid, f"The islands are level-{gates.ISLAND_LEVEL} territory (you're "
+                                           f"{p.level}). The tide pushes you back.", (230, 140, 120)))
+                self.sound_events.append(("sfx", "gate_denied", p.pos.x, p.pos.y))
 
     def _boss_key_drops(self, p):
         """Heroic Shards (and, from Batch 6, the Mad God's Room Key) a dungeon boss adds to
@@ -2125,7 +2161,7 @@ class RealmSim:
         if ch is None:
             return False
         ch["opened"].add(player.pid)
-        items = roll_loot(player.cls_name, "boss", 1.0) + roll_loot(player.cls_name, "elite", 1.0)
+        items = roll_loot(player.cls_name, "boss", 1.0, source="island") + roll_loot(player.cls_name, "elite", 1.0)
         sq = getattr(player, "sidequests", None)
         if sq is not None:
             for qit in sidequests.chest_quest_items(sq, player):

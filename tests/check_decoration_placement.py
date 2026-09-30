@@ -177,8 +177,11 @@ def check_grove_spacing():
 def check_groves_denser_than_clearings():
     dens, thr = DECOR["dens"], DECOR["thr"]
     counts = {"grove": [0, 0], "clear": [0, 0]}  # [props, land tiles]
+    islands = SIM.island_tiles  # the big islands cluster their props with their own pattern (stamp_island)
     for y in range(3, H - 3, 2):
         for x in range(3, W - 3, 2):
+            if (x, y) in islands:
+                continue
             t = GRID[y][x]
             b = world.TILE_TO_BIOME_NAME.get(t)
             if b is None:

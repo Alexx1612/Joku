@@ -250,7 +250,10 @@ def _area_entries():
                              "mini-boss; calming it counts for Act V (Last Call). Its chest refills when calmed.",
                         where={"biomes": [], "areas": [f"island:{i}"]}))
     for key, label, text in (
-            ("islands", "The Reforging islands", "Ten drink-pun islands in the ocean around the continent."),
+            ("islands", "The Reforging islands", "Ten huge (~260 tiles across) drink-pun islands in the ocean around "
+                                                 "the continent - level-20 territory (the tide pushes anyone lower "
+                                                 "back). Twelve tough camps each, and their bosses can drop mythic "
+                                                 "T12-T13 gear and Forge Ingots."),
             ("landmarks", "Landmarks", "One ancient landmark per biome - each has a Landmark Guardian."),
             ("island_chests", "Island chests", "Each island has a chest you can open once; it refills when "
                                                 "the island is calmed. Quest items for NPCs can be inside."),

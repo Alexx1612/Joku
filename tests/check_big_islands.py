@@ -1,6 +1,6 @@
 r"""
 Batch 15 Phase 3A: the realm grew to world.REALM_W x REALM_H around an unchanged
-continent, and the ten islands became big (~100x100) themed landmasses in the
+continent, and the ten islands became big (~260x260 since V0.2 final) themed landmasses in the
 ocean ring. Checks: 10 islands of the right size, everything inside the map,
 no island overlapping another or touching the continent, walkways/portals/
 chests/camps present, the spawn never on an island, and the generation budget.
@@ -33,6 +33,8 @@ from game.realm_sim import RealmSim, ISLAND_NAMES, ISLAND_WATER_GAP
 TILE = realm_sim.TILE
 TIME_BUDGET_S = 3.0
 
+import _timing
+_timing.disable_power_throttling()  # measure the game, not Windows' background power saving (see _timing.py)
 random.seed(7)
 _t0 = time.perf_counter()
 SIM = RealmSim(bonus=False)
@@ -62,7 +64,7 @@ def check_ten_big_islands_in_bounds_no_overlap():
     rects = []
     for isl in SIM.islands:
         r = isl["rect"]
-        assert 80 <= r.w <= 110 and 80 <= r.h <= 110, f"{isl['label']}: {r.w}x{r.h} tiles, want ~100x100"
+        assert 230 <= r.w <= 290 and 230 <= r.h <= 290, f"{isl['label']}: {r.w}x{r.h} tiles, want ~260x260"
         assert _in_bounds(r.left, r.top, 4) and _in_bounds(r.right - 1, r.bottom - 1, 4), \
             f"{isl['label']} rect {r} leaves the map"
         rects.append(r)

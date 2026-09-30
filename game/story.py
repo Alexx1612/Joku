@@ -119,7 +119,7 @@ ACTS = [
      ]},
     {"title": "Act V: Last Call",
      "intro": "The islands are having a very loud party. They grew. A lot. Bring a level-20 liver and your best gear.",
-     "hint": f"Take the ferry from any island harbour (level 20). Calm {ISLANDS_NEEDED} of the 10 islands: beat each island's anchor wave and its mini-boss.",
+     "hint": f"Level 20 or the tide throws you back. Walk a plank walkway or use the island portals in the beach plaza, then calm {ISLANDS_NEEDED} of the 10 islands: beat each island's anchor wave and its mini-boss.",
      "done": "Last call has been called. The islands are sleeping it off.",
      "objectives": [
          _obj("islands", f"Calm any {ISLANDS_NEEDED} islands", "island", need=ISLANDS_NEEDED),

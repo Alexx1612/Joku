@@ -219,6 +219,7 @@ def check_generation_budget():
     not what a player waits on at startup."""
     import subprocess
     code = ("import os,sys,time,random;sys.path.insert(0,%r);"
+            "sys.path.insert(0,os.path.join(sys.path[0],'tests'));import _timing;_timing.disable_power_throttling();"
             "os.environ.setdefault('SDL_VIDEODRIVER','dummy');os.environ.setdefault('SDL_AUDIODRIVER','dummy');"
             "import pygame;pygame.init();pygame.display.set_mode((400,300));"
             "from game.realm_sim import RealmSim;random.seed(11);t=time.time();RealmSim();"

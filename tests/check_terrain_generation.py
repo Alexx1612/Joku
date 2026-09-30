@@ -51,6 +51,8 @@ def check_all_biomes_present_with_real_share():
 
 
 def check_generation_time_budget():
+    import _timing
+    _timing.disable_power_throttling()  # measure the game, not Windows' background power saving
     random.seed(21)
     t0 = time.perf_counter()
     world.make_realm()

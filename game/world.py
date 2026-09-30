@@ -16,7 +16,7 @@ from game import constants as C
 # 2*204 so the offset stays a whole number of COARSE (6) cells (the decoration
 # density grid is padded by exactly 34 cells).
 CONTINENT_SIZE = 900
-CONTINENT_OFFSET = 204
+CONTINENT_OFFSET = 330  # V0.2 final: a wider ocean ring for the ~2.6x bigger islands (1560x1560 map)
 CONTINENT_R = CONTINENT_SIZE / 2 - 3   # the continent's max radius (tiles) - lair difficulty scales on this
 REALM_W, REALM_H = CONTINENT_SIZE + 2 * CONTINENT_OFFSET, CONTINENT_SIZE + 2 * CONTINENT_OFFSET
 # (history) the continent alone was 900x900, an immense continent - 1.27x the tile area of the previous
@@ -667,10 +667,10 @@ def stamp_lair_building(grid, center_tile, biome_name):
     return rect
 
 
-ISLAND_RADIUS = 52  # Batch 15: ~100x100-tile islands (max coast radius before its lobes)
-ISLAND_PLAZA_RADIUS = 10   # the landmark plaza / mini-boss arena at the island's core
+ISLAND_RADIUS = 150  # V0.2 final: ~260x260-tile islands (max coast radius before its lobes) - level-20 content
+ISLAND_PLAZA_RADIUS = 14   # the landmark plaza / mini-boss arena at the island's core
 ISLAND_BEACH_WIDTH = 5     # sand ring around every island's coast
-ISLAND_CAMP_COUNT = 4      # mob camps per island (become lairs - see RealmSim._stamp_islands)
+ISLAND_CAMP_COUNT = 12     # mob camps per island (become lairs - see RealmSim._stamp_islands), in two rings
 # each island's interior is its own mini-biome matching its drink-pun name
 # (index = realm_sim.ISLAND_NAMES index): Emberball -> ashlands, Coral Colada ->
 # jungle, Frostquiri -> ice, Pearlini -> desert, Bonshine -> highlands, Tidricane
@@ -710,25 +710,50 @@ def stamp_island(grid, anchor_tile, theme, idx=0, rng=None):
     beach_tile = SAND
     claimed = set()
     reach = ISLAND_RADIUS + 3
+    # the coast outline sampled once per angle bucket (the old per-tile trig call was
+    # most of world-gen time once the islands grew) - same shape, same jitter
+    nb = 2048
+    coast = [island_coast_radius(idx, -math.pi + math.tau * (i + 0.5) / nb) for i in range(nb)]
+    sure_inner = min(coast) - 1.5 - ISLAND_BEACH_WIDTH - 1  # closer than this: inland for certain
+    sure_inner2 = sure_inner * sure_inner
+    plaza_out2 = (ISLAND_PLAZA_RADIUS + 1.5) ** 2
+    reach2 = (max(coast) + 1.5) ** 2
+    to_bucket = nb / math.tau
+    def coast_band(row, yy, dy, xs):
+        for xx in xs:
+            dx = xx - ax
+            d2 = dx * dx + dy * dy
+            if d2 > reach2:
+                continue
+            dist = math.sqrt(d2)
+            edge = coast[int((math.atan2(dy, dx) + math.pi) * to_bucket) % nb]                 + (_tile_hash(xx, yy) % 300) / 100.0 - 1.5
+            if dist > edge:
+                continue
+            row[xx] = beach_tile if dist >= edge - ISLAND_BEACH_WIDTH else inner_tile
+            claimed.add((xx, yy))
+
     for yy in range(ay - reach, ay + reach + 1):
         if not (0 <= yy < grid_h):
             continue
         row = grid[yy]
-        for xx in range(ax - reach, ax + reach + 1):
-            if not (0 <= xx < grid_w):
-                continue
-            dx, dy = xx - ax, yy - ay
-            dist = math.hypot(dx, dy)
-            edge = island_coast_radius(idx, math.atan2(dy, dx)) + (_tile_hash(xx, yy) % 300) / 100.0 - 1.5
-            if dist > edge:
-                continue
-            if dist <= ISLAND_PLAZA_RADIUS + (_tile_hash(yy, xx) % 150) / 100.0:
-                row[xx] = ground_tile
-            elif dist >= edge - ISLAND_BEACH_WIDTH:
-                row[xx] = beach_tile
-            else:
-                row[xx] = inner_tile
-            claimed.add((xx, yy))
+        dy = yy - ay
+        lo, hi = max(0, ax - reach), min(grid_w - 1, ax + reach)
+        if dy * dy < sure_inner2:
+            # the part of this row that is inland for certain: one slice, no per-tile maths
+            w = int(math.sqrt(sure_inner2 - dy * dy))
+            x0, x1 = max(lo, ax - w), min(hi, ax + w)
+            row[x0:x1 + 1] = [inner_tile] * (x1 - x0 + 1)
+            claimed.update((xx, yy) for xx in range(x0, x1 + 1))
+            coast_band(row, yy, dy, range(lo, x0))
+            coast_band(row, yy, dy, range(x1 + 1, hi + 1))
+        else:
+            coast_band(row, yy, dy, range(lo, hi + 1))
+    # the landmark plaza at the core (always well inland)
+    pr = ISLAND_PLAZA_RADIUS + 2
+    for yy in range(ay - pr, ay + pr + 1):
+        for xx in range(ax - pr, ax + pr + 1):
+            if (xx - ax) ** 2 + (yy - ay) ** 2 <= plaza_out2 and                     math.hypot(xx - ax, yy - ay) <= ISLAND_PLAZA_RADIUS + (_tile_hash(yy, xx) % 150) / 100.0:
+                grid[yy][xx] = ground_tile
 
     # the interior's own biome decorations: a jittered grid (one candidate per
     # 4x4 cell), kept where a smooth hash "density" says grove - clusters of
@@ -772,7 +797,7 @@ def stamp_island(grid, anchor_tile, theme, idx=0, rng=None):
     cbase = rng.uniform(0, math.tau)
     for k in range(ISLAND_CAMP_COUNT):
         ang = cbase + k * math.tau / ISLAND_CAMP_COUNT
-        rad = island_coast_radius(idx, ang) * 0.55
+        rad = island_coast_radius(idx, ang) * (0.38 if k % 2 == 0 else 0.7)  # an inner and an outer ring
         tx, ty = int(round(ax + math.cos(ang) * rad)), int(round(ay + math.sin(ang) * rad))
         for yy in range(ty - 2, ty + 3):
             for xx in range(tx - 2, tx + 3):

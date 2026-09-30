@@ -251,10 +251,12 @@ def check_island_idx_survives_a_skipped_placement():
         return -gap if i % 2 == 1 else real(angle, info)
 
     world.coastline_radius = fake
+    rs.ISLAND_MIN_RING = False  # let the fake coast really pull the odd islands onto the centre
     try:
         sim = RealmSim()
     finally:
         world.coastline_radius = real
+        rs.ISLAND_MIN_RING = True
     idxs = [isl["idx"] for isl in sim.islands]
     assert len(sim.islands) < n, idxs  # the forced skip really happened
     assert idxs != list(range(len(idxs))), idxs

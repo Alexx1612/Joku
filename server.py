@@ -836,8 +836,14 @@ def _apply_action(state, s, action):
         if pkind == "island_link":
             # a same-map teleport (see RealmSim._stamp_islands), not a dungeon-
             # instance swap - s.zone/s.bonus_sim_id untouched
-            if target_pos is not None:
+            ok, gate_msg = gates.island_link_check(s.player, state.realm_sim, target_pos)
+            if gate_msg:
+                s.story_feed.append((gate_msg, (230, 120, 120) if not ok else (240, 210, 140)))
+            if not ok:
+                state.realm_sim.sound_events.append(("sfx", "gate_denied", s.player.pos.x, s.player.pos.y))
+            elif target_pos is not None:
                 s.player.pos = pygame.Vector2(target_pos)
+                state.realm_sim.sound_events.append(("sfx", "harbour_bell", s.player.pos.x, s.player.pos.y))
             s.portal_prompt = None
             return
         if s.zone == ZONE_REALM:
