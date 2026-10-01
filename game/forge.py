@@ -5,9 +5,11 @@ and applies the picked one with apply_forge(); in co-op the SERVER owns that
 conversation, so forging is authoritative there.
 
 Recipes
-  Temper  - 3 items of the same slot and tier (weapon / armor / ring / ability, not UT
-            or Divine) -> 1 item of the NEXT tier that slot has (abilities: 1 -> 5 -> 9
-            -> 12 -> 14). The result follows the first item's class / armor type.
+  Temper  - any 3 gear items of the same tier (weapon / armor / ring / ability, mixed
+            slots are fine; not UT or Divine) -> 1 item of the NEXT tier of the FIRST
+            item's line (abilities: 1 -> 5 -> 9 -> 12 -> 14), so it keeps that item's slot,
+            class and armor type. (It used to need 3 of the same slot too - the pacing bot
+            showed random loot rarely gives you that by Act III.)
             Results of T12-T13 cost 1 Forge Ingot, T14 costs 2. T14 exists ONLY here.
   Reforge - 1 UT weapon + 2 Forge Ingots -> "Reforged <name>": +20% damage, its proc
             kept (socketed so it survives the rename). A Reforged UT can't be reforged
@@ -109,18 +111,24 @@ def forge_options(player, limit=3):
     groups = {}
     for it in bag:
         if it.slot in FORGE_SLOTS and not it.is_ut and not getattr(it, "divine", False):
-            groups.setdefault((it.slot, it.tier), []).append(it)
+            groups.setdefault(it.tier, []).append(it)
     out = []
-    for (slot, tier), its in sorted(groups.items(), key=lambda kv: -kv[0][1]):
+    for tier, its in sorted(groups.items(), key=lambda kv: -kv[0]):
         if len(its) < 3:
             continue
-        res = temper_result(its[0])
-        if res is None:
+        # the first item whose line has a next tier decides the result
+        lead = next((it for it in its if temper_result(it) is not None), None)
+        if lead is None:
             continue
+        res = temper_result(lead)
+        its = [lead] + [it for it in its if it is not lead]
+        slot = res.slot
         cost = ingot_cost(res.tier)
         if len(ingots) < cost:
             continue
-        pretty = {"weapon": "weapons", "armor": "armors", "ring": "rings", "ability": "abilities"}[slot]
+        used_slots = {it.slot for it in its[:3]}
+        pretty = ({"weapon": "weapons", "armor": "armors", "ring": "rings", "ability": "abilities"}[slot]
+                  if used_slots == {slot} else "items")
         extra = f" + {cost} Ingot{'s' if cost > 1 else ''}" if cost else ""
         out.append(dict(kind="temper", use=its[:3], ingots=ingots[:cost], result=res,
                         label=f"Temper 3 T{tier} {pretty}{extra} -> [T{res.tier}] {res.name}"))

@@ -159,7 +159,7 @@ def check_trial_quest_unlocks_the_heroic_dungeon():
     assert sq.heroic_unlocked(p.sidequests, theme)
     assert not any(it.quest_key == relic for it in p.backpack)
     shards = [it for it in p.backpack if it.slot == "shard" and it.shard_theme == "heroic_cave"]
-    assert len(shards) == 1 and "Heroic" in shards[0].name
+    assert len(shards) == sq.TRIAL_HEROIC_SHARDS and "Heroic" in shards[0].name
     assert p.story.done.get("gear_heroic_unlock") == [theme], p.story.done
     # the unlock survives a save round-trip
     back = sq.SideQuestProgress.from_json(json.loads(json.dumps(p.sidequests.to_json())))
@@ -196,7 +196,7 @@ def check_heroic_shard_drops_and_heroic_loot():
         assert any(it.tier >= 11 and not it.is_ut and it.slot in ("weapon", "armor", "ring", "ability")
                    for it in items), [it.display_name for it in items]
         assert not any(it.quest_key for it in items), "no trial relics from the Heroic version"
-        assert p.story.done.get("heroic_dungeons") == ["ember_den"], p.story.done
+        assert len(p.story.done.get("heroic_dungeons", [])) == 1, p.story.done  # every Heroic clear counts
     finally:
         rs.HEROIC_SHARD_FROM_HARD, rs.HEROIC_SHARD_FROM_HEROIC = old
     print("check_heroic_shard_drops_and_heroic_loot: PASSED")

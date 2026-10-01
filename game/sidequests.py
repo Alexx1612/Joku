@@ -3,7 +3,7 @@ Side quests (Batch 15): 30 optional quests layered on top of the story (game/sto
 plus the 7 Heroic trials (V0.2 final): one per dungeon, given by the local who lives
 nearest that dungeon's biome - bring back 3 of the dungeon's relics (its boss always
 drops one, two on Hard; its elites sometimes do) and the Heroic version of that
-dungeon unlocks (plus a first Heroic Shard). See HEROIC_TRIALS.
+dungeon unlocks (plus its first 2 Heroic Shards). See HEROIC_TRIALS.
 
 Two sources:
   * the random BOARD - BOARD_SIZE quests with no giver are always active; when one is
@@ -71,6 +71,8 @@ HEROIC_TRIALS = {
 }
 TRIAL_RELICS_NEEDED = 3
 TRIAL_RELIC_ELITE_CHANCE = 0.1
+TRIAL_HEROIC_SHARDS = 2  # a finished trial hands out this many Heroic Shards - Act IV needs 2 Heroic clears
+# (measured with tools/pacing_bot.py: with 1, the second clear waited on rare re-drops for 20+ minutes)
 
 QUESTS = {
     # ---- board (no giver): wildlife groups, hunting, exploring ----------------------
@@ -407,15 +409,17 @@ def heroic_unlocked(progress, theme):
 
 
 def _unlock_heroic(progress, player, theme):
-    """A finished Heroic trial: a first Heroic Shard + the story's Act III credit."""
+    """A finished Heroic trial: its first Heroic Shards + the story's Act III credit."""
     from game.items import make_dungeon_shard
     label = f"{HEROIC_TRIALS[theme][3]} (Heroic)"
-    shard = make_dungeon_shard("heroic_" + theme, label)
-    if len(player.backpack) < player.backpack_size:
-        player.backpack.append(shard)
-    else:
-        progress.pending_items.append(shard)
-    msgs = [(f"The {label} is unlocked! Here's a Heroic Shard to open it (level 16+).", (230, 90, 120))]
+    for _ in range(TRIAL_HEROIC_SHARDS):
+        shard = make_dungeon_shard("heroic_" + theme, label)
+        if len(player.backpack) < player.backpack_size:
+            player.backpack.append(shard)
+        else:
+            progress.pending_items.append(shard)
+    msgs = [(f"The {label} is unlocked! Here are {TRIAL_HEROIC_SHARDS} Heroic Shards to open it (level 16+).",
+             (230, 90, 120))]
     sp = getattr(player, "story", None)
     if sp is not None:
         msgs.extend(sp.on_event("heroic_unlock", theme))

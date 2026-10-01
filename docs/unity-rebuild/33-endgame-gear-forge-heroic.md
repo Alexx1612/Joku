@@ -63,7 +63,7 @@
 | Wind Spire | Brother Tipsy |
 
   - Bring 3 relics. They drop only inside that theme's normal dungeon: the boss drops 1 (2 on Hard), and elites drop one 10% of the time (`quest_drops(theme=, difficulty=, is_boss=)`).
-  - Turn-in unlocks the dungeon (the quest id goes in `sidequests.done`, so saves need no new field), gives a first Heroic Shard, and credits `heroic_unlock`.
+  - Turn-in unlocks the dungeon (the quest id goes in `sidequests.done`, so saves need no new field), gives its first `TRIAL_HEROIC_SHARDS` (2) Heroic Shards, and credits `heroic_unlock`.
 - **Heroic Shards:** a Hard clear of an unlocked theme drops one 15% of the time; a Heroic boss drops one 25% of the time. `shard_difficulty()` always opens them at "Heroic".
 - Heroic clears count for Act IV (`heroic_dungeon`).
 

@@ -2376,7 +2376,7 @@ class RealmSim:
                 and self.theme_key not in ("forge", MAD_GOD_ROOM):
             self._story_credit("dungeon", None, killer=killer)
             if self.is_heroic:
-                self._story_credit("heroic_dungeon", self.base_theme, killer=killer)
+                self._story_credit("heroic_dungeon", None, killer=killer)  # every Heroic clear counts
             for p in self._story_players:
                 self._side_event(p, "dungeon", self.theme_key)
         if enemy is self.boss and enemy.kind == "mad_god_phase2":
