@@ -90,6 +90,8 @@ class Conversation:
             return opts
         d = NPCS[self.npc_id]
         heard = self._heard()
+        if d.get("market") and len(_market_inputs(self.player)) >= 3:
+            opts.append(("Trade 3 trinkets for a mystery item", ("market", 0)))
         if d.get("anvil"):  # Brother Hammerstein: whatever the backpack can forge right now comes first
             for i, r in enumerate(forge.forge_options(self.player)):
                 opts.append((r["label"], ("forge", i)))
@@ -190,6 +192,14 @@ class Conversation:
             if ok and QUESTS[key[1]].get("heroic_theme"):
                 self.sfx.append("trial_done")
             self.node = ("thanks", key[1]) if ok else ("root",)
+        elif act == "market":
+            self.used.discard(key)
+            got = _market_trade(self.player)
+            if got is not None:
+                self.msgs.append((f"The Ghost Merchant takes your trinkets... and hands you {got.display_name}.",
+                                  got.color))
+                self.sfx.append("night_market")
+            self.node = ("forged",)
         elif act == "forge":
             self.used.discard(key)  # the same slot can forge again with whatever is left
             recipes = forge.forge_options(self.player)
@@ -210,6 +220,27 @@ class Conversation:
     def bye(self):
         self.done = True
         return None
+
+
+def _market_inputs(player):
+    gear = [it for it in player.backpack
+            if it.slot in ("weapon", "armor", "ring", "ability") and not it.is_ut and not getattr(it, "divine", False)]
+    return sorted(gear, key=lambda it: it.tier)
+
+
+def _market_trade(player):
+    """The Midnight Market: your 3 lowest-tier gear items for one random item a tier above the best of them."""
+    from game.items import _random_tiered
+    gear = _market_inputs(player)
+    if len(gear) < 3:
+        return None
+    take = gear[:3]
+    tier = min(13, max(it.tier for it in take) + 1)
+    for it in take:
+        player.backpack.remove(it)
+    got = _random_tiered(getattr(player, "cls_name", "wizard"), tier, tier)
+    player.backpack.append(got)
+    return got
 
 
 def start_conversation(player, npc=None, wildlife=None):

@@ -224,6 +224,17 @@ NPCS = {
             "Three cave spots, please! I've drawn the frame already. It's the easy part.",
             "Now my map has THINGS on it! Look at all those things. Here, take this for your trouble.")},
         barks=["Left at the stalagmite... no, the OTHER stalagmite.", "Is it dark in here or is it me?"]),
+    "ghost_merchant": dict(
+        name="The Ghost Merchant", kind="person", sprite=("enemy", "npc_ghost_merchant"), tint=None,
+        zone="event", area="event", wander=1, market=True,  # only during a Midnight Market night
+        greeting="*A lantern with no hand holding it.* \"Buying. Selling. Mostly buying. Three trinkets for one "
+                 "surprise. The surprise is usually better. Usually.\"",
+        again="\"The night is short. Well. Four minutes. Trade or don't.\"",
+        exhausted="\"Nothing more for you tonight. Come back when the market does.\"",
+        topics=[("who", "Who are you?",
+                 "\"Someone who forgot to leave when the market closed. Several hundred years ago. Don't do that.\"", False)],
+        quests={},
+        barks=["Trinkets for surprises...", "The market closes at dawn. So do I.", "*a cold laugh from nowhere*"]),
     "hammerstein": dict(
         name="Brother Hammerstein", kind="person", sprite=("enemy", "npc_hammerstein"), tint=None,
         zone="nexus", area="nexus:anvil", wander=0, anvil=True,  # he stays at his anvil

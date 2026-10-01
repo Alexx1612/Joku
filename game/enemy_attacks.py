@@ -708,6 +708,38 @@ ATTACKS.update({
                   spread=288, sweep_step=12, speed=0.8, p2=True, bkw=dict(status_effect="armor_pierce"))],
 })
 
+# ---------------- night-horror update: the night mobs ----------------
+ATTACKS.update({
+    "lantern_eater": [M("Lure Flash", "fan", n=3, spread=26, cd=1.7, color=(255, 200, 110)),
+                      M("Gulp", "dash", windup=0.5, cd=5.0, tele="dash", dash_time=0.4, dash_mult=3.0,
+                        end=dict(fn="fan", n=5, spread=60, speed=0.9, life=0.6)),
+                      M("Swallowed Light", "ring", windup=0.9, cd=7.0, tele="ring", n=14, gaps=2, gap_w=2,
+                        speed=0.75, color=(255, 190, 90))],
+    "shade_stalker": [M("Shadow Claw", "fan", n=2, spread=14, cd=1.3, speed=1.2, color=(150, 140, 200)),
+                      M("Lunge From The Dark", "dash", windup=0.4, cd=3.5, tele="dash", dash_time=0.3, dash_mult=4.0,
+                        end=dict(fn="half_ring", n=7, arc=140, speed=0.9))],
+    "night_mimic": [M("Snap", "fan", n=5, spread=50, cd=1.8, speed=1.0, life=0.9, sfx="shotgun"),
+                    M("Coin Spit", "mines", windup=0.4, cd=4.0, n=4, spread=80, pop=4, color=(255, 215, 90)),
+                    M("Lid Slam", "slam", windup=0.7, cd=6.0, tele="zone", r=95, dmgm=1.3,
+                      burst=dict(kind="ring", n=12, gaps=2, gap_w=2, speed=0.8))],
+    "hollow_watcher": [M("Stare", "beam", windup=0.8, cd=3.5, tele="line", n=8, lead=True, color=(255, 80, 80)),
+                       M("Blink Ring", "ring", windup=1.0, cd=6.0, tele="ring", n=18, gaps=3, gap_w=2, speed=0.7,
+                         color=(230, 70, 90)),
+                       M("Call The Shades", "summon", windup=0.8, cd=18.0, tele="ring", tele_r=110,
+                         kind="shade_stalker", n=2)],
+    "red_harvester": [M("Reap", "half_ring", windup=0.5, cd=3.0, tele="ring", n=11, arc=200, speed=1.0,
+                        color=(220, 40, 50)),
+                      M("Scythe Wall", "wall", windup=0.8, cd=4.0, tele="line", n=11, speed=0.7, tele_len=320,
+                        tele_w=290, color=(230, 50, 60)),
+                      M("Blood Rain", "rain", windup=0.9, cd=5.0, tele="zone", n=8, r=52, spread=190, dmgm=1.3),
+                      M("Harvest Dash", "dash", windup=0.5, cd=6.0, tele="dash", dash_time=0.4, dash_mult=3.4,
+                        repeat=2, gap=0.5, phase=2),
+                      M("Red Moon Nova", "ring", windup=1.2, cd=8.0, tele="ring", n=28, gaps=3, gap_w=2, speed=0.85,
+                        dmgm=1.4, color=(240, 40, 50), phase=2),
+                      M("Sickle Spin", "fan", windup=0.5, cd=7.0, tele="ring", repeat=12, gap=0.1, n=4, spread=270,
+                        sweep_step=12, speed=0.8, color=(220, 40, 50), phase=2)],
+})
+
 # ---------------- the Mad God's Room: two evolutions, each a full new move set ----------------
 ATTACKS.update({
     "mad_god_unhinged": [
@@ -832,7 +864,9 @@ def full_ring_untelegraphed(move):
 # every elite fought inside a dungeon room (RealmSim marks those via Enemy.set_special).
 # Everyday mobs roaming the open Realm and the islands - of ANY rank - only use plain,
 # un-telegraphed basic shots (still varied per kind so biomes feel different).
-SPECIAL_BY_KIND = ("cinder_warden", "choir_warden")
+SPECIAL_BY_KIND = ("cinder_warden", "choir_warden",
+                   # the night mobs always fight with their full sets (they ARE the special event)
+                   "lantern_eater", "shade_stalker", "night_mimic", "hollow_watcher")
 BASIC_FNS = ("fan", "sine", "boomerang")
 
 # fallback basic shot from the kind's old `pattern` when its move list has no plain shot

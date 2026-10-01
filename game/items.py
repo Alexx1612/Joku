@@ -1180,6 +1180,13 @@ LOOT_SOURCES = {
                "elite": [("cyan", "tier", (12, 12), 0.06)]},
     "island": {"boss": [("cyan", "tier", (12, 13), 0.45), ("brown", "ingot", None, 0.3)],
                "elite": [("cyan", "tier", (12, 12), 0.04)]},
+    # the night-horror update: night mobs and the Blood Moon (its horde + The Red Harvester)
+    "night": {"elite": [("purple", "tier", (9, 11), 0.25), ("cyan", "tier", (12, 12), 0.03)],
+              "boss": [("cyan", "tier", (12, 13), 0.5)]},
+    "blood_moon": {"elite": [("purple", "tier", (10, 11), 0.3), ("cyan", "tier", (12, 12), 0.06)],
+                   "trash": [("brown", "tier", (6, 9), 0.2)],
+                   "boss": [("cyan", "tier", (12, 13), 1.0), ("cyan", "tier", (12, 13), 0.6),
+                            ("brown", "ingot", None, 0.7)]},
     "mg_room_1": {"boss": [("cyan", "tier", (12, 13), 1.0), ("brown", "ingot", None, 0.6)],
                   "elite": [("cyan", "tier", (12, 12), 0.1)]},
     "mg_room_2": {"boss": [("cyan", "tier", (13, 13), 1.0), ("brown", "ingot", None, 1.0),

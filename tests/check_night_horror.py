@@ -26,6 +26,7 @@ characters.CHAR_DIR = tempfile.mkdtemp(prefix="rr_night_chr_")
 achievements._DIR = tempfile.mkdtemp(prefix="rr_night_ach_")
 
 from game import realm_sim as rs, ui, world, settings, options_menu, audio
+from game import night as night_mod
 from game.realm_sim import RealmSim
 from game.entities import Player, Enemy, GLOWING_KINDS
 from game.constants import TILE
@@ -213,6 +214,141 @@ def check_coop_doors_and_clock():
     print("check_coop_doors_and_clock: PASSED")
 
 
+def _night_sim(event=None, blood=False, seed=21):
+    random.seed(seed)
+    sim = SIM
+    sim.enemies = []
+    sim.day_time, sim.blood_moon_active = rs.NIGHTFALL_T - 0.05, blood
+    sim._was_night = False
+    sim.night._was_night = False
+    p = Player("warrior", "NightOwl", pid="n1")
+    while p.level < 20:
+        p.gain_xp(10 ** 5)
+    p.pos = sim.spawn_point()
+    p.hp = p.hp_max = 10 ** 6
+    old = night_mod.EVENTS
+    if event is not None:
+        night_mod.EVENTS = (event,)
+    old_chance, sim._nights_since_blood_moon = rs.BLOOD_MOON_CHANCE, 0
+    rs.BLOOD_MOON_CHANCE = 1.0 if blood else 0.0  # nightfall rolls the Blood Moon
+    try:
+        for _ in range(4):
+            sim.begin_tick()
+            sim.update(1 / 20, {p.pid: p})
+    finally:
+        night_mod.EVENTS = old
+        rs.BLOOD_MOON_CHANCE = old_chance
+    return sim, p
+
+
+def check_night_rules_and_dawn_restores():
+    sim, p = _night_sim()
+    gob = Enemy("goblin", p.pos + pygame.Vector2(900, 0))
+    base = (gob.aggro_range, gob.speed, gob.dmg)
+    sim.enemies.append(gob)
+    sim.night._apply_rules(True)
+    assert gob.aggro_range >= base[0] * 1.6 and gob.speed > base[1] and gob.dmg[1] > base[2][1]
+    sim.night._apply_rules(False)
+    assert (gob.aggro_range, gob.speed, tuple(gob.dmg)) == (base[0], base[1], tuple(base[2])), "dawn restores"
+    print("check_night_rules_and_dawn_restores: PASSED")
+
+
+def check_night_events():
+    sim, p = _night_sim("fog")
+    assert sim.night.event == "fog" and sim.clock_info()["light_mult"] < 1.0
+    surf = pygame.Surface((400, 300))
+    ui.draw_night_fog(surf, 1.0)
+    sim, p = _night_sim("lanterns_out")
+    area = next(a for a in SIM.areas if a["key"] == "tavern_town")
+    c = pygame.Vector2(area["rect"].centerx * TILE, area["rect"].centery * TILE)
+    assert not [l for l in sim.light_sources_near(c, 30) if l[2] >= 95], "every lamp is dark tonight"
+    sim, p = _night_sim("hunter")
+    assert sim.night.hunted_pid == p.pid
+    hunter = [e for e in sim.enemies if getattr(e, "hunt_pid", None) == p.pid]
+    assert hunter and hunter[0].kind == "shade_stalker" and hunter[0].hp_max > 160
+    sim, p = _night_sim("market")
+    gm = [n for n in sim.npcs if n.npc_id == "ghost_merchant"]
+    assert gm, "the Ghost Merchant shows up"
+    from game import dialogue, items as I
+    r = next(r for r in I.WEAPONS["warrior"] if r[2] == 6)
+    p.backpack = [I.Item(r[0], "weapon", 6, r[1], min_dmg=1, max_dmg=2) for _ in range(3)]
+    conv = dialogue.start_conversation(p, npc=gm[0])
+    i = next(i for i, o in enumerate(conv.view()["options"]) if o.startswith("Trade 3"))
+    conv.choose(i)
+    assert len(p.backpack) == 1 and p.backpack[0].tier == 7, [it.display_name for it in p.backpack]
+    sim.day_time = 100
+    for _ in range(2):
+        sim.begin_tick()
+        sim.update(1 / 20, {p.pid: p})
+    assert not any(n.npc_id == "ghost_merchant" for n in sim.npcs), "the market closes at dawn"
+    print("check_night_events: PASSED")
+
+
+def check_night_mobs():
+    from game.entities import NIGHT_MOB_KINDS, ENEMY_KINDS
+    from game import enemy_attacks as EA, entities as ent
+    for k in NIGHT_MOB_KINDS:
+        assert ENEMY_KINDS[k].get("night_only") and EA.moves_for(k), k
+    sim, p = _night_sim()
+    for _ in range(int(40 / 0.05)):
+        sim.begin_tick()
+        sim.update(0.05, {p.pid: p})
+    kinds = {e.kind for e in sim.enemies if e.kind in NIGHT_MOB_KINDS}
+    assert kinds, "night mobs come out"
+    # the mimic sits there as a loot bag until you get close
+    m = sim.night._make("night_mimic", p.pos + pygame.Vector2(300, 0))
+    assert m._disguised and m.net_state()["dz"]
+    p.pos = m.pos + pygame.Vector2(40, 0)
+    sim.night._tick_behaviours(0.05, [p])
+    assert not m._disguised and m.aggro
+    # the stalker is invisible outside every light
+    ent.NIGHT_VIEW.update(night=True, player=(0, 0), radius=175, lights=())
+    assert ent.night_view_lit(pygame.Vector2(50, 0)) and not ent.night_view_lit(pygame.Vector2(600, 0))
+    ent.NIGHT_VIEW.update(night=False)
+    # a lantern-eater next to a lamp puts it out until dawn
+    area = next(a for a in SIM.areas if a["key"] == "tavern_town")
+    c = pygame.Vector2(area["rect"].centerx * TILE, area["rect"].centery * TILE)
+    lamp = next(l for l in world.nearby_lights(sim.realm_map, c.x, c.y, 30) if l[2] == 150)
+    le = sim.night._make("lantern_eater", pygame.Vector2(lamp[0] + 10, lamp[1]))
+    sim.night._lantern_eater(le)
+    assert (int(lamp[0] // TILE), int(lamp[1] // TILE)) in sim.night.snuffed
+    # dawn takes them all
+    sim.day_time = 100
+    sim.begin_tick()
+    sim.update(0.05, {p.pid: p})
+    assert not any(e.kind in NIGHT_MOB_KINDS and e.alive for e in sim.enemies)
+    assert not sim.night.snuffed
+    print(f"check_night_mobs: PASSED ({sorted(kinds)})")
+
+
+def check_blood_moon():
+    sim, p = _night_sim(blood=True)
+    assert sim.night.event == "blood_moon"
+    sim.night._horde_cd = 0
+    sim.night._tick_blood_moon(0.05, [p], [p])
+    horde = [e for e in sim.enemies if getattr(e, "blood_horde", False)]
+    assert len(horde) >= 4 and all(e.moonlit and e.aggro for e in horde), len(horde)
+    sim.night._night_t = 999
+    sim.night._tick_blood_moon(0.05, [p], [p])
+    h = [e for e in sim.enemies if e.kind == "red_harvester"]
+    assert len(h) == 1 and h[0].loot_source == "blood_moon"
+    from game import items as I
+    random.seed(1)
+    drops = [it for _ in range(30) for _b, it in I.roll_loot("warrior", "boss", 1.0, source="blood_moon")]
+    assert any(it.tier >= 12 for it in drops)
+    xp0 = p.xp if hasattr(p, "xp") else 0
+    sim.night._end_night([p])
+    assert any("survived the Blood Moon" in ev[1] for ev in sim.events)
+    for key in ("heartbeat", "blood_moon_rise", "harvester_roar", "watcher_shriek", "mimic_snap", "lantern_snuff",
+                "nightfall", "dawn"):
+        assert key in audio.EVENT_SOUND, key
+    from game import music
+    assert "realm_night" in music.TRACKS and "realm_blood_moon" in music.TRACKS
+    surf = pygame.Surface((400, 300))
+    ui.draw_blood_pulse(surf, 0.8)
+    print("check_blood_moon: PASSED")
+
+
 if __name__ == "__main__":
     check_ten_minute_cycle_four_minute_night()
     check_clock_countdown_and_time_bar()
@@ -221,4 +357,8 @@ if __name__ == "__main__":
     check_fireflies_come_out_at_night_only()
     check_safe_houses_and_doors()
     check_coop_doors_and_clock()
+    check_night_rules_and_dawn_restores()
+    check_night_events()
+    check_night_mobs()
+    check_blood_moon()
     print("PASSED: night horror checks all green.")

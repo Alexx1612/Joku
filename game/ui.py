@@ -865,7 +865,7 @@ _OVERLAY_CACHE = {}
 
 
 def draw_day_night_overlay(surf, light_level, blood_moon=False, torch_screen_positions=None,
-                           luminosity=0.5, player_screen=None, lights=()):
+                           luminosity=0.5, player_screen=None, lights=(), light_mult=1.0):
     """A translucent full-screen tint - deep blue at night, tinted red during a
     Blood Moon, nothing at high noon - with a soft lightmap cutout around the
     player's own position so standing still doesn't plunge you into total
@@ -886,16 +886,16 @@ def draw_day_night_overlay(surf, light_level, blood_moon=False, torch_screen_pos
     if dark <= 0.02:
         return
     alpha = int(night_darkness_alpha(luminosity) * dark)
-    tint = (60, 4, 8) if blood_moon else (4, 6, 18)
+    tint = (34, 0, 4) if blood_moon else (4, 6, 18)
     size = surf.get_size()
     overlay = _OVERLAY_CACHE.get(size)
     if overlay is None:
         overlay = _OVERLAY_CACHE[size] = pygame.Surface(size, pygame.SRCALPHA)
     overlay.fill((*tint, alpha))
     px, py = player_screen if player_screen is not None else (size[0] // 2, size[1] // 2)
-    light = _get_light_sprite(PLAYER_LIGHT_RADIUS)
-    overlay.blit(light, (int(px) - PLAYER_LIGHT_RADIUS, int(py) - PLAYER_LIGHT_RADIUS),
-                 special_flags=pygame.BLEND_RGBA_SUB)
+    pr = max(30, int(PLAYER_LIGHT_RADIUS * light_mult))  # The Fog shrinks your light
+    light = _get_light_sprite(pr)
+    overlay.blit(light, (int(px) - pr, int(py) - pr), special_flags=pygame.BLEND_RGBA_SUB)
     if torch_screen_positions:
         torch_light = _get_light_sprite(TORCH_LIGHT_RADIUS)
         for tx, ty in torch_screen_positions:
@@ -1027,6 +1027,86 @@ def draw_day_night_clock(surf, light_level, blood_moon=False, clock=None):
     panel.blit(txt, (rect.w // 2 - txt.get_width() // 2, y0 + h + 6))
     surf.blit(panel, (rect.x, rect.y))
     _HEADER_PANEL_DRAWN[0] = True
+
+
+_FOG_LAYER = {}
+
+
+def draw_night_fog(surf, strength=1.0):
+    """The Fog night event: two slow layers of drifting mist over everything."""
+    size = surf.get_size()
+    layer = _FOG_LAYER.get(size)
+    if layer is None:
+        rnd = __import__("random").Random(7)
+        layer = pygame.Surface((size[0] + 400, size[1] + 400), pygame.SRCALPHA)
+        for _ in range(140):
+            r = rnd.randint(60, 180)
+            x, y = rnd.randint(0, layer.get_width()), rnd.randint(0, layer.get_height())
+            blob = pygame.Surface((r * 2, r * 2), pygame.SRCALPHA)
+            for k in range(r, 0, -6):
+                pygame.draw.circle(blob, (150, 160, 175, int(10 * (1 - k / r)) + 2), (r, r), k)
+            layer.blit(blob, (x - r, y - r))
+        _FOG_LAYER[size] = layer
+    t = pygame.time.get_ticks() / 1000.0
+    for i, (sp, a) in enumerate(((14, 1.0), (-9, 0.8))):
+        ox = int((t * sp) % 400) - 400 if sp > 0 else -int((t * -sp) % 400)
+        oy = int(math.sin(t * 0.13 + i) * 60) - 200
+        layer.set_alpha(int(255 * strength * a))
+        surf.blit(layer, (ox, oy))
+    layer.set_alpha(255)
+
+
+def draw_blood_pulse(surf, intensity):
+    """A red heartbeat vignette (the Blood Moon, or low HP at night)."""
+    if intensity <= 0.01:
+        return
+    size = surf.get_size()
+    key = ("blood", size)
+    v = _OVERLAY_CACHE.get(key)
+    if v is None:
+        gw, gh = 48, 30
+        small = pygame.Surface((gw, gh), pygame.SRCALPHA)
+        for y in range(gh):
+            for x in range(gw):
+                d = min(1.0, math.hypot((x + 0.5) / gw - 0.5, (y + 0.5) / gh - 0.5) / 0.7071)
+                small.set_at((x, y), (170, 0, 10, int(200 * d ** 3)))
+        v = _OVERLAY_CACHE[key] = pygame.transform.smoothscale(small, size)
+    v.set_alpha(int(255 * max(0.0, min(1.0, intensity))))
+    surf.blit(v, (0, 0))
+
+
+_EYE_GLOW = {}
+
+
+def draw_night_emissives(surf, cam, enemies, light_level):
+    """Drawn AFTER the darkness: the night mobs' eyes (and the Harvester's scythe edge) glow
+    through it, so in the dark you see eyes watching you from beyond your light."""
+    dark = 1.0 - light_level
+    if dark <= 0.2:
+        return
+    from game.entities import ENEMY_KINDS
+    t = pygame.time.get_ticks() / 1000.0
+    for e in enemies:
+        d = ENEMY_KINDS.get(e.kind, {})
+        if not d.get("night_only") or e.kind == "fireflies" or getattr(e, "_disguised", False):
+            continue
+        col = {"hollow_watcher": (255, 60, 60), "red_harvester": (255, 50, 40),
+               "lantern_eater": (255, 210, 120)}.get(e.kind, (230, 230, 255))
+        x, y = cam(e.pos)
+        blink = (math.sin(t * 1.7 + e.pos.x * 0.03) > -0.92)  # an occasional blink
+        if not blink:
+            continue
+        gap = 4 if e.kind != "red_harvester" else 7
+        for ex in (x - gap, x + gap):
+            key = (col, int(dark * 10))
+            spr = _EYE_GLOW.get(key)
+            if spr is None:
+                spr = pygame.Surface((14, 14), pygame.SRCALPHA)
+                for r in range(7, 0, -1):
+                    f = (1 - r / 7) ** 1.5
+                    pygame.draw.circle(spr, tuple(int(c * f * dark) for c in col), (7, 7), r)
+                _EYE_GLOW[key] = spr
+            surf.blit(spr, (int(ex) - 7, int(y) - 14), special_flags=pygame.BLEND_ADD)
 
 
 def draw_sheltered_badge(surf):

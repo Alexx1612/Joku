@@ -85,6 +85,7 @@ class GhostEnemy:
         self._dashing_vis = d.get("ds", False)
         self._shelled_vis = d.get("sh", False)
         self._heroic = d.get("hero", False)  # the Heroic-dungeon aura
+        self._disguised = d.get("dz", False)  # a Night Mimic still pretending to be a loot bag
 
 
 class GhostBullet:
@@ -2019,6 +2020,19 @@ class CoopClient:
                               highlighted=set(self.trade.get("my_offer_idx", [])) if self.trade else (),
                               socket_pair=self.pending_socket)
 
+    def _night_pulse(self, blood):
+        p = self.you
+        low = p.hp < p.hp_max * 0.35
+        if not (blood or low):
+            return 0.0
+        near = sum(1 for e in self.enemies if e.pos.distance_to(p.pos) < 420 and e.rank != "trash")
+        period = max(0.42, 1.05 - 0.08 * near - (0.25 if low else 0.0))
+        self._beat_t = getattr(self, "_beat_t", 0.0) + 1 / 60
+        if self._beat_t >= period:
+            self._beat_t = 0.0
+            audio.play_event("heartbeat")
+        return (0.55 if blood else 0.35) * max(0.0, 1.0 - (self._beat_t / period) * 3.0)
+
     def _current_place(self):
         """(zone_kind, key, title, subtitle, music_zone) for game.zone_banner, or None."""
         if self.you is None or self.zone == "dead":
@@ -2034,7 +2048,10 @@ class CoopClient:
             got = zone_banner.realm_place(self.realm_areas, tx, ty, biome)
             if got is None and (self.zone_tracker.place or "").startswith(("biome:", "area:", "island:")):
                 return None   # open water / walkway far from any biome - keep the current place
-            return got or ("realm", "biome:realm", "The Realm", "Realm", "forest")
+            got = got or ("realm", "biome:realm", "The Realm", "Realm", "forest")
+            if (self.clock_info or {}).get("night"):
+                got = got[:4] + ("realm_blood_moon" if self.blood_moon else "realm_night",)
+            return got
         return None
 
     def _draw_hub(self, tmap, mm, name, hint_text):
@@ -2124,6 +2141,14 @@ class CoopClient:
         fog = mm.explored if (self.zone == "bonus" and mm is not None) else None
         self.tilemap.canopy_overlay = True  # trunks in the floor pass, canopies drawn over entities below
         world.render_rotated_world(s, self.cam, lambda surf, cam: self.tilemap.draw(surf, cam, surf.get_size(), fog=fog))
+        from game import entities as _ent
+        _clk = self.clock_info or {}
+        _ent.NIGHT_VIEW.update(night=bool(_clk.get("night")) and self.zone == "realm",
+                               player=(self.you.pos.x, self.you.pos.y),
+                               radius=ui.PLAYER_LIGHT_RADIUS * _clk.get("light_mult", 1.0),
+                               lights=[(x, y, r) for (x, y, r, _c) in world.nearby_lights(
+                                   self.tilemap, self.you.pos.x, self.you.pos.y, lit=not _clk.get("lanterns_out"))]
+                               if _clk.get("night") else ())
         vfx.draw_enemy_zones(s, self.cam, getattr(self, "enemy_zones", []))  # server-sent attack telegraphs
         for g in self.ground_items:
             g.draw(s, self.cam)
@@ -2164,8 +2189,11 @@ class CoopClient:
         lights = []
         if self.light_level < 0.98:
             from game.entities import GLOWING_KINDS
+            snuffed = {tuple(t) for t in (self.clock_info or {}).get("snuffed", ())}
             for (lx, ly, lr, lc) in world.nearby_lights(self.tilemap, self.you.pos.x, self.you.pos.y,
                                                         lit=not (self.clock_info or {}).get("lanterns_out")):
+                if (int(lx // C.TILE), int(ly // C.TILE)) in snuffed:
+                    continue
                 sx, sy = self.cam((lx, ly))
                 lights.append((sx, sy, lr, lc))
             for e in self.enemies:
@@ -2173,10 +2201,16 @@ class CoopClient:
                 if g:
                     sx, sy = self.cam(e.pos)
                     lights.append((sx, sy, g[0], g[1]))
+        clock = self.clock_info or {}
+        if clock.get("event") == "fog" and self.light_level < 0.5:
+            ui.draw_night_fog(s, 1.0 - self.light_level)
         ui.draw_day_night_overlay(s, self.light_level, self.blood_moon, torch_positions,
                                   luminosity=settings.get("luminosity"), player_screen=self.cam(self.you.pos),
-                                  lights=lights)
+                                  lights=lights, light_mult=clock.get("light_mult", 1.0))
         ui.draw_light_glows(s, lights, self.light_level)
+        ui.draw_night_emissives(s, self.cam, self.enemies, self.light_level)
+        if clock.get("night"):
+            ui.draw_blood_pulse(s, self._night_pulse(self.blood_moon))
         if getattr(self, "sheltered", False):
             ui.draw_sheltered_badge(s)
         if self.zone == "bonus" and (self.theme_name or "").endswith("(Heroic)"):

@@ -1620,6 +1620,116 @@ _MAD_GOD_LIVID_PAL = {"f": (255, 140, 40), "O": (255, 222, 110), "W": (126, 18, 
                       "o": (204, 40, 44), "E": (255, 255, 130), "9": (255, 190, 60), "r": (255, 250, 200),
                       "m": (255, 230, 120)}
 
+# ---- night-horror mobs (grid fallbacks - the hand-painted animated PNGs replace them) ----
+# Lantern-Eater: a gaunt, hunched thing with a glowing lure dangling into its open jaw
+_LANTERN_EATER = _pad([
+    "       kk       ",
+    "      kLLk      ",
+    "       kk       ",
+    "     kssssk     ",
+    "    kssEssEk    ",
+    "   kssssssssk   ",
+    "   ksTkTkTksk   ",
+    "   k  kLLk  k   ",
+    "  ksk kLLk ksk  ",
+    " kssk  kk  kssk ",
+    " ksssk    kssk  ",
+    "  kssskkkksssk  ",
+    "   ksssssssssk  ",
+    "    kss  kssk   ",
+    "   kss    kssk  ",
+    "   kk      kk   ",
+])
+_LANTERN_EATER_PAL = {"k": (16, 14, 18), "s": (86, 78, 70), "E": (255, 220, 120), "L": (255, 205, 100),
+                      "T": (220, 214, 190)}
+# Shade Stalker: tall, too-thin, arms to its knees, two pin-prick eyes
+_SHADE_STALKER = _mirror([
+    "     kk",
+    "    kss",
+    "    sEs",
+    "    kss",
+    "     ks",
+    "   kkss",
+    "  kssss",
+    " kss ks",
+    " ks  ks",
+    "ks   ks",
+    "ks   ks",
+    "k   kss",
+    "    ks ",
+    "   kss ",
+    "   ks  ",
+    "  kk   ",
+])
+_SHADE_STALKER_PAL = {"k": (6, 6, 10), "s": (40, 36, 58), "E": (235, 235, 255)}
+# Night Mimic (revealed): a lidded chest with a fanged maw and a lolling tongue
+_NIGHT_MIMIC = _pad([
+    "                ",
+    "  kkkkkkkkkkkk  ",
+    " kbbbbbbbbbbbbk ",
+    " kbGbbbbbbbbGbk ",
+    " kkkkkkkkkkkkkk ",
+    " kTkTkTkTkTkTkk ",
+    " kmmmmmmmmmmmmk ",
+    " kmmmRRRRRRmmmk ",
+    " kmmRRRRRRRRmmk ",
+    " kTkTkTkTkTkTkk ",
+    " kbbbbbbbbbbbbk ",
+    " kbGbbbbbbbbGbk ",
+    " kbbbbbbbbbbbbk ",
+    "  kkkkkkkkkkkk  ",
+    "   kk      kk   ",
+    "                ",
+])
+_NIGHT_MIMIC_PAL = {"k": (24, 16, 10), "b": (118, 78, 40), "G": (220, 180, 70), "T": (236, 230, 210),
+                    "m": (60, 8, 14), "R": (196, 60, 80)}
+# Hollow Watcher: one enormous bloodshot eye in a nest of roots
+_HOLLOW_WATCHER = _mirror([
+    "   r    ",
+    "  rr  kk",
+    "   rkkww",
+    "   kwwww",
+    "  kwwvww",
+    " kwwvwII",
+    " kwvwIIP",
+    " kwwwIIP",
+    " kwvwIII",
+    " kwwvwII",
+    "  kwwwvw",
+    " r kwwww",
+    "rr  kkww",
+    " r rr kk",
+    "   r  r ",
+    "  r    r",
+])
+_HOLLOW_WATCHER_PAL = {"k": (30, 12, 14), "w": (220, 210, 200), "v": (200, 60, 60), "I": (170, 30, 40),
+                       "P": (10, 4, 6), "r": (70, 40, 30)}
+# The Red Harvester: a hooded reaper, crimson cloak, a huge scythe across its back
+_RED_HARVESTER = _pad([
+    "                  ss    ",
+    "                 sSSs   ",
+    "        kkkk    sSs     ",
+    "       kccccK  sSs      ",
+    "      kcKKKKck sh       ",
+    "      kcKEKEck h        ",
+    "      kcKKKKckh         ",
+    "     kccccccccK         ",
+    "    kcccRcRcccck        ",
+    "   kccRcccccRcch        ",
+    "  kcccRccRccRcchk       ",
+    "  kccRcccccccRhck       ",
+    "  kcccRcccRcchcck       ",
+    "  kccRccccccRhcck       ",
+    "   kccRcccRcchck        ",
+    "    kccccccchcck        ",
+    "     kkcccchcck         ",
+    "       kkkhkkk          ",
+    "         h              ",
+    "        hh              ",
+])
+_RED_HARVESTER_PAL = {"k": (16, 4, 6), "c": (130, 14, 22), "R": (200, 40, 50), "K": (8, 2, 4),
+                      "E": (255, 70, 60), "s": (200, 200, 210), "S": (250, 250, 255), "h": (80, 56, 40)}
+
 # a drifting firefly swarm (night only): a loose cloud of glowing abdomens with faint wings
 _FIREFLIES = [
     "   y      w  ",
@@ -1771,6 +1881,23 @@ _ASHENREACH_DEVOURER_NEW = _mirror([
 _ASHENREACH_DEVOURER_NEW_PAL = dict(_ASHENREACH_DEVOURER_PAL, T=(245, 240, 225))
 
 # --- NPC people (16 wide, same scale as the class sprites) -------------------
+_NPC_GHOST_MERCHANT = (_pad([   # a hooded, see-through peddler with a floating lantern
+    "     ppppp  LL  ",
+    "    pppppp kLLk ",
+    "   ppkkkkpp kk  ",
+    "   pkEkkEkp  t  ",
+    "   ppkkkkpp  t  ",
+    "  ppppppppppt   ",
+    "  pqqpppqqpp    ",
+    " ppqqqpppqqpp   ",
+    " pppqqqpqqqppp  ",
+    "  pppqqqqqppp   ",
+    "   ppqqqqqpp    ",
+    "    p pqp p     ",
+    "   p   p   p    ",
+    "  p         p   ",
+]), {"p": (120, 170, 170), "q": (90, 140, 150), "k": (20, 30, 40), "E": (180, 255, 230), "L": (255, 230, 140),
+     "t": (90, 80, 70)})
 _NPC_HAMMERSTEIN = (_pad([   # Brother Hammerstein: bald monk-smith, grey beard, leather apron, big hammer
     "      hhhh      ",
     "     hhhhhh     ",
@@ -1956,6 +2083,9 @@ ENEMY_GRIDS.update({
     "mad_god": (_MAD_GOD_FIGURE, _MAD_GOD_PAL), "mad_god_phase2": (_MAD_GOD_FIGURE, _MAD_GOD_PHASE2_PAL),
     "mad_god_unhinged": (_MAD_GOD_UNHINGED, _MAD_GOD_UNHINGED_PAL), "mad_god_livid": (_MAD_GOD_LIVID, _MAD_GOD_LIVID_PAL),
     "fireflies": (_FIREFLIES, _FIREFLIES_PAL),
+    "lantern_eater": (_LANTERN_EATER, _LANTERN_EATER_PAL), "shade_stalker": (_SHADE_STALKER, _SHADE_STALKER_PAL),
+    "night_mimic": (_NIGHT_MIMIC, _NIGHT_MIMIC_PAL), "hollow_watcher": (_HOLLOW_WATCHER, _HOLLOW_WATCHER_PAL),
+    "red_harvester": (_RED_HARVESTER, _RED_HARVESTER_PAL),
     "cinder_colossus": (_CINDER_COLOSSUS_NEW, _CINDER_COLOSSUS_NEW_PAL),
     "rubble_warlord": (_RUBBLE_WARLORD_NEW, _RUBBLE_WARLORD_PAL),
     "ashreach_revenant": (_ASHREACH_REVENANT_NEW, _ASHREACH_REVENANT_PAL),
@@ -1966,7 +2096,7 @@ ENEMY_GRIDS.update({
     "npc_barkeep": _NPC_BARKEEP, "npc_mossbeard": _NPC_MOSSBEARD, "npc_sandy_sal": _NPC_SANDY_SAL,
     "npc_frostine": _NPC_FROSTINE, "npc_driftwood": _NPC_DRIFTWOOD, "npc_murk": _NPC_MURK,
     "npc_tipsy": _NPC_TIPSY, "npc_cinder_pete": _NPC_CINDER_PETE, "npc_fernleaf": _NPC_FERNLEAF,
-    "npc_glimmer": _NPC_GLIMMER, "npc_hammerstein": _NPC_HAMMERSTEIN,
+    "npc_glimmer": _NPC_GLIMMER, "npc_hammerstein": _NPC_HAMMERSTEIN, "npc_ghost_merchant": _NPC_GHOST_MERCHANT,
 })
 
 
@@ -2183,7 +2313,7 @@ BOSS_KINDS = {"boss", "frost_monarch", "ash_behemoth", "void_reaper", "thorn_war
               # Batch 14 Track B2 - same treatment for the last 5 islands' mini-bosses
               "thornrock_colossus", "ashenreach_devourer", "tideglass_warden",
               "driftbell_matriarch", "abyssal_choirmaster", "mad_god", "mad_god_phase2",
-              "mad_god_unhinged", "mad_god_livid"}
+              "mad_god_unhinged", "mad_god_livid", "red_harvester"}
 
 
 def _fit(size_wh, longest):

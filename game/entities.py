@@ -810,6 +810,22 @@ ENEMY_KINDS = {
     # dungeon bosses: a real roster instead of one reskin, each with its own feel
     "boss": dict(kind="boss", rank="boss", hp=1440, speed=50, pattern="boss", dmg=(6, 14), radius=26,
                  aggro_range=99999, leash_range=99999),
+    # ---- night-horror update: night-only mobs (game/night.py spawns them, dawn takes them) ----
+    # Lantern-Eater: drawn to light - snuffs lamp posts until dawn, hunts whoever stands in light
+    "lantern_eater": dict(kind="lantern_eater", rank="elite", hp=230, speed=44, pattern="aimed", dmg=(7, 12),
+                          radius=15, aggro_range=300, leash_range=600, night_only=True),
+    # Shade Stalker: only visible inside light - a fast lunge out of the dark
+    "shade_stalker": dict(kind="shade_stalker", rank="elite", hp=160, speed=62, pattern="aimed", dmg=(8, 13),
+                          radius=13, aggro_range=340, leash_range=700, night_only=True, shadow=True),
+    # Night Mimic: looks like a loot bag until you get close
+    "night_mimic": dict(kind="night_mimic", rank="elite", hp=260, speed=40, pattern="aimed", dmg=(9, 15),
+                        radius=15, aggro_range=70, leash_range=500, night_only=True, mimic=True),
+    # Hollow Watcher: a huge rooted eye - when it sees you it shrieks, calls the night down on you
+    "hollow_watcher": dict(kind="hollow_watcher", rank="elite", hp=420, speed=0, pattern="aimed", dmg=(6, 11),
+                           radius=20, aggro_range=460, leash_range=0, night_only=True, watcher=True),
+    # The Red Harvester: the Blood Moon's boss
+    "red_harvester": dict(kind="red_harvester", rank="boss", hp=3600, speed=52, pattern="boss", dmg=(9, 17),
+                          radius=30, aggro_range=99999, leash_range=99999, night_only=True),
     "frost_monarch": dict(kind="frost_monarch", rank="boss", hp=1600, speed=42, pattern="boss", dmg=(7, 15),
                            radius=26, aggro_range=99999, leash_range=99999),
     "ash_behemoth": dict(kind="ash_behemoth", rank="boss", hp=1300, speed=55, pattern="boss", dmg=(8, 17),
@@ -1036,7 +1052,26 @@ MAD_GOD_KINDS = ("mad_god", "mad_god_phase2", "mad_god_unhinged", "mad_god_livid
 
 # creatures that glow at night: kind -> (light radius px, colour). They light the dark around
 # them (ui.draw_day_night_overlay) and their glow stays visible beyond your own light.
+# what the local view can see at night (set by main.py / coop_client.py each frame before drawing):
+# a Shade Stalker is only drawn in full inside this light
+NIGHT_VIEW = {"night": False, "player": (0.0, 0.0), "radius": 175.0, "lights": ()}
+
+
+def night_view_lit(pos):
+    v = NIGHT_VIEW
+    if not v["night"]:
+        return True
+    px, py = v["player"]
+    if (pos.x - px) ** 2 + (pos.y - py) ** 2 <= v["radius"] ** 2:
+        return True
+    return any((pos.x - lx) ** 2 + (pos.y - ly) ** 2 <= (lr * 0.85) ** 2 for (lx, ly, lr) in v["lights"])
+
+
+NIGHT_MOB_KINDS = ("lantern_eater", "shade_stalker", "night_mimic", "hollow_watcher", "red_harvester")
+
 GLOWING_KINDS = {
+    "lantern_eater": (80, (255, 196, 90)), "hollow_watcher": (70, (230, 60, 60)),
+    "red_harvester": (140, (220, 30, 40)),
     "fireflies": (95, (210, 255, 120)), "cave_moth": (70, (200, 180, 255)),
     "fire_beetle": (60, (255, 150, 60)), "mushroom_folk": (85, (120, 220, 255)),
     "cinder_wisp": (75, (255, 140, 50)), "frost_sprite": (60, (160, 225, 255)),
@@ -1056,6 +1091,7 @@ ISLAND_MINI_BOSS_KINDS = ("cinder_colossus", "choir_sovereign", "rubble_warlord"
 ENEMY_MOVE_RADIUS_CAP = 26
 for _bk in BOSS_KINDS + [f"{k}_phase2" for k in BOSS_KINDS] + list(MAD_GOD_KINDS):
     ENEMY_KINDS[_bk]["scale"] = BOSS_SCALE
+ENEMY_KINDS["red_harvester"]["scale"] = BOSS_SCALE  # the Blood Moon boss reads as big as any boss
 for _bk in ISLAND_MINI_BOSS_KINDS:
     if _bk in ENEMY_KINDS:
         ENEMY_KINDS[_bk]["scale"] = MINI_BOSS_SCALE
@@ -1870,6 +1906,22 @@ class Enemy:
 
         cx, cy = cam(self.pos)
         r = img.get_rect(center=(cx + anim_dx, cy + anim_dy))
+        if getattr(self, "_disguised", False):
+            # a Night Mimic: drawn as an ordinary brown loot bag until it bites
+            bag = sprites.bag_sprite(True, (120, 84, 48))
+            if bag is not None:
+                surf.blit(bag, bag.get_rect(center=(cx, cy)))
+            else:
+                pygame.draw.ellipse(surf, (120, 84, 48), (cx - 12, cy - 8, 24, 18))
+                pygame.draw.ellipse(surf, (30, 20, 12), (cx - 12, cy - 8, 24, 18), 2)
+            return
+        if ENEMY_KINDS.get(self.kind, {}).get("shadow") and not night_view_lit(self.pos):
+            # a Shade Stalker outside every light: only a faint shimmer and two pin-prick eyes
+            t2 = pygame.time.get_ticks() / 1000.0
+            shimmer = img.copy()
+            shimmer.set_alpha(int(22 + 14 * math.sin(t2 * 6 + self.pos.x)))
+            surf.blit(shimmer, r)
+            return
 
         if self.moonlit:
             pulse = 1.0 + 0.12 * math.sin(pygame.time.get_ticks() / 200.0)
@@ -1954,7 +2006,7 @@ class Enemy:
                     pretelegraph=self._pretelegraph, scale=self.scale,
                     wk=self._windup_kind if (self._pretelegraph or self._dash is not None) else None,
                     wf=round(self._windup_frac, 2), ds=self._dash is not None, sh=self._shell_t > 0,
-                    hero=getattr(self, "_heroic", False))
+                    hero=getattr(self, "_heroic", False), dz=getattr(self, "_disguised", False))
 
 
 def _mk_bullet(pos, direction, speed, dmg, color, owner="enemy", pierce=0, radius=5, lifetime=2.4,

@@ -25,6 +25,7 @@ from game import achievements
 from game import vfx
 from game import crews
 from game import live_events
+from game import night as night_mod
 from game import accounts
 
 ECHO_XP_PER_ECHO = 1000  # passive Echo-currency accrual rate (Batch 14) - see RealmSim._reward
@@ -647,6 +648,7 @@ class RealmSim:
         self._nights_since_blood_moon = 0  # pity-counter - see _update_day_night
         self._ember_cd = self.EMBER_TICK
         self._beach_spawn = None if bonus else self._find_beach_spawn()
+        self.night = None if bonus else night_mod.NightDirector(self)  # night-horror director (game/night.py)
         self.lairs = [] if bonus else self._generate_lairs()
         self._hidden_room = None
         self._phase2_pocket = None
@@ -1380,8 +1382,11 @@ class RealmSim:
         else:
             left = (NIGHTFALL_T - t) % DAY_LENGTH
             until = "night"
-        return {"frac": round(t / DAY_LENGTH, 4), "phase": self.phase(), "left": round(left, 1),
+        info = {"frac": round(t / DAY_LENGTH, 4), "phase": self.phase(), "left": round(left, 1),
                 "until": until, "blood": bool(self.blood_moon_active), "night": self.is_night}
+        if self.night is not None:
+            info.update(self.night.info())
+        return info
 
     def _update_day_night(self, dt):
         if self.is_bonus_room:
@@ -1401,9 +1406,7 @@ class RealmSim:
             self.blood_moon_active = random.random() < effective_chance
             if self.blood_moon_active:
                 self._nights_since_blood_moon = 0
-                self.events.append((None, "A Blood Moon rises over the Godlands...", (220, 60, 60)))
-            else:
-                self.events.append((None, "Night falls. The Godlands grow more dangerous.", (140, 150, 210)))
+            # the announcement itself comes from the night director (game/night.py)
         elif not night_now and self._was_night:
             if not self.blood_moon_active:
                 self._nights_since_blood_moon += 1
@@ -1479,8 +1482,13 @@ class RealmSim:
                 e._heroic = True  # Heroic: faster bullets, more often (HP comes from the "Heroic" difficulty)
                 e.bullet_speed_mult = HEROIC_BULLET_SPEED
                 e.fire_rate_mult *= HEROIC_FIRE_RATE
+            if getattr(e, "_disguised", False):
+                continue  # a Night Mimic pretending to be a loot bag (game/night.py reveals it)
             exposed = [p for p in alive if not getattr(p, "sheltered", False)]
             target = min(exposed or alive, key=lambda p: p.pos.distance_to(e.pos))
+            hunt = getattr(e, "hunt_pid", None)
+            if hunt is not None and hunt in players and players[hunt] in exposed:
+                target = players[hunt]
             if not self.is_bonus_room and target.pos.distance_to(e.pos) > ACTIVE_SIM_RADIUS:
                 continue  # dormant - too far from every player to be worth simulating this tick
             if not exposed:
@@ -1572,6 +1580,8 @@ class RealmSim:
         self._tick_enemy_zones(dt, alive)
         self._update_shelter(dt, alive)
         self._tick_night_creatures(dt, alive)
+        if self.night is not None:
+            self.night.tick(dt, alive)
         self._gate_islands(dt, alive)
         self._tick_mg_room(dt)
         for p in alive:
@@ -1950,8 +1960,11 @@ class RealmSim:
     def light_sources_near(self, pos, radius_tiles=16):
         """[(x, y, r, colour)] world-space lights near `pos`: lit props plus glowing creatures."""
         from game.entities import GLOWING_KINDS
+        nd = getattr(self, "night", None)
         out = world.nearby_lights(self.realm_map, pos.x, pos.y, radius_tiles,
-                                  lit=not getattr(self, "lanterns_out", False))
+                                  lit=not (getattr(self, "lanterns_out", False) or (nd is not None and nd.lanterns_out)))
+        if nd is not None and nd.snuffed:
+            out = [l for l in out if (int(l[0] // TILE), int(l[1] // TILE)) not in nd.snuffed]
         reach2 = (radius_tiles * TILE) ** 2
         for e in self.enemies:
             g = GLOWING_KINDS.get(e.kind)
@@ -2052,6 +2065,10 @@ class RealmSim:
         grid = self.realm_map.grid
         return [[x, y, 1 if grid[y][x] == world.DOOR_OPEN else 0]
                 for h in getattr(self, "safe_houses", ()) for (x, y) in h["doors"]]
+
+    def is_sheltered_tile(self, pos):
+        owner = getattr(self, "_interior_owner", None)
+        return bool(owner) and (int(pos.x // TILE), int(pos.y // TILE)) in owner
 
     def is_sheltered(self, p):
         """Inside a house whose doors are all shut: mobs can't see or reach this player."""
@@ -2576,7 +2593,8 @@ class RealmSim:
             src = getattr(enemy, "loot_source", None) or self.loot_source
             for roll_i in range(loot_rolls):
                 # the source's extras (mythic tier / ingots / Divine) ride the FIRST roll only
-                for bag_color, item in roll_loot(p.cls_name if p else cls_for_loot, enemy.rank,
+                for bag_color, item in roll_loot(p.cls_name if p else cls_for_loot,
+                                                 getattr(enemy, "loot_rank_override", None) or enemy.rank,
                                                  enemy.difficulty_fraction, source=src if roll_i == 0 else None):
                     rolled_items.append((bag_color, item))
                     if item.is_ut:

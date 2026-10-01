@@ -113,6 +113,11 @@ TRACKS = {
                                 "pulse", "soaring lydian tremolo rock in G"),
     "dungeon_forge": _spec("Closing Time", 40, "harmonic_minor", 176, "punk", 353, [0, 5, 4, 0], [5, 3, 4, 4],
                            [1, 4], "square", "frantic finale speed-rock in E harmonic minor"),
+    # --- the Realm at night (night-horror update)
+    "realm_night": _spec("Witching Hour", 37, "harmonic_minor", 70, "doom", 601, [0, 5, 1, 0], [5, 1, 6, 0], [3, 4],
+                         "triangle", "slow, hollow witching-hour dirge in C# harmonic minor"),
+    "realm_blood_moon": _spec("Red Harvest", 38, "phrygian", 148, "punk", 607, [0, 1, 0, 6], [1, 6, 5, 1], [3, 1],
+                              "square", "pounding blood-moon panic rock in D phrygian"),
     # --- the Mad God's Room: one song per form, each angrier than the last
     "dungeon_mad_god_room": _spec("Throne of Nonsense", 38, "phrygian_dominant", 140, "gallop", 501,
                                   [0, 1, 4, 1], [5, 4, 1, 0], [6, 1], "square",

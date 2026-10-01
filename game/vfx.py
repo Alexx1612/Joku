@@ -568,6 +568,15 @@ def dispatch(vfx_events):
             # boarding / leaving an island's ferry: a splash of sea spray
             spawn_burst(pos, (170, 220, 255), count=34, speed=(60, 200), life=(0.3, 0.7), radius=(2, 4))
             spawn_ring(pos, color, max_radius=90, life=0.6)
+        elif kind == "mimic_reveal":
+            spawn_burst(pos, (255, 215, 90), count=26, speed=(80, 220), life=(0.3, 0.6), radius=(2, 3))
+            spawn_ring(pos, color, max_radius=70, life=0.4)
+        elif kind == "lamp_snuff":
+            spawn_rise(pos, (90, 90, 100), count=14, life=(0.6, 1.1), speed=(20, 50), radius=(2, 4), spread=8)
+            spawn_burst(pos, color, count=10, speed=(40, 120), life=(0.2, 0.4), radius=(1, 2))
+        elif kind == "horde_ring":
+            spawn_ring(pos, color, max_radius=380, life=0.9)
+            spawn_ring(pos, (120, 10, 20), max_radius=300, life=0.7)
         elif kind == "boss_death":
             spawn_ring(pos, color, max_radius=200, life=0.8)
             if _listener_dist(x, y) <= BOSS_SHAKE_RANGE:

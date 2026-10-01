@@ -1305,6 +1305,33 @@ class Game:
                 vfx.dispatch([("forge_sparks", at.x, at.y, (255, 190, 90))])
         conv.sfx = []
 
+    def _set_night_view(self, sim):
+        """What the local player can see tonight (entities.NIGHT_VIEW): a Shade Stalker is
+        only drawn in full inside the player's light or another light source."""
+        from game import entities as _ent
+        night = sim.light_level < 0.5 and not sim.is_bonus_room
+        info = sim.clock_info() if night else {}
+        _ent.NIGHT_VIEW.update(night=night, player=(self.player.pos.x, self.player.pos.y),
+                               radius=ui.PLAYER_LIGHT_RADIUS * info.get("light_mult", 1.0),
+                               lights=[(x, y, r) for (x, y, r, _c) in sim.light_sources_near(self.player.pos)]
+                               if night else ())
+
+    def _night_pulse(self, blood):
+        """Heartbeat: on a Blood Moon (or at low HP at night) a thump every beat, faster the
+        more hostiles are close - and a red vignette pulse in time with it."""
+        p, sim = self.player, self.realm_sim
+        low = p.hp < p.hp_max * 0.35
+        if not (blood or low) or sim is None:
+            return 0.0
+        near = sum(1 for e in sim.enemies if e.alive and not e.neutral and e.pos.distance_to(p.pos) < 420)
+        period = max(0.42, 1.05 - 0.08 * near - (0.25 if low else 0.0))
+        self._beat_t = getattr(self, "_beat_t", 0.0) + 1 / 60
+        if self._beat_t >= period:
+            self._beat_t = 0.0
+            audio.play_event("heartbeat")
+        phase = self._beat_t / period
+        return (0.55 if blood else 0.35) * max(0.0, 1.0 - phase * 3.0)
+
     def _talk_to_given(self):
         """F next to Father Given: he says the current act's hint (and the act intro the
         first time), counts as the Prologue's "talk" objective, and in the Finale opens
@@ -1871,7 +1898,10 @@ class Game:
             got = zone_banner.realm_place(codex.realm_areas(sim), tx, ty, biome)
             if got is None and (self.zone_tracker.place or "").startswith(("biome:", "area:", "island:")):
                 return None   # open water / walkway far from any biome - keep the current place
-            return got or ("realm", "biome:realm", "The Realm", "Realm", "forest")
+            got = got or ("realm", "biome:realm", "The Realm", "Realm", "forest")
+            if sim.is_night:  # the night has its own music
+                got = got[:4] + ("realm_blood_moon" if sim.blood_moon_active else "realm_night",)
+            return got
         return None
 
     def _draw_hub(self, tmap, mm, name, hint_text):
@@ -1960,6 +1990,7 @@ class Game:
         fog = mm.explored if sim.is_bonus_room else None
         sim.realm_map.canopy_overlay = True  # trunks in the floor pass, canopies drawn over entities below
         world.render_rotated_world(s, self.cam, lambda surf, cam: sim.realm_map.draw(surf, cam, surf.get_size(), fog=fog))
+        self._set_night_view(sim)
         vfx.draw_enemy_zones(s, self.cam, sim.enemy_zones)  # attack telegraphs, under everything that moves
         for g in sim.ground_items:
             g.draw(s, self.cam)
@@ -2000,14 +2031,20 @@ class Game:
         torch_positions = [self.cam(pos) for pos in
                            world.nearby_torch_world_positions(sim.realm_map, self.player.pos.x, self.player.pos.y)]
         lights = []
+        clock = sim.clock_info() if not sim.is_bonus_room else {}
         if sim.light_level < 0.98:
             for (lx, ly, lr, lc) in sim.light_sources_near(self.player.pos):
                 sx, sy = self.cam((lx, ly))
                 lights.append((sx, sy, lr, lc))
+        if clock.get("event") == "fog" and sim.light_level < 0.5:
+            ui.draw_night_fog(s, 1.0 - sim.light_level)
         ui.draw_day_night_overlay(s, sim.light_level, sim.blood_moon_active, torch_positions,
                                   luminosity=settings.get("luminosity"), player_screen=self.cam(self.player.pos),
-                                  lights=lights)
+                                  lights=lights, light_mult=clock.get("light_mult", 1.0))
         ui.draw_light_glows(s, lights, sim.light_level)
+        ui.draw_night_emissives(s, self.cam, sim.enemies, sim.light_level)
+        if sim.is_night:
+            ui.draw_blood_pulse(s, self._night_pulse(sim.blood_moon_active))
         if getattr(self.player, "sheltered", False):
             ui.draw_sheltered_badge(s)
         if getattr(sim, "is_heroic", False):
