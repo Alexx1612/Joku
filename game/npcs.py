@@ -231,8 +231,8 @@ NPCS = {
         again="Back for more hammering? The Anvil never gets tired. I do. Constantly.",
         exhausted="That's all the forging wisdom I have. The rest is just hitting things.",
         topics=[("temper", "How does tempering work?",
-                 "Bring me three things of the same kind and the same tier - three swords, three rings, "
-                 "whatever - and I'll hammer them into one of the next tier. From T12 up I need Forge Ingots too.", False),
+                 "Bring me any three pieces of gear of the same tier - swords, rings, robes, mix and match - and "
+                 "I'll hammer them into one of the next tier, shaped like the first. From T12 up I need Forge Ingots too.", False),
                 ("ingots", "Where do Forge Ingots come from?",
                  "Heroic dungeon bosses, the bosses on the big islands, and the Mad God's Room. Star-iron. "
                  "It never cools down, which is great for forging and terrible for pockets.", False),

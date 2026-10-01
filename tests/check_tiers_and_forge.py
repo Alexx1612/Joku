@@ -127,11 +127,15 @@ def check_forge_recipes():
     assert r["result"].tier == 14 and r["result"].name.startswith("Anvil-Wrought")
     ok, _m, res = forge.apply_forge(p, r)
     assert ok and p.backpack == [res]
-    # T14 is the top: three T14s don't temper further; mixed slots / tiers never combine
+    # T14 is the top: three T14s don't temper further; different tiers never combine
     p.backpack = _items_of("weapon", 14, 3) + [I.make_forge_ingot()] * 3
     assert all(o["kind"] != "temper" for o in forge.forge_options(p))
     p.backpack = _items_of("weapon", 7, 1) + _items_of("ring", 7, 1) + _items_of("ability", 9, 1)
     assert forge.forge_options(p) == []
+    # mixed slots of the SAME tier do combine; the result keeps the first item's slot/line
+    p.backpack = _items_of("ring", 7, 1) + _items_of("weapon", 7, 2)
+    r = forge.forge_options(p)[0]
+    assert r["result"].slot == "ring" and r["result"].tier == 8 and "items" in r["label"], r["label"]
     # a stale recipe (items no longer in the bag) is refused, nothing lost
     p.backpack = _items_of("weapon", 3, 3)
     stale = forge.forge_options(p)[0]
