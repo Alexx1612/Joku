@@ -214,9 +214,9 @@ zone), `/accept` / `/decline` (trade invites) and
 - **Tiers**: normal loot tops out at T11. **T12-T13** (cyan "mythic" badge)
   only drop in Heroic dungeons, on the big islands and in the Mad God's Room.
   **T14** (red-hot badge) never drops - it's forged.
-- **Brother Hammerstein's Anvil** (Nexus, talk with F): *temper* 3 items of
-  the same slot and tier into one of the next tier (Forge Ingots needed from
-  T12 up), or *reforge* a UT with 2 Ingots (+20% damage, proc kept).
+- **Brother Hammerstein's Anvil** (Nexus, talk with F): *temper* any 3 gear
+  items of the same tier (mixed slots are fine) into one of the next tier,
+  shaped like the first (Forge Ingots needed from T12 up), or *reforge* a UT with 2 Ingots (+20% damage, proc kept).
 - **Divine items** (the Mad God's Room): a Divine weapon per class
   (*Starfall*: every 4th shot adds 3 piercing star bolts), Divine armor
   (*Second Wind*: a killing blow leaves you at 1 HP, once per 90 s), a Divine
@@ -263,7 +263,8 @@ islands -> the Mad God:
 - Completed acts are checkpointed on your account (they survive permadeath);
   enemy HP scales x1.1 per completed act (up to x1.6). Old saves from the
   5-act arc are moved onto the new arc automatically. Quest log: **J** (HUD)
-  or the full Quest Log.
+  or the full Quest Log. Bot playthroughs (`tools/pacing_bot.py`) take a
+  median ~101 minutes to the end of the Finale.
 
 ### NPCs, dialogue and side quests
 - **11 NPCs** - Barkeep Bitterwick (Nexus tavern), Old Mossbeard, Sandy Sal,
@@ -482,8 +483,9 @@ and CoopClient specs); output lands in `dist/`.
 - World generation takes ~1.4 s at startup. (The old "second build is 3x
   slower" note was Windows 11 power-throttling headless test processes, not
   the game - the timing checks now opt out of it, see `tests/_timing.py`.)
-- Story length hasn't been re-measured for the 7-act arc (the old 5-act arc
-  measured ~66 min by a scripted bot); the new acts and the endgame add a lot.
+- Story length is measured by a scripted bot (`tools/pacing_bot.py`, 8 runs):
+  median ~101 simulated minutes to the Finale (range 53-170). A bot plays
+  faster than a person, so expect longer.
 - Some UT/class flavour text is still just flavour (e.g. Paladin's
   "mace hits heal"); only the four UT proc kinds are real mechanics.
 - Balance numbers (drop rates, spawn caps, XP curve) are tuned by feel.

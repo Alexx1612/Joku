@@ -27,6 +27,20 @@ islands, dungeon list).
 - `act_scale`: 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6.
 - Old 5-act saves map `{0:0, 1:1, 2:3, 3:4, 4:6, 5:7}`.
 
+**Pacing** (`tools/pacing_bot.py`, 4 classes x 2 seeds, simulated minutes):
+
+| Act | Median | Min | Max |
+|---|---|---|---|
+| Prologue | 0.5 | 0.5 | 0.5 |
+| I: The Grand Tour | 9.9 | 8.5 | 10.9 |
+| II: Bouncer Problems | 24.9 | 10.9 | 36.1 |
+| III: Retail Therapy | 29.3 | 18.2 | 74.8 |
+| IV: The Deep End | 17.3 | 4.8 | 27.9 |
+| V: Last Call | 9.6 | 6.4 | 14.9 |
+| Finale | 9.9 | 3.5 | 20.0 |
+| **Total** | **100.8** | 52.8 | 170.0 |
+
+
 ### Tiers and loot sources (`game/items.py`)
 
 | Tier | Badge | Source |
@@ -75,7 +89,7 @@ Divine items:
 
 | Recipe | Input | Result |
 |---|---|---|
-| Temper | 3 items, same slot and tier (not UT or Divine) | the next tier of the first item's line |
+| Temper | any 3 gear items of the same tier, mixed slots OK (not UT or Divine) | the next tier of the first item's line |
 | Temper, T12-13 result | as above + 1 Forge Ingot | T12-T13 |
 | Temper, T14 result | as above + 2 Forge Ingots | T14 |
 | Reforge | 1 UT weapon + 2 Forge Ingots | "Reforged <name>": damage x1.2, proc kept; once only |

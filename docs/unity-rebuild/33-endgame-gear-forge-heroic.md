@@ -33,7 +33,7 @@
   - **Ability:** the T14 spell at x1.25.
 
 ## 2. The Anvil (`game/forge.py`, NPC `hammerstein` in the Nexus at `nexus:anvil`)
-- **Temper:** 3 backpack items of the same slot and tier (not UT or Divine) become the next tier of the FIRST item's line.
+- **Temper:** any 3 backpack gear items of the same tier (mixed slots are fine; not UT or Divine) become the next tier of the FIRST item's line (the first one whose line has a next tier).
   - Ingots needed depend on the result tier: 0 up to T11, 1 for T12-13, 2 for T14.
 - **Reforge:** 1 UT weapon + 2 ingots become "Reforged <name>", with damage x1.2 and the proc stored in `socketed_proc` so the rename keeps it. It can only happen once.
 - **Dialogue:** `forge_options(player)` lists up to 3 recipes, best first. They are the first options of Hammerstein's dialogue. `apply_forge` removes the inputs by identity, so a stale recipe is refused. Forging plays `forge_success` and counts for Act III.

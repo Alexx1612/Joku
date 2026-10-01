@@ -33,3 +33,19 @@ items, then the islands, then the Mad God. They also asked for a new name for Ac
 
 ## 3. Rebuild notes
 Act indices are exported as `ACT_PROLOGUE` ... `ACT_FINALE`. Code and tests use those names, never raw numbers.
+
+## 4. Pacing
+
+Measured with `tools/pacing_bot.py` (4 classes x 2 seeds, simulated minutes). It found two real problems, now fixed: Act IV only counted *different* Heroic dungeons, and tempering needed 3 items of one slot.
+
+| Act | Median | Min | Max |
+|---|---|---|---|
+| Prologue | 0.5 | 0.5 | 0.5 |
+| I: The Grand Tour | 9.9 | 8.5 | 10.9 |
+| II: Bouncer Problems | 24.9 | 10.9 | 36.1 |
+| III: Retail Therapy | 29.3 | 18.2 | 74.8 |
+| IV: The Deep End | 17.3 | 4.8 | 27.9 |
+| V: Last Call | 9.6 | 6.4 | 14.9 |
+| Finale | 9.9 | 3.5 | 20.0 |
+| **Total** | **100.8** | 52.8 | 170.0 |
+
