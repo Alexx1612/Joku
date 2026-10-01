@@ -839,6 +839,10 @@ ENEMY_KINDS = {
                          radius=9, aggro_range=0, leash_range=0, neutral=True, unshootable=True),
     "cave_moth": dict(kind="cave_moth", rank="trash", hp=18, speed=40, pattern="aimed", dmg=(0, 0),
                        radius=9, aggro_range=0, leash_range=0, neutral=True, unshootable=True),
+    # night-horror update: a drifting swarm of fireflies - night only (RealmSim._tick_night_creatures),
+    # a living light in the dark forest, swamp and jungle
+    "fireflies": dict(kind="fireflies", rank="trash", hp=10, speed=26, pattern="aimed", dmg=(0, 0),
+                      radius=10, aggro_range=0, leash_range=0, neutral=True, unshootable=True, night_only=True),
     "songbird": dict(kind="songbird", rank="trash", hp=15, speed=130, pattern="aimed", dmg=(0, 0),
                       radius=8, aggro_range=0, leash_range=0, neutral=True, unshootable=True),
     "deer": dict(kind="deer", rank="trash", hp=30, speed=110, pattern="aimed", dmg=(0, 0),
@@ -1029,6 +1033,15 @@ ENEMY_KINDS["mad_god_livid"] = dict(
     ENEMY_KINDS["mad_god"], kind="mad_god_livid", hp=int(ENEMY_KINDS["mad_god"]["hp"] * 3.2), speed=64,
     dmg=(int(_mg_lo * 1.8), int(_mg_hi * 1.8)), radius=34, fire_rate_mult=0.65)
 MAD_GOD_KINDS = ("mad_god", "mad_god_phase2", "mad_god_unhinged", "mad_god_livid")
+
+# creatures that glow at night: kind -> (light radius px, colour). They light the dark around
+# them (ui.draw_day_night_overlay) and their glow stays visible beyond your own light.
+GLOWING_KINDS = {
+    "fireflies": (95, (210, 255, 120)), "cave_moth": (70, (200, 180, 255)),
+    "fire_beetle": (60, (255, 150, 60)), "mushroom_folk": (85, (120, 220, 255)),
+    "cinder_wisp": (75, (255, 140, 50)), "frost_sprite": (60, (160, 225, 255)),
+    "ember_wisp": (60, (255, 160, 70)), "tide_wisp": (55, (120, 200, 255)),
+}
 
 # Batch 15 (E4): bosses read as BIG. An optional per-kind "scale" multiplies both the
 # drawn sprite (sprites.enemy_sprite(kind, scale)) and the bullet hitbox radius; terrain

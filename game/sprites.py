@@ -1620,6 +1620,23 @@ _MAD_GOD_LIVID_PAL = {"f": (255, 140, 40), "O": (255, 222, 110), "W": (126, 18, 
                       "o": (204, 40, 44), "E": (255, 255, 130), "9": (255, 190, 60), "r": (255, 250, 200),
                       "m": (255, 230, 120)}
 
+# a drifting firefly swarm (night only): a loose cloud of glowing abdomens with faint wings
+_FIREFLIES = [
+    "   y      w  ",
+    "  yYy    wYw ",
+    "   y   y  w  ",
+    "      yYy    ",
+    " w     y   y ",
+    "wYw       yYy",
+    " w   y     y ",
+    "    yYy  w   ",
+    "     y  wYw  ",
+    "  w      w   ",
+    " wYw  y      ",
+    "  w  yYy     ",
+]
+_FIREFLIES_PAL = {"y": (150, 200, 70), "Y": (235, 255, 140), "w": (120, 140, 120)}
+
 # magma golem: rock head with gold eye slits, huge shoulders, glowing fists
 _CINDER_COLOSSUS_NEW = _mirror([
     "       tttt",
@@ -1938,6 +1955,7 @@ ENEMY_GRIDS.update({
     "boss": (_DEMON_LORD, _BOSS_PAL), "boss_phase2": (_DEMON_LORD, _BOSS_PHASE2_PAL),
     "mad_god": (_MAD_GOD_FIGURE, _MAD_GOD_PAL), "mad_god_phase2": (_MAD_GOD_FIGURE, _MAD_GOD_PHASE2_PAL),
     "mad_god_unhinged": (_MAD_GOD_UNHINGED, _MAD_GOD_UNHINGED_PAL), "mad_god_livid": (_MAD_GOD_LIVID, _MAD_GOD_LIVID_PAL),
+    "fireflies": (_FIREFLIES, _FIREFLIES_PAL),
     "cinder_colossus": (_CINDER_COLOSSUS_NEW, _CINDER_COLOSSUS_NEW_PAL),
     "rubble_warlord": (_RUBBLE_WARLORD_NEW, _RUBBLE_WARLORD_PAL),
     "ashreach_revenant": (_ASHREACH_REVENANT_NEW, _ASHREACH_REVENANT_PAL),

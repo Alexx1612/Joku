@@ -108,7 +108,12 @@ AGGRO_PUSH_SPEED = 130
 # cycle is short enough to actually see both within one play session; nights
 # are genuinely more dangerous (faster spawns, and a rare Blood Moon that ramps
 # both danger and reward), not just a screen filter.
-DAY_LENGTH = 240.0
+DAY_LENGTH = 600.0  # night-horror update: a 10-minute day, 4 minutes of it night
+# the cycle's phases (seconds into day_time): full day, a 30 s dusk fade, the night, a 30 s dawn
+# fade, then day again. is_night (light < 0.5) runs from mid-dusk to mid-dawn = exactly 4 minutes.
+DUSK_START, NIGHT_START, NIGHT_END, DAWN_END = 300.0, 330.0, 540.0, 570.0
+NIGHTFALL_T, DAYBREAK_T = 315.0, 555.0      # is_night flips here (the middle of dusk / dawn)
+BLOOD_MOON_NIGHT_SPEED = 1.4                # a Blood Moon night runs faster: 3 minutes instead of 4
 BLOOD_MOON_CHANCE = 0.12  # rolled once each time night falls
 MOONLIT_CHANCE = 0.10     # each night spawn has this chance to be a tougher "Moonlit" variant
 
@@ -493,6 +498,57 @@ def vfx_style_for(ability_name):
     from game.vfx import ABILITY_STYLES
     return ABILITY_STYLES.get(ability_name)
 
+class _EnemyView:
+    """RealmSim seen by a monster: doors are walls (open or not)."""
+    __slots__ = ("sim",)
+
+    def __init__(self, sim):
+        self.sim = sim
+
+    def is_solid(self, wx, wy):
+        if self.sim.realm_map.tile_at(wx, wy) in world.DOOR_TILES:
+            return True
+        return self.sim.is_solid_at(wx, wy)
+
+    def has_line_of_sight(self, x0, y0, x1, y1):
+        return self.sim.has_line_of_sight(x0, y0, x1, y1)
+
+    def __getattr__(self, name):
+        return getattr(self.sim, name)
+
+
+def _smooth(x):
+    x = max(0.0, min(1.0, x))
+    return x * x * (3 - 2 * x)
+
+
+def day_light_at(t):
+    """Light level (1 day .. 0 night) at `t` seconds into the cycle."""
+    t %= DAY_LENGTH
+    if t < DUSK_START:
+        return 1.0
+    if t < NIGHT_START:
+        return 1.0 - _smooth((t - DUSK_START) / (NIGHT_START - DUSK_START))
+    if t < NIGHT_END:
+        return 0.0
+    if t < DAWN_END:
+        return _smooth((t - NIGHT_END) / (DAWN_END - NIGHT_END))
+    return 1.0
+
+
+def day_phase_at(t):
+    t %= DAY_LENGTH
+    if t < DUSK_START:
+        return "day"
+    if t < NIGHT_START:
+        return "dusk"
+    if t < NIGHT_END:
+        return "night"
+    if t < DAWN_END:
+        return "dawn"
+    return "day"
+
+
 class RealmSim:
     def __init__(self, bonus=False, theme="generic", difficulty_name=None, story_act=0):
         self.is_bonus_room = bonus
@@ -585,7 +641,7 @@ class RealmSim:
         self.mob_speech_events = []  # [(kind, text, x, y)] a mob just started a NEW flavor line this tick - pushed
         # into the persistent chat log (not just the in-world speech bubble) by main.py/coop_client.py
         # day/night only matters in the open Realm - a bonus dungeon has no sky
-        self.day_time = random.uniform(0, DAY_LENGTH) if not bonus else 0.0
+        self.day_time = random.uniform(0, DUSK_START - 60.0) if not bonus else 0.0  # arrive in daylight
         self.blood_moon_active = False
         self._was_night = False
         self._nights_since_blood_moon = 0  # pity-counter - see _update_day_night
@@ -771,6 +827,15 @@ class RealmSim:
     # without Enemy needing to know obstacles exist at all.
     def is_solid(self, wx, wy):
         return self.is_solid_at(wx, wy)
+
+    @property
+    def enemy_view(self):
+        """What a MOB moves and sees through: the sim itself, except every house door (even
+        an open one) is a wall - monsters never use doors."""
+        v = getattr(self, "_enemy_view", None)
+        if v is None:
+            v = self._enemy_view = _EnemyView(self)
+        return v
 
     def has_line_of_sight(self, x0, y0, x1, y1):
         if not self.realm_map.has_line_of_sight(x0, y0, x1, y1):
@@ -1001,6 +1066,9 @@ class RealmSim:
             keep_out = a["rect"].inflate(16, 16)
             self.lairs = [l for l in self.lairs
                           if not keep_out.collidepoint(int(l["pos"].x // TILE), int(l["pos"].y // TILE))]
+            for h in a.get("houses", ()):
+                self._add_safe_house(h["interior"], h["doors"], a["name"])
+        self._stamp_wayside_shacks(placed_rects)
 
         # Curated biome decoration vignettes (Track C, Batch 14) - 20
         # guaranteed hand-composed prop clusters per biome, additional to
@@ -1282,21 +1350,46 @@ class RealmSim:
     # ------------------------------------------------------------- update --
     @property
     def light_level(self):
-        """1.0 = high noon, 0.0 = pitch black midnight - a smooth sinusoid over
-        DAY_LENGTH, not a hard on/off flip."""
+        """1.0 = full daylight, 0.0 = night. Night-horror cycle: a long day, a 30 s
+        dusk fade, a 4-minute night (3 on a Blood Moon), a 30 s dawn fade."""
         if self.is_bonus_room:
             return 1.0
-        frac = self.day_time / DAY_LENGTH
-        return (math.cos(frac * math.tau) + 1) / 2
+        return day_light_at(self.day_time)
 
     @property
     def is_night(self):
-        return not self.is_bonus_room and self.light_level < 0.35
+        return not self.is_bonus_room and self.light_level < 0.5
+
+    def phase(self):
+        """"day" | "dusk" | "night" | "dawn" (dungeons are always "day")."""
+        if self.is_bonus_room:
+            return "day"
+        return day_phase_at(self.day_time)
+
+    def clock_info(self):
+        """Everything the time bar needs (also sent to co-op clients): where we are in
+        the cycle, the phase, and real seconds until night falls / day breaks."""
+        t = self.day_time
+        speed = BLOOD_MOON_NIGHT_SPEED if self.blood_moon_active else 1.0
+        if NIGHTFALL_T <= t < DAYBREAK_T:
+            # until daybreak: the night part runs faster on a Blood Moon
+            night_left = max(0.0, NIGHT_END - max(t, NIGHT_START))
+            left = night_left / speed + (DAYBREAK_T - max(t, NIGHT_END)) + \
+                max(0.0, NIGHT_START - t)
+            until = "dawn"
+        else:
+            left = (NIGHTFALL_T - t) % DAY_LENGTH
+            until = "night"
+        return {"frac": round(t / DAY_LENGTH, 4), "phase": self.phase(), "left": round(left, 1),
+                "until": until, "blood": bool(self.blood_moon_active), "night": self.is_night}
 
     def _update_day_night(self, dt):
         if self.is_bonus_room:
             return
-        self.day_time = (self.day_time + dt) % DAY_LENGTH
+        speed = 1.0
+        if self.blood_moon_active and NIGHT_START <= self.day_time < NIGHT_END:
+            speed = BLOOD_MOON_NIGHT_SPEED  # the Blood Moon's night is shorter (and nastier)
+        self.day_time = (self.day_time + dt * speed) % DAY_LENGTH
         night_now = self.is_night
         if night_now and not self._was_night:
             # a pity-counter lifecycle rather than a flat independent roll every
@@ -1386,14 +1479,21 @@ class RealmSim:
                 e._heroic = True  # Heroic: faster bullets, more often (HP comes from the "Heroic" difficulty)
                 e.bullet_speed_mult = HEROIC_BULLET_SPEED
                 e.fire_rate_mult *= HEROIC_FIRE_RATE
-            target = min(alive, key=lambda p: p.pos.distance_to(e.pos))
+            exposed = [p for p in alive if not getattr(p, "sheltered", False)]
+            target = min(exposed or alive, key=lambda p: p.pos.distance_to(e.pos))
             if not self.is_bonus_room and target.pos.distance_to(e.pos) > ACTIVE_SIM_RADIUS:
                 continue  # dormant - too far from every player to be worth simulating this tick
+            if not exposed:
+                # everyone nearby is behind a shut door: they're invisible - drop the hunt
+                e.aggro = False
+                e.update(dt, e.pos + pygame.Vector2(99999, 0), self.bullets, tile_map=self.enemy_view)
+                self._drain_enemy_attack_outputs(e)
+                continue
             # passing `self` (not self.realm_map) so an enemy's sight/fire/movement
             # collision ALSO respects live destructible obstacles, not just real wall
             # tiles - see is_solid()/has_line_of_sight() below, which duck-type the
             # same interface Enemy._move()/update() already expect from a TileMap
-            e.update(dt, target.pos, self.bullets, tile_map=self)
+            e.update(dt, target.pos, self.bullets, tile_map=self.enemy_view)
             self._drain_enemy_attack_outputs(e)
             if e.alive and e.bleed_time > 0:
                 tick_dmg = e.bleed_dps * dt
@@ -1470,6 +1570,8 @@ class RealmSim:
         self._resolve_pending_ability_effects(dt)
         self._update_bullets(dt, alive)
         self._tick_enemy_zones(dt, alive)
+        self._update_shelter(dt, alive)
+        self._tick_night_creatures(dt, alive)
         self._gate_islands(dt, alive)
         self._tick_mg_room(dt)
         for p in alive:
@@ -1811,6 +1913,166 @@ class RealmSim:
                 continue
             for msg, color in progress.on_event(kind, key):
                 self.events.append((p.pid, msg, color))
+
+    FIREFLY_GROUNDS = None  # set lazily: forest / swamp / jungle ground tiles
+    FIREFLIES_PER_PLAYER = 5
+
+    def _tick_night_creatures(self, dt, alive):
+        """Night-only creatures: firefly swarms drift into the forest, swamp and jungle around
+        every player at night and fade away at dawn (and anything else flagged night_only)."""
+        if self.is_bonus_room:
+            return
+        if not self.is_night:
+            gone = [e for e in self.enemies if ENEMY_KINDS.get(e.kind, {}).get("night_only")]
+            for e in gone:
+                e.alive = False
+                self.vfx_events.append(("death", e.pos.x, e.pos.y, (200, 230, 150)))
+            if gone:
+                self.enemies = [e for e in self.enemies if e.alive]
+            return
+        self._night_cd = getattr(self, "_night_cd", 0.0) - dt
+        if self._night_cd > 0:
+            return
+        self._night_cd = 2.0
+        if RealmSim.FIREFLY_GROUNDS is None:
+            RealmSim.FIREFLY_GROUNDS = {world.GRASS, world.SWAMP, world.JUNGLE}
+        for p in alive:
+            near = sum(1 for e in self.enemies if e.kind == "fireflies" and e.pos.distance_to(p.pos) < 900)
+            if near >= self.FIREFLIES_PER_PLAYER:
+                continue
+            pos = self._find_spawn_pos_near(p.pos, min_tiles=6, max_tiles=22)
+            if pos is None or self.realm_map.tile_at(pos.x, pos.y) not in RealmSim.FIREFLY_GROUNDS:
+                continue
+            ff = Enemy("fireflies", pos)
+            ff.home_pos = pygame.Vector2(pos)
+            self.enemies.append(ff)
+
+    def light_sources_near(self, pos, radius_tiles=16):
+        """[(x, y, r, colour)] world-space lights near `pos`: lit props plus glowing creatures."""
+        from game.entities import GLOWING_KINDS
+        out = world.nearby_lights(self.realm_map, pos.x, pos.y, radius_tiles,
+                                  lit=not getattr(self, "lanterns_out", False))
+        reach2 = (radius_tiles * TILE) ** 2
+        for e in self.enemies:
+            g = GLOWING_KINDS.get(e.kind)
+            if g and e.alive and e.pos.distance_squared_to(pos) <= reach2:
+                out.append((e.pos.x, e.pos.y, g[0], g[1]))
+        return out
+
+    # ---------------------------------------------------------- safe houses --
+    SHACKS_PER_BIOME = 2
+    SHACK_W, SHACK_H = 8, 6
+    DOOR_REACH = 1.8 * TILE
+
+    def _add_safe_house(self, interior, doors, label):
+        if not hasattr(self, "safe_houses"):
+            self.safe_houses, self._interior_owner = [], {}
+        house = {"interior": set(interior), "doors": list(doors), "label": label}
+        idx = len(self.safe_houses)
+        self.safe_houses.append(house)
+        for t in interior:
+            self._interior_owner[t] = idx
+        for t in doors:
+            self._interior_owner.setdefault(("door",) + tuple(t), idx)
+
+    def _stamp_wayside_shacks(self, placed_rects):
+        """A few small doored shacks out in every biome, so a shelter is never far at night."""
+        if not hasattr(self, "safe_houses"):
+            self.safe_houses, self._interior_owner = [], {}
+        grid = self.realm_map.grid
+        y0, y1, x0, x1 = self._continent_bounds()
+        rng = random.Random(len(grid) * 7 + 3)
+        walls = world.BUILDING_WALL_TILE
+        by_biome = {}
+        for _try in range(1400):
+            tx, ty = rng.randint(x0 + 4, x1 - self.SHACK_W - 4), rng.randint(y0 + 4, y1 - self.SHACK_H - 4)
+            ground = grid[ty][tx]
+            biome = world.TILE_TO_BIOME_NAME.get(ground)
+            if biome is None or by_biome.get(biome, 0) >= self.SHACKS_PER_BIOME:
+                continue
+            rect = pygame.Rect(tx, ty, self.SHACK_W, self.SHACK_H)
+            if any(rect.inflate(12, 12).colliderect(r) for r in placed_rects):
+                continue
+            if any(grid[y][x] == world.WATER or grid[y][x] in world.SOLID or grid[y][x] in world.DOOR_TILES
+                   for y in range(ty - 1, ty + self.SHACK_H + 2) for x in range(tx - 1, tx + self.SHACK_W + 1)):
+                continue
+            wall = walls.get(biome, next(iter(walls.values())))
+            interior = []
+            for y in range(ty, ty + self.SHACK_H):
+                for x in range(tx, tx + self.SHACK_W):
+                    border = x in (tx, tx + self.SHACK_W - 1) or y in (ty, ty + self.SHACK_H - 1)
+                    grid[y][x] = wall if border else world.AREA_PLANK
+                    if not border:
+                        interior.append((x, y))
+            mx = tx + self.SHACK_W // 2
+            doors = [(mx - 1, ty + self.SHACK_H - 1), (mx, ty + self.SHACK_H - 1)]
+            for (x, y) in doors:
+                grid[y][x] = world.DOOR_OPEN
+            world.clear_blockers(grid, rect, margin=3)
+            placed_rects.append(rect)
+            by_biome[biome] = by_biome.get(biome, 0) + 1
+            self._add_safe_house(interior, doors, "a wayside shack")
+            keep_out = rect.inflate(20, 20)
+            self.lairs = [l for l in self.lairs
+                          if not keep_out.collidepoint(int(l["pos"].x // TILE), int(l["pos"].y // TILE))]
+
+    def door_near(self, pos):
+        """The house whose door the player at `pos` is next to (or None)."""
+        tx, ty = int(pos.x // TILE), int(pos.y // TILE)
+        best, bd = None, self.DOOR_REACH
+        for house in getattr(self, "safe_houses", ()):
+            for (dx, dy) in house["doors"]:
+                d = pygame.Vector2((dx + 0.5) * TILE, (dy + 0.5) * TILE).distance_to(pos)
+                if d <= bd and abs(dx - tx) <= 3 and abs(dy - ty) <= 3:
+                    best, bd = house, d
+        return best
+
+    def toggle_door_near(self, player):
+        """F next to a house door: open or close it (any player can). Refused while
+        someone is standing in the doorway."""
+        house = self.door_near(player.pos)
+        if house is None:
+            return False
+        grid = self.realm_map.grid
+        closing = any(grid[y][x] == world.DOOR_OPEN for (x, y) in house["doors"])
+        if closing:
+            for q in self._story_players or [player]:
+                if (int(q.pos.x // TILE), int(q.pos.y // TILE)) in set(map(tuple, house["doors"])):
+                    self.events.append((player.pid, "Someone's standing in the doorway.", (220, 170, 120)))
+                    return True
+        for (x, y) in house["doors"]:
+            grid[y][x] = world.DOOR_CLOSED if closing else world.DOOR_OPEN
+        self.doors_version = getattr(self, "doors_version", 0) + 1
+        dx, dy = house["doors"][0]
+        self.sound_events.append(("sfx", "door_close" if closing else "door_open", (dx + 0.5) * TILE, (dy + 0.5) * TILE))
+        return True
+
+    def door_states(self):
+        """[[tx, ty, open], ...] for every house door - co-op clients patch their tilemap with it."""
+        grid = self.realm_map.grid
+        return [[x, y, 1 if grid[y][x] == world.DOOR_OPEN else 0]
+                for h in getattr(self, "safe_houses", ()) for (x, y) in h["doors"]]
+
+    def is_sheltered(self, p):
+        """Inside a house whose doors are all shut: mobs can't see or reach this player."""
+        owner = getattr(self, "_interior_owner", None)
+        if not owner:
+            return False
+        idx = owner.get((int(p.pos.x // TILE), int(p.pos.y // TILE)))
+        if idx is None:
+            return False
+        grid = self.realm_map.grid
+        return all(grid[y][x] == world.DOOR_CLOSED for (x, y) in self.safe_houses[idx]["doors"])
+
+    def _update_shelter(self, dt, alive):
+        for p in alive:
+            was = getattr(p, "sheltered", False)
+            p.sheltered = self.is_sheltered(p)
+            if p.sheltered:
+                p.hp = min(p.hp_max, p.hp + p.hp_max * 0.04 * dt)  # rest up by the fire
+                if not was:
+                    self.events.append((p.pid, "Safe. The door is shut - nothing out there can see you.",
+                                        (190, 230, 170)))
 
     def _gate_islands(self, dt, alive):
         """The big islands are level-20 content: a lower-level player can walk the plank

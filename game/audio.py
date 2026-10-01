@@ -642,6 +642,14 @@ EVENT_SOUND = {
     "second_wind": [(0.0, 330, 660, 0.35, "sine", 0.12, "linear", 0),
                     (0.3, 660, 990, 0.5, "sine", 0.1, "exp_decay", 4),
                     (0.0, 0, 0, 0.4, "noise", 0.04, "exp_decay", 6)],
+    # night-horror update: an old wooden door creaking open / thudding shut (and the bolt)
+    "door_open": [(0.0, 180, 260, 0.35, "triangle", 0.08, "linear", 0),
+                  (0.05, 0, 0, 0.3, "noise", 0.03, "exp_decay", 6),
+                  (0.2, 300, 240, 0.25, "sine", 0.04, "exp_decay", 8)],
+    "door_close": [(0.0, 260, 170, 0.2, "triangle", 0.07, "linear", 0),
+                   (0.18, 80, 50, 0.18, "square", 0.12, "exp_decay", 18),
+                   (0.18, 0, 0, 0.08, "noise", 0.12, "exp_decay", 40),
+                   (0.34, 900, 860, 0.06, "square", 0.05, "exp_decay", 40)],
     # a heroic trial / island "calmed" / quest completion sting
     "trial_done": [(0.0, 392, 392, 0.15, "triangle", 0.1, "exp_decay", 10),
                    (0.12, 523, 523, 0.15, "triangle", 0.1, "exp_decay", 10),

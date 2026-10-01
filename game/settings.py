@@ -31,6 +31,7 @@ DEFAULTS = {
     "show_fps": True,
     "auto_fire": False,
     "fullscreen": False,
+    "luminosity": 0.5,  # night darkness: 0 = pitch black outside lights, 0.5 = default horror dark, 1 = ~clear
     "panel_offsets": {},  # dragged chat / quest-log positions, see ui.PANEL_OFFSETS
 }
 

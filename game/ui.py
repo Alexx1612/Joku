@@ -822,7 +822,7 @@ def draw_name_entry(surf, buffer, elapsed=0.0, fade_in=NAME_ENTRY_FADE_IN):
         surf.blit(overlay, (0, 0))
 
 
-PLAYER_LIGHT_RADIUS = 130
+PLAYER_LIGHT_RADIUS = 175  # night-horror update: a little bigger than the old 130 - and darker outside
 _LIGHT_SPRITE_CACHE = {}
 
 
@@ -841,7 +841,8 @@ def _get_light_sprite(radius):
     sprite = pygame.Surface((size, size), pygame.SRCALPHA)
     center = (radius, radius)
     for r in range(radius, 0, -1):
-        alpha = int(255 * (1.0 - r / radius))
+        # a soft shoulder: fully lit near the middle, fading smoothly to dark at the edge
+        alpha = int(255 * (1.0 - r / radius) ** 0.6)
         pygame.draw.circle(sprite, (0, 0, 0, alpha), center, r)
     _LIGHT_SPRITE_CACHE[radius] = sprite
     return sprite
@@ -850,7 +851,21 @@ def _get_light_sprite(radius):
 TORCH_LIGHT_RADIUS = 70
 
 
-def draw_day_night_overlay(surf, light_level, blood_moon=False, torch_screen_positions=None):
+NIGHT_DARKNESS_MIN_LUMINOSITY_FACTOR = 0.85  # luminosity 1.0 still leaves ~15% darkness
+
+
+def night_darkness_alpha(luminosity):
+    """Darkness (0-255) at full night for a Luminosity setting (0..1): 0 -> pitch black,
+    0.5 (default) -> ~79% black, 1 -> ~15%."""
+    lum = max(0.0, min(1.0, float(luminosity)))
+    return int(255 * (1.0 - NIGHT_DARKNESS_MIN_LUMINOSITY_FACTOR * lum * lum))
+
+
+_OVERLAY_CACHE = {}
+
+
+def draw_day_night_overlay(surf, light_level, blood_moon=False, torch_screen_positions=None,
+                           luminosity=0.5, player_screen=None, lights=()):
     """A translucent full-screen tint - deep blue at night, tinted red during a
     Blood Moon, nothing at high noon - with a soft lightmap cutout around the
     player's own position so standing still doesn't plunge you into total
@@ -870,19 +885,25 @@ def draw_day_night_overlay(surf, light_level, blood_moon=False, torch_screen_pos
     dark = 1.0 - light_level
     if dark <= 0.02:
         return
-    alpha = int(150 * dark)
-    tint = (120, 20, 20) if blood_moon else (10, 15, 45)
-    overlay = pygame.Surface((C.SCREEN_W, C.SCREEN_H), pygame.SRCALPHA)
+    alpha = int(night_darkness_alpha(luminosity) * dark)
+    tint = (60, 4, 8) if blood_moon else (4, 6, 18)
+    size = surf.get_size()
+    overlay = _OVERLAY_CACHE.get(size)
+    if overlay is None:
+        overlay = _OVERLAY_CACHE[size] = pygame.Surface(size, pygame.SRCALPHA)
     overlay.fill((*tint, alpha))
+    px, py = player_screen if player_screen is not None else (size[0] // 2, size[1] // 2)
     light = _get_light_sprite(PLAYER_LIGHT_RADIUS)
-    lx = C.SCREEN_W // 2 - PLAYER_LIGHT_RADIUS
-    ly = C.SCREEN_H // 2 - PLAYER_LIGHT_RADIUS
-    overlay.blit(light, (lx, ly), special_flags=pygame.BLEND_RGBA_SUB)
+    overlay.blit(light, (int(px) - PLAYER_LIGHT_RADIUS, int(py) - PLAYER_LIGHT_RADIUS),
+                 special_flags=pygame.BLEND_RGBA_SUB)
     if torch_screen_positions:
         torch_light = _get_light_sprite(TORCH_LIGHT_RADIUS)
         for tx, ty in torch_screen_positions:
             overlay.blit(torch_light, (tx - TORCH_LIGHT_RADIUS, ty - TORCH_LIGHT_RADIUS),
                          special_flags=pygame.BLEND_RGBA_SUB)
+    for (lx, ly, lr, _color) in lights:  # other light sources (Step 2): props, glowing creatures
+        lr = max(8, int(lr))
+        overlay.blit(_get_light_sprite(lr), (int(lx) - lr, int(ly) - lr), special_flags=pygame.BLEND_RGBA_SUB)
     surf.blit(overlay, (0, 0))
 
 
@@ -912,7 +933,137 @@ def day_night_clock_rect():
     return pygame.Rect(x, SCREEN_EDGE_MARGIN + 6, DAY_NIGHT_CLOCK_W, DAY_NIGHT_CLOCK_H)
 
 
-def draw_day_night_clock(surf, light_level, blood_moon=False):
+_GLOW_CACHE = {}
+
+
+def _glow_sprite(radius, color):
+    key = (radius, color)
+    spr = _GLOW_CACHE.get(key)
+    if spr is None:
+        spr = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+        for r in range(radius, 0, -2):
+            f = (1.0 - r / radius) ** 1.6
+            pygame.draw.circle(spr, (int(color[0] * f), int(color[1] * f), int(color[2] * f)), (radius, radius), r)
+        _GLOW_CACHE[key] = spr
+    return spr
+
+
+def draw_light_glows(surf, lights, light_level):
+    """After the darkness: each light's own warm/cold colour, added on top (amber lamps,
+    green-gold fireflies...), and a bright core so a light source is visible from far
+    away in the dark. Flickers gently. lights: [(screen_x, screen_y, r, colour)]."""
+    dark = 1.0 - light_level
+    if dark <= 0.05 or not lights:
+        return
+    t = pygame.time.get_ticks() / 1000.0
+    for (x, y, r, col) in lights:
+        flick = 1.0 + 0.05 * math.sin(t * 7.3 + x * 0.05) + 0.03 * math.sin(t * 13.1 + y * 0.07)
+        rr = max(6, int(r * 0.55 * flick))
+        sc = tuple(int(c * 0.45 * dark) for c in col)
+        surf.blit(_glow_sprite(rr, sc), (int(x) - rr, int(y) - rr), special_flags=pygame.BLEND_ADD)
+        core = max(3, rr // 8)
+        surf.blit(_glow_sprite(core, tuple(min(255, int(c * dark)) for c in col)),
+                  (int(x) - core, int(y) - core), special_flags=pygame.BLEND_ADD)
+
+
+_DAY_SEGMENTS = None
+
+
+def _cycle_colors(blood):
+    night = (120, 18, 26) if blood else (28, 34, 92)
+    return {"day": (236, 196, 84), "dusk": (214, 110, 50), "night": night, "dawn": (200, 130, 120)}
+
+
+def _fmt_left(secs):
+    secs = max(0, int(round(secs)))
+    return f"{secs // 60}:{secs % 60:02d}"
+
+
+def draw_day_night_clock(surf, light_level, blood_moon=False, clock=None):
+    """The time bar: a thick segmented strip of the whole cycle (gold day, orange dusk,
+    navy - or crimson on a Blood Moon - night, rose dawn) with a big sun/moon riding a
+    "now" needle, and a large phase label + countdown ("NIGHT FALLS IN 0:42"). `clock`
+    is RealmSim.clock_info(); without it this falls back to the old light-level view."""
+    if clock is None:
+        return _draw_day_night_clock_legacy(surf, light_level, blood_moon)
+    from game import realm_sim as _rs
+    rect = day_night_clock_rect()
+    blood = clock.get("blood", blood_moon)
+    panel, _ = _ornate_panel(rect.w, rect.h, border=CHROME_GOLD if not blood else (190, 50, 50))
+    x0, x1, y0, h = 12, rect.w - 12, 33, 12
+    span = x1 - x0
+    cols = _cycle_colors(blood)
+    bounds = [(0.0, _rs.DUSK_START, "day"), (_rs.DUSK_START, _rs.NIGHT_START, "dusk"),
+              (_rs.NIGHT_START, _rs.NIGHT_END, "night"), (_rs.NIGHT_END, _rs.DAWN_END, "dawn"),
+              (_rs.DAWN_END, _rs.DAY_LENGTH, "day")]
+    for a, b, name in bounds:
+        xa = x0 + int(span * a / _rs.DAY_LENGTH)
+        xb = x0 + int(span * b / _rs.DAY_LENGTH)
+        pygame.draw.rect(panel, cols[name], (xa, y0, max(1, xb - xa), h))
+    pygame.draw.rect(panel, (12, 12, 16), (x0 - 1, y0 - 1, span + 2, h + 2), 1)
+    nx = x0 + int(span * clock["frac"])
+    night_side = clock["phase"] in ("night", "dusk") and clock.get("night")
+    pygame.draw.line(panel, (255, 255, 255), (nx, y0 - 3), (nx, y0 + h + 2), 2)
+    if night_side or clock["phase"] == "night":
+        mc = (235, 70, 70) if blood else (220, 226, 245)
+        pygame.draw.circle(panel, mc, (nx, y0 + h // 2), 9)
+        pygame.draw.circle(panel, cols["night"], (nx + 4, y0 + h // 2 - 3), 7)
+    else:
+        pygame.draw.circle(panel, (255, 220, 100), (nx, y0 + h // 2), 8)
+        for i in range(8):
+            ang = i * math.pi / 4
+            pygame.draw.line(panel, (255, 220, 100), (nx + math.cos(ang) * 10, y0 + h // 2 + math.sin(ang) * 10),
+                             (nx + math.cos(ang) * 13, y0 + h // 2 + math.sin(ang) * 13), 2)
+    if clock["until"] == "night":
+        label = f"NIGHT FALLS IN {_fmt_left(clock['left'])}"
+        warn = clock["left"] <= 30
+        color = (255, 120, 90) if warn and (pygame.time.get_ticks() // 300) % 2 == 0 else (250, 236, 190)
+    else:
+        label = ("BLOOD MOON - DAWN IN " if blood else "NIGHT - DAWN IN ") + _fmt_left(clock["left"])
+        color = (255, 120, 120) if blood else (190, 205, 255)
+    txt = _FONT_M.render(label, True, color)
+    if txt.get_width() > rect.w - 12:
+        txt = _FONT_S.render(label, True, color)
+    panel.blit(txt, (rect.w // 2 - txt.get_width() // 2, y0 + h + 6))
+    surf.blit(panel, (rect.x, rect.y))
+    _HEADER_PANEL_DRAWN[0] = True
+
+
+def draw_sheltered_badge(surf):
+    """"SAFE - Sheltered": shown while you're inside a house with its doors shut."""
+    t = _FONT_M.render("SAFE  -  Sheltered", True, (200, 245, 180))
+    box = pygame.Surface((t.get_width() + 16, t.get_height() + 6), pygame.SRCALPHA)
+    box.fill((10, 30, 14, 190))
+    pygame.draw.rect(box, (140, 220, 130, 220), box.get_rect(), 1)
+    box.blit(t, (8, 3))
+    play_w = _panel_block_x0() - 12
+    surf.blit(box, (play_w // 2 - box.get_width() // 2, C.SCREEN_H - 64))
+
+
+def draw_night_countdown(surf, clock):
+    """A compact, centred banner at the top of the screen during dusk / night / a Blood
+    Moon (and the last 30 s of day) - so the countdown is visible without looking at the dock."""
+    if not clock:
+        return
+    if clock["until"] == "night" and clock["left"] > 30:
+        return
+    blood = clock.get("blood")
+    if clock["until"] == "night":
+        text, col = f"Night falls in {_fmt_left(clock['left'])}", (255, 170, 110)
+    else:
+        text = ("BLOOD MOON" if blood else "Night") + f"  -  dawn in {_fmt_left(clock['left'])}"
+        col = (255, 110, 110) if blood else (190, 205, 255)
+    t = _FONT_M.render(text, True, col)
+    pad = 8
+    box = pygame.Surface((t.get_width() + pad * 2, t.get_height() + 6), pygame.SRCALPHA)
+    box.fill((8, 8, 14, 170))
+    pygame.draw.rect(box, (*col, 200), box.get_rect(), 1)
+    box.blit(t, (pad, 3))
+    play_w = _panel_block_x0() - 12  # centred over the play area (left of the dock)
+    surf.blit(box, (play_w // 2 - box.get_width() // 2, 6))
+
+
+def _draw_day_night_clock_legacy(surf, light_level, blood_moon=False):
     """Sun fixed on the left (noon), moon fixed on the right (midnight), a
     marker sliding smoothly between them as light_level falls/rises - not a
     literal 24h clock hand, but a direct, honest visualization of the exact

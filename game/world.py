@@ -262,6 +262,53 @@ SOLID.update(tid for (_dp_theme, _dp_kind), tid in DUNGEON_PROP_TILE.items()
 TORCH_TILE_IDS = {tid for (_dp_theme, _dp_kind), tid in DUNGEON_PROP_TILE.items() if _dp_kind == "torch"}
 
 
+# night-horror update: props that really light the dark - kind -> (radius px, colour, y-offset px)
+LIGHT_PROP_KINDS = {
+    "torch": (95, (255, 170, 80), -6),
+    "lamp_post": (150, (255, 196, 110), -60),
+    "campfire": (175, (255, 140, 60), -8),
+    "furnace": (125, (255, 120, 50), -20),
+    "brazier": (130, (255, 160, 70), -26),
+    "lantern_glow": (110, (255, 210, 130), 0),
+}
+LIGHT_TILE_INFO = {}  # tile id -> (radius, colour, y-offset)
+
+
+def _build_light_tiles():
+    for tid in TORCH_TILE_IDS:
+        LIGHT_TILE_INFO[tid] = LIGHT_PROP_KINDS["torch"]
+    for tid, kind in BIG_PROP_KIND_BY_ID.items():
+        if kind in LIGHT_PROP_KINDS:
+            LIGHT_TILE_INFO[tid] = LIGHT_PROP_KINDS[kind]
+    for tid, kind in TALL_PROP_KIND_BY_ID.items():
+        if kind in LIGHT_PROP_KINDS:
+            LIGHT_TILE_INFO[tid] = LIGHT_PROP_KINDS[kind]
+    for kind, tid in globals().get("NEXUS_PROP_TILE", {}).items():
+        if kind in LIGHT_PROP_KINDS:
+            LIGHT_TILE_INFO[tid] = LIGHT_PROP_KINDS[kind]
+
+
+def nearby_lights(tile_map, center_x, center_y, radius_tiles=16, lit=True):
+    """[(world_x, world_y, radius, colour)] for every light-giving prop within
+    radius_tiles - a bounded scan, cheap enough per frame. lit=False (the "Lanterns
+    Go Out" night event) returns nothing."""
+    if not lit:
+        return []
+    if not LIGHT_TILE_INFO:
+        _build_light_tiles()
+    cx, cy = int(center_x // C.TILE), int(center_y // C.TILE)
+    out = []
+    grid = tile_map.grid
+    for gy in range(max(0, cy - radius_tiles), min(tile_map.h, cy + radius_tiles + 1)):
+        row = grid[gy]
+        for gx in range(max(0, cx - radius_tiles), min(tile_map.w, cx + radius_tiles + 1)):
+            info = LIGHT_TILE_INFO.get(row[gx])
+            if info is not None:
+                r, col, oy = info
+                out.append(((gx + 0.5) * C.TILE, (gy + 0.5) * C.TILE + oy, r, col))
+    return out
+
+
 def nearby_torch_world_positions(tile_map, center_x, center_y, radius_tiles=6):
     """World-space (x, y) centers of every torch tile within radius_tiles of
     (center_x, center_y) - a small bounded scan (not the whole map), safe to
@@ -388,6 +435,13 @@ BUILDING_WALL_TILE_IDS = set(BUILDING_WALL_TILE.values())
 # Area floor tiles for the big named areas (stamp_area) - walkable, not a biome
 AREA_COBBLE, AREA_PLANK, AREA_FROZEN = 1600, 1601, 1602
 TILE_COLORS.update({AREA_COBBLE: (132, 124, 112), AREA_PLANK: (128, 92, 58), AREA_FROZEN: (178, 214, 232)})
+# night-horror update: house doors. Any player opens/closes them (F); a CLOSED door is a wall
+# for everything; an OPEN one is walkable for players only - mobs never use doors (see
+# RealmSim.enemy_view), so a house with its doors shut is a safe house.
+DOOR_CLOSED, DOOR_OPEN = 2600, 2601
+DOOR_TILES = (DOOR_CLOSED, DOOR_OPEN)
+TILE_COLORS.update({DOOR_CLOSED: (96, 64, 36), DOOR_OPEN: (60, 44, 30)})
+SOLID.add(DOOR_CLOSED)
 SPEED_MULT[AREA_FROZEN] = 0.9
 
 # Multi-tile props (game/big_props.py): one ANCHOR tile id per (base ground, kind) -
@@ -3170,6 +3224,46 @@ def _draw_archway_tile(surf, cx, cy, kind_color, t_ms):
     pygame.draw.ellipse(surf, core, (cx - r + pad, top + pad, r * 2 - pad * 2, pillar_h - pad * 2))
 
 
+_DOOR_TEX = {}
+
+
+def _door_tile(is_open, horizontal):
+    """A wooden plank door with iron bands and a ring handle (closed), or the dark doorway
+    with the door swung against the frame (open). Procedural, cached per state/orientation."""
+    key = (is_open, horizontal)
+    if key in _DOOR_TEX:
+        return _DOOR_TEX[key]
+    T = C.TILE
+    s = pygame.Surface((T, T))
+    s.fill((112, 82, 52))                                   # threshold planks
+    if is_open:
+        pygame.draw.rect(s, (40, 30, 22), (3, 3, T - 6, T - 6))          # the dark doorway
+        if horizontal:
+            pygame.draw.rect(s, (130, 92, 54), (0, 0, 6, T))             # door leaf swung against the frame
+            pygame.draw.line(s, (60, 60, 66), (1, 6), (5, 6), 2)
+            pygame.draw.line(s, (60, 60, 66), (1, T - 7), (5, T - 7), 2)
+        else:
+            pygame.draw.rect(s, (130, 92, 54), (0, 0, T, 6))
+            pygame.draw.line(s, (60, 60, 66), (6, 1), (6, 5), 2)
+            pygame.draw.line(s, (60, 60, 66), (T - 7, 1), (T - 7, 5), 2)
+    else:
+        s.fill((122, 84, 48))
+        for i in range(0, T, 8):                                         # plank seams
+            if horizontal:
+                pygame.draw.line(s, (84, 56, 30), (i, 0), (i, T), 1)
+            else:
+                pygame.draw.line(s, (84, 56, 30), (0, i), (T, i), 1)
+        for b in (7, T - 9):                                             # iron bands
+            if horizontal:
+                pygame.draw.rect(s, (70, 70, 78), (0, b, T, 3))
+            else:
+                pygame.draw.rect(s, (70, 70, 78), (b, 0, 3, T))
+        pygame.draw.circle(s, (210, 180, 90), (T // 2, T // 2), 3, 1)   # ring handle
+        pygame.draw.rect(s, (230, 190, 90), s.get_rect(), 1)             # building-gold edge
+    _DOOR_TEX[key] = s
+    return s
+
+
 class TileMap:
     def __init__(self, grid):
         self.grid = grid
@@ -3304,6 +3398,12 @@ class TileMap:
                     pygame.draw.circle(surf, _tint(color, 60), (px + C.TILE // 2, py + C.TILE // 2), ring_r, 2)
                     cw, ch = _CHEST_SPRITE.get_size()
                     surf.blit(_CHEST_SPRITE, (px + C.TILE // 2 - cw // 2, py + C.TILE - ch + 4))
+                elif t in DOOR_TILES:
+                    horizontal = (0 < tx < self.w - 1 and
+                                  (self.grid[ty][tx - 1] in SOLID or self.grid[ty][tx + 1] in SOLID
+                                   or self.grid[ty][tx - 1] in DOOR_TILES or self.grid[ty][tx + 1] in DOOR_TILES))
+                    surf.blit(_door_tile(t == DOOR_OPEN, horizontal), (px, py))
+                    continue
                 elif t in (VAULT_TILE, BAZAAR_PORTAL):
                     # Same "dungeon door" archway look every entities.Portal now
                     # uses (see entities.Portal._draw_archway) - neither of these

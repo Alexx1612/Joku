@@ -63,6 +63,7 @@ class _Builder:
         self.inside = set()
         self.reserved = set()   # tiles a later prop must not cover (paths, doors, spots)
         self.road = set()       # path tiles only - gates in a fence ring line up with these
+        self.houses = []        # night-horror safe houses: {"interior": [(x, y)], "doors": [(x, y)]}
 
     def ok(self, x, y):
         return 1 <= x < self.w - 1 and 1 <= y < self.h - 1
@@ -150,12 +151,17 @@ class _Builder:
                  "E": [(x0 + w - 1, my - 1), (x0 + w - 1, my)], "W": [(x0, my - 1), (x0, my)]}[door]
         step = {"S": (0, 1), "N": (0, -1), "E": (1, 0), "W": (-1, 0)}[door]
         for (x, y) in doors:
-            self.set(x, y, floor)
+            self.set(x, y, world.DOOR_OPEN)  # a real door now (open by day) - see world.DOOR_TILES
             for k in range(1, 3):  # keep the doorstep open
                 xx, yy = x + step[0] * k, y + step[1] * k
                 if (xx, yy) in self.inside and self.grid[yy][xx] in world.SOLID:
                     self.set(xx, yy, self.ground)
                 self.reserved.add((xx, yy))
+        interior = [(x, y) for y in range(y0 + 1, y0 + h - 1) for x in range(x0 + 1, x0 + w - 1)
+                    if self.ok(x, y) and (x, y) in self.inside]
+        door_tiles = [(x, y) for (x, y) in doors if self.ok(x, y)]
+        if interior and door_tiles:
+            self.houses.append({"interior": interior, "doors": door_tiles})
         return (mx - self.cx, my - self.cy)
 
     def biome_name(self):
@@ -423,7 +429,11 @@ def stamp_area(grid, key, rect, biome, rng=None):
     b = _Builder(grid, key, rect, ground, rng)
     LAYOUTS[key](b)
     world.clear_blockers(grid, rect, margin=3, floor_tile=world.DIRT)
+    LAST_HOUSES[:] = b.houses
     return b.spots
+
+
+LAST_HOUSES = []  # the houses (with doors) the last stamp_area built - read by place_realm_areas
 
 
 # --------------------------------------------------------------- placement
@@ -501,7 +511,8 @@ def place_realm_areas(sim, placed_rects, rng=None):
         _score_v, rect, b = best
         spots = stamp_area(grid, key, rect, b, rng)
         placed_rects.append(rect)
-        out.append(dict(key=key, name=d["name"], biome=b, rect=rect, spots=spots, lore=d["lore"]))
+        out.append(dict(key=key, name=d["name"], biome=b, rect=rect, spots=spots, lore=d["lore"],
+                        houses=[dict(h) for h in LAST_HOUSES]))
     return out
 
 

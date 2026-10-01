@@ -1249,6 +1249,8 @@ class Game:
         sim = self.realm_sim if self.state == STATE_REALM else self.bonus_sim if self.state == STATE_BONUS else None
         if sim is None:
             return
+        if sim.toggle_door_near(self.player):
+            return
         if sim.open_island_chest(self.player):
             audio.play_pickup()
             return
@@ -1997,7 +1999,17 @@ class Game:
         ui.draw_damage_popups(s, self.cam, self.popups)
         torch_positions = [self.cam(pos) for pos in
                            world.nearby_torch_world_positions(sim.realm_map, self.player.pos.x, self.player.pos.y)]
-        ui.draw_day_night_overlay(s, sim.light_level, sim.blood_moon_active, torch_positions)
+        lights = []
+        if sim.light_level < 0.98:
+            for (lx, ly, lr, lc) in sim.light_sources_near(self.player.pos):
+                sx, sy = self.cam((lx, ly))
+                lights.append((sx, sy, lr, lc))
+        ui.draw_day_night_overlay(s, sim.light_level, sim.blood_moon_active, torch_positions,
+                                  luminosity=settings.get("luminosity"), player_screen=self.cam(self.player.pos),
+                                  lights=lights)
+        ui.draw_light_glows(s, lights, sim.light_level)
+        if getattr(self.player, "sheltered", False):
+            ui.draw_sheltered_badge(s)
         if getattr(sim, "is_heroic", False):
             vfx.draw_heroic_tint(s)
         elif getattr(sim, "is_mg_room", False):
@@ -2005,7 +2017,9 @@ class Game:
         self.weather_fx.draw(s)
         ui.draw_dock_frame(s, self.player)
         if not sim.is_bonus_room:
-            ui.draw_day_night_clock(s, sim.light_level, sim.blood_moon_active)
+            clock = sim.clock_info()
+            ui.draw_day_night_clock(s, sim.light_level, sim.blood_moon_active, clock=clock)
+            ui.draw_night_countdown(s, clock)
         elif extra_hint:
             ui.draw_dungeon_header(s, extra_hint)
         ui.draw_hud(s, name, sim.kill_count, sim.boss is not None)

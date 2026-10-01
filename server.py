@@ -921,6 +921,8 @@ def _apply_action(state, s, action):
         sim = state.realm_sim if s.zone == ZONE_REALM else state.bonus_sims.get(s.bonus_sim_id)
         if _try_talk(state, s):
             pass
+        elif sim is not None and sim.toggle_door_near(p):
+            pass
         elif sim is not None and sim.open_island_chest(p):
             pass
         elif sim is not None:
@@ -1120,6 +1122,9 @@ def _snapshot_core(state, s):
         "phase2_quest_progress": sim.phase2_quest_progress if s.zone == ZONE_BONUS else 0,
         "phase2_quest_target": sim._phase2_quest_target if s.zone == ZONE_BONUS else 0,
         "light_level": sim.light_level, "blood_moon": sim.blood_moon_active,
+        "clock": sim.clock_info() if s.zone == ZONE_REALM else None,
+        "doors": sim.door_states() if s.zone == ZONE_REALM else None,
+        "sheltered": bool(getattr(s.player, "sheltered", False)),
         "chats": chats,
         "trade": trade_info,
         "trade_invite": _trade_invite_for(state, s),

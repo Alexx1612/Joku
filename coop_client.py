@@ -425,6 +425,7 @@ class CoopClient:
         self.theme_name = None
         self.zone_tracker = zone_banner.ZoneTracker()  # zone-entry title cards + per-place music
         self.light_level = 1.0
+        self.clock_info = None  # RealmSim.clock_info() from the server (the time bar)
         self.blood_moon = False
         self.weather_fx = weather.WeatherFX()
         self.realm_ambience = vfx.AmbientEvents([])  # open-Realm ambient flavor, client-side/cosmetic
@@ -1771,6 +1772,13 @@ class CoopClient:
             self.phase2_quest_progress = snap.get("phase2_quest_progress", 0)
             self.phase2_quest_target = snap.get("phase2_quest_target", 0)
             self.light_level = snap.get("light_level", 1.0)
+            self.clock_info = snap.get("clock")
+            self.sheltered = snap.get("sheltered", False)
+            if snap.get("doors") and self.tilemap is not None:
+                g = self.tilemap.grid
+                for x, y, is_open in snap["doors"]:
+                    if 0 <= y < len(g) and 0 <= x < len(g[0]):
+                        g[y][x] = world.DOOR_OPEN if is_open else world.DOOR_CLOSED
             self.blood_moon = snap.get("blood_moon", False)
             if self.boss_active and not self._prev_boss_active:
                 audio.play_boss_spawn()
@@ -2153,7 +2161,24 @@ class CoopClient:
         ui.draw_damage_popups(s, self.cam, self.popups)
         torch_positions = [self.cam(pos) for pos in
                            world.nearby_torch_world_positions(self.tilemap, self.you.pos.x, self.you.pos.y)]
-        ui.draw_day_night_overlay(s, self.light_level, self.blood_moon, torch_positions)
+        lights = []
+        if self.light_level < 0.98:
+            from game.entities import GLOWING_KINDS
+            for (lx, ly, lr, lc) in world.nearby_lights(self.tilemap, self.you.pos.x, self.you.pos.y,
+                                                        lit=not (self.clock_info or {}).get("lanterns_out")):
+                sx, sy = self.cam((lx, ly))
+                lights.append((sx, sy, lr, lc))
+            for e in self.enemies:
+                g = GLOWING_KINDS.get(e.kind)
+                if g:
+                    sx, sy = self.cam(e.pos)
+                    lights.append((sx, sy, g[0], g[1]))
+        ui.draw_day_night_overlay(s, self.light_level, self.blood_moon, torch_positions,
+                                  luminosity=settings.get("luminosity"), player_screen=self.cam(self.you.pos),
+                                  lights=lights)
+        ui.draw_light_glows(s, lights, self.light_level)
+        if getattr(self, "sheltered", False):
+            ui.draw_sheltered_badge(s)
         if self.zone == "bonus" and (self.theme_name or "").endswith("(Heroic)"):
             vfx.draw_heroic_tint(s)
         elif self.zone == "bonus" and (self.theme_name or "").startswith("The Mad God's Room"):
@@ -2161,7 +2186,8 @@ class CoopClient:
         self.weather_fx.draw(s)
         ui.draw_dock_frame(s, self.you)
         if self.zone != "bonus":
-            ui.draw_day_night_clock(s, self.light_level, self.blood_moon)
+            ui.draw_day_night_clock(s, self.light_level, self.blood_moon, clock=self.clock_info)
+            ui.draw_night_countdown(s, self.clock_info)
         else:
             ui.draw_dungeon_header(s)
         self._draw_speech_bubbles(s)
