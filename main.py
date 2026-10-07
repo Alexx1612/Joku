@@ -465,7 +465,66 @@ class Game:
             "grid": sim.realm_map.grid if sim is not None else None,
             "areas": codex.realm_areas(sim) if sim is not None else None,
             "player_tile": (p.pos.x / C.TILE, p.pos.y / C.TILE) if in_realm else None,
+            "tracked": list(p.tracked_quests) if p is not None else [],
+            "on_track": self._toggle_quest_marker,
         }
+
+    # ------------------------------------------------------- quest markers --
+    def _toggle_quest_marker(self, qid):
+        from game import quest_markers
+        p = self.player
+        if p is None:
+            return
+        story_log, side_log = p.story.quest_log(), p.sidequests.log(p)
+        if qid not in p.tracked_quests and not quest_markers.can_locate(qid, story_log, side_log):
+            self.push_feed("That quest has no place to mark.", (200, 170, 140))
+            return
+        p.tracked_quests = quest_markers.toggle(p.tracked_quests, qid)
+        audio.play_pickup()
+
+    def _quest_world(self):
+        """game/quest_markers.py's view of where the player is."""
+        from game import npcs as _npcs
+        p = self.player
+        sim = self.realm_sim
+        if self.state == STATE_REALM:
+            zone, grid = "realm", sim.realm_map.grid if sim is not None else None
+        elif self.state == STATE_NEXUS:
+            zone, grid = "nexus", self.nexus_map.grid
+        elif self.state == STATE_BONUS:
+            zone, grid = "dungeon", None
+        elif self.state == STATE_BAZAAR:
+            zone, grid = "hub", self.bazaar_map.grid
+        elif self.state in (STATE_VAULT_ROOM, STATE_VAULT):
+            zone, grid = "hub", self.vault_room_map.grid
+        else:
+            zone, grid = None, None
+        nexus = {n.npc_id: (n.pos.x, n.pos.y) for n in self.nexus_npcs}
+        if getattr(self, "nexus_bot", None) is not None:
+            nexus["father_given"] = (self.nexus_bot.pos.x, self.nexus_bot.pos.y)
+        live = {n.npc_id: (n.pos.x, n.pos.y) for n in sim.npcs} if (sim is not None and zone == "realm") else {}
+        return {"zone": zone, "player": (p.pos.x, p.pos.y), "grid": grid,
+                "areas": codex.realm_areas(sim) if sim is not None else None,
+                "live_npcs": live, "nexus_npcs": nexus, "_portal_cache": self.__dict__.setdefault("_qm_portals", {})}
+
+    def _quest_marks(self):
+        from game import quest_markers
+        p = self.player
+        if p is None or not p.tracked_quests:
+            return []
+        story_log, side_log = p.story.quest_log(), p.sidequests.log(p)
+        p.tracked_quests = quest_markers.prune(p.tracked_quests, story_log, side_log)
+        return quest_markers.markers(p.tracked_quests, story_log, side_log, self._quest_world())
+
+    def _draw_quest_markers_world(self, s, marks):
+        """World pins / edge arrows + the tracker list - after the darkness, under the dock."""
+        from game import quest_markers
+        if not marks:
+            return
+        view = pygame.Rect(0, 0, ui.dock_frame_rect(self.player).x, C.SCREEN_H)
+        t = pygame.time.get_ticks() / 1000.0
+        quest_markers.draw_world(s, marks, self.cam, (self.player.pos.x, self.player.pos.y), view, ui._FONT_S, t)
+        quest_markers.draw_tracker(s, marks, ui._FONT_S, 12, C.SCREEN_H - 58 - 24 * len(marks))
 
     def _set_auto_fire(self, enabled):
         self.auto_fire_enabled = bool(enabled)
@@ -1960,8 +2019,9 @@ class Game:
 
     def _draw_hub(self, tmap, mm, name, hint_text):
         s = self.screen
+        qmarks = self._quest_marks()
         if mm.full_map_open:
-            minimap.draw_full_map(s, tmap, mm, self.player.pos, zone_name=name)
+            minimap.draw_full_map(s, tmap, mm, self.player.pos, zone_name=name, quest_marks=qmarks)
             return
         if tmap is self.nexus_map:
             tmap.draw_backdrop(s, self.cam)
@@ -1991,6 +2051,7 @@ class Game:
             ui.draw_npc_labels(s, self.cam, self.nexus_npcs, self.player.pos)
         self._draw_speech_bubbles(s)
         vfx.draw(s, self.cam)
+        self._draw_quest_markers_world(s, qmarks)
         if not (self.help_open or self.journal.is_open() or getattr(self, "dialogue", None) is not None
                 or getattr(self, "echo_shop_open", False)):
             # hidden under full windows: it showed through the options panel's title bar
@@ -2006,7 +2067,7 @@ class Game:
         if not (self.echo_shop_open or self.help_open or self.vault_chest_open is not None
                 or self.dialogue is not None or self.journal.is_open()):  # a modal overlay owns that space
             ui.draw_story_log(s, self.player.story.quest_log(), self.quest_log_expanded,
-                              side=self.player.sidequests.log(self.player))
+                              side=self.player.sidequests.log(self.player), tracked=self.player.tracked_quests)
         if settings.get("show_fps"):
             ui.draw_fps_counter(s, self.clock.get_fps())
         mp = pygame.mouse.get_pos()
@@ -2029,7 +2090,7 @@ class Game:
             dragged = self._dragged_item()
             if dragged:
                 ui.draw_dragged_item(s, dragged, mp)
-        minimap.draw_corner(s, tmap, mm, self.player.pos)
+        minimap.draw_corner(s, tmap, mm, self.player.pos, quest_marks=qmarks)
         ui.draw_chat_log(s, self.chat_log, scroll=self.chat_scroll, selection=self.chat_log_sel.span())
         if self.chat_open:
             ui.draw_chat_box(s, self.chat_buffer, chat_input=self.chat_in, recent=self.chat_log)
@@ -2037,9 +2098,10 @@ class Game:
     def _draw_sim(self, sim, name, extra_hint=None):
         s = self.screen
         mm = self.realm_minimap if sim is self.realm_sim else self.bonus_minimap
+        qmarks = self._quest_marks()
         if mm.full_map_open:
             minimap.draw_full_map(s, sim.realm_map, mm, self.player.pos, portals=sim.portals, zone_name=name,
-                                   enemies=sim.enemies)
+                                   enemies=sim.enemies, quest_marks=qmarks)
             return
         fog = mm.explored if sim.is_bonus_room else None
         sim.realm_map.canopy_overlay = True  # trunks in the floor pass, canopies drawn over entities below
@@ -2115,6 +2177,7 @@ class Game:
             ui.draw_sky_grade(s, clock, sim.light_level)
         for n in sim.npcs:
             n.draw_ward_bar(s, self.cam)
+        self._draw_quest_markers_world(s, qmarks)
         if fog:
             ui.draw_fog_veil(s, 1.0 - sim.light_level, self.cam)
         ui.draw_light_glows(s, lights, sim.light_level)
@@ -2148,7 +2211,7 @@ class Game:
         if ((not sim.is_bonus_room or sim.theme_key == "forge") and not self.help_open
                 and self.dialogue is None and not self.journal.is_open()):
             ui.draw_story_log(s, self.player.story.quest_log(), self.quest_log_expanded,
-                              side=self.player.sidequests.log(self.player))
+                              side=self.player.sidequests.log(self.player), tracked=self.player.tracked_quests)
         else:
             ui.draw_quest_panel(s, sim.secret_quest, sim.secret_quest_progress, sim._quest_timer,
                                  secret_quest_target=sim._secret_quest_target,
@@ -2167,7 +2230,8 @@ class Game:
         if open_bag is not None:
             ui.draw_bag_window(s, self.cam(open_bag.pos), open_bag.items, mp, dragging_from=self.drag_from)
         ui.draw_item_feed(s, self.feed)
-        minimap.draw_corner(s, sim.realm_map, mm, self.player.pos, portals=sim.portals, enemies=sim.enemies)
+        minimap.draw_corner(s, sim.realm_map, mm, self.player.pos, portals=sim.portals, enemies=sim.enemies,
+                           quest_marks=qmarks)
         ui.draw_chat_log(s, self.chat_log, scroll=self.chat_scroll, selection=self.chat_log_sel.span())
         if self.chat_open:
             ui.draw_chat_box(s, self.chat_buffer, chat_input=self.chat_in, recent=self.chat_log)

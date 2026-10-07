@@ -150,7 +150,7 @@ def corner_zoom_button_rects():
     ]
 
 
-def draw_corner(surf, tilemap, mm, player_pos, peers=(), portals=(), enemies=()):
+def draw_corner(surf, tilemap, mm, player_pos, peers=(), portals=(), enemies=(), quest_marks=()):
     """Always-on small map in the corner - RotMG keeps this up permanently
     without blocking the view of the play area. corner_zoom > 1 crops a region
     centered on the player instead of showing the whole map, like a radar."""
@@ -215,6 +215,12 @@ def draw_corner(surf, tilemap, mm, player_pos, peers=(), portals=(), enemies=())
     plx, ply = local(player_pos.x, player_pos.y)
     _world_dot(surf, x, y, px_per_tile, plx, ply, (255, 230, 90), 3, outline=(0, 0, 0))
     surf.set_clip(old_clip)
+    if quest_marks:  # tracked quests (game/quest_markers.py): pins, or arrows on the map's edge
+        from game import quest_markers
+        quest_markers.draw_on_map(
+            surf, quest_marks, pygame.Rect(corner_origin()[0], corner_origin()[1], W, H),
+            lambda wx, wy: (x + (wx / C.TILE - origin_tx) * px_per_tile, y + (wy / C.TILE - origin_ty) * px_per_tile),
+            t=pygame.time.get_ticks() / 1000.0, small=True)
 
     font_s = pygame.font.SysFont("consolas", 12)
     for rect, delta in corner_zoom_button_rects():
@@ -228,7 +234,7 @@ def draw_corner(surf, tilemap, mm, player_pos, peers=(), portals=(), enemies=())
     surf.blit(hint, (ox + W // 2 - hint.get_width() // 2, oy + H + 6 + (ZOOM_BTN_SIZE - hint.get_height()) // 2))
 
 
-def draw_full_map(surf, tilemap, mm, player_pos, peers=(), portals=(), zone_name="", enemies=()):
+def draw_full_map(surf, tilemap, mm, player_pos, peers=(), portals=(), zone_name="", enemies=(), quest_marks=()):
     """The M-key full map overlay: same fog data, zoomed in/out and centered
     on the player, with scroll-wheel / +- zoom (see MinimapState.adjust_zoom)."""
     surf.fill((8, 8, 12))
@@ -268,6 +274,12 @@ def draw_full_map(surf, tilemap, mm, player_pos, peers=(), portals=(), zone_name
                     outline=(255, 255, 255) if is_boss else (0, 0, 0))
     _world_dot(surf, ox, oy, px_per_tile, player_pos.x, player_pos.y, (255, 230, 90), 5, outline=(0, 0, 0))
     surf.set_clip(old_clip)
+    if quest_marks:
+        from game import quest_markers
+        view = map_rect.clip(pygame.Rect(0, 50, C.SCREEN_W, C.SCREEN_H - 90))
+        quest_markers.draw_on_map(surf, quest_marks, view,
+                                  lambda wx, wy: (ox + wx / C.TILE * px_per_tile, oy + wy / C.TILE * px_per_tile),
+                                  t=pygame.time.get_ticks() / 1000.0)
     font_m = pygame.font.SysFont("consolas", 18, bold=True)
     font_s = pygame.font.SysFont("consolas", 14)
     title = font_m.render(f"{zone_name} - Map", True, (230, 220, 190))

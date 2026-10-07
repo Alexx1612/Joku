@@ -134,6 +134,7 @@ The in-game **O** menu shows the same list (`game/ui.py` `HELP_LINES`).
 | Tab | Cycle the right dock's tabs: Items -> Bag 2 -> Shards -> Pet (or click a tab; drag an item onto a tab to switch) |
 | F | Context action: open / close a door next to you, talk to an NPC or animal nearby, open a vault chest, fish at water, wish at the Nexus fountain, talk to Father Given |
 | J | Expand / collapse the small HUD quest log (click it to open the full Quest Log) |
+| T (in the Quest Log) | Show / hide the map marker for the selected quest (or click its Show marker button) |
 | Enter | Open chat (with history) / step through the portal you're standing on / open a vault chest |
 | R | Back to the Nexus (Realm) / leave the dungeon |
 | Q / E, X | Rotate the camera, reset rotation |
@@ -554,6 +555,10 @@ Built in batches; each has a detailed doc in `docs/unity-rebuild/`.
 - **Night realism**: golden / blue hour, moon phases (full moon = brighter
   night + Blood Moon more likely), dawn mist, lit windows, day animals asleep,
   town folk indoors, eyes adapting to the dark, crickets / owls / dawn chorus.
+- **Quest markers** (doc 36): Show marker on any quest in the Quest Log (or
+  T) pins it on the minimap, the full map and in the world - an edge arrow
+  with the distance when it's off-screen; up to 3 at once, saved with your
+  character, co-op too.
 - **The Light of RDV**: keep Old Wick the Lamplighter alive until dawn and
   he gives you a ring that widens your light x1.6 and scares monsters off.
 - **Fix**: mobs could spawn right on top of you (tiles passed as pixels) -

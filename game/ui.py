@@ -2927,7 +2927,7 @@ STORY_LOG_W = 250
 SIDE_LOG_MAX = 4  # side quests listed in the small HUD log (the full list is Phase 1B's quest log)
 
 
-def draw_story_log(surf, log, expanded=True, side=None):
+def draw_story_log(surf, log, expanded=True, side=None, tracked=None):
     """The story quest log (game/story.StoryProgress.quest_log()) - docked left of
     the player panel (see story_log_origin); bonus rooms show their own quest panel
     instead. Collapsed = just the act title (+ a side-quest count). `side` = active
@@ -2953,7 +2953,8 @@ def draw_story_log(surf, log, expanded=True, side=None):
     if expanded:
         for e in side[:SIDE_LOG_MAX]:
             label = e["title"] + (" - hand in!" if e["ready"] and e["turn_in"] else "")
-            side_rows.append((_wrap_text(label, _FONT_S, inner - 44), e["have"], e["need"], e["ready"]))
+            side_rows.append((_wrap_text(label, _FONT_S, inner - 44), e["have"], e["need"], e["ready"],
+                              f"side:{e.get('id')}"))
         if side_rows:
             h += lh + 4
             for lines, *_rest in side_rows:
@@ -2963,8 +2964,12 @@ def draw_story_log(surf, log, expanded=True, side=None):
     h += 6 + lh  # footer: key hint
     panel, y = _ornate_panel(w, h)
     y += 2
-    for line in title_lines:
+    from game import quest_markers
+    tracked = list(tracked or [])
+    for i, line in enumerate(title_lines):
         panel.blit(_FONT_S.render(line, True, (245, 215, 130)), (pad, y))
+        if i == 0 and "story" in tracked:  # this quest has a map marker (game/quest_markers.py)
+            quest_markers._diamond(panel, quest_markers.color_for(tracked, "story"), w - pad - 5, y + lh // 2, 5)
         y += lh
     y += 4
     if expanded:
@@ -2987,10 +2992,13 @@ def draw_story_log(surf, log, expanded=True, side=None):
         if side_rows:
             panel.blit(_FONT_S.render("Side quests", True, (200, 175, 255)), (pad, y))
             y += lh + 4
-            for lines, have, need, ready in side_rows:
+            for lines, have, need, ready, qid in side_rows:
                 col = (140, 225, 150) if ready else (205, 200, 225)
                 for i, line in enumerate(lines):
-                    panel.blit(_FONT_S.render(("- " if i == 0 else "  ") + line, True, col), (pad, y))
+                    mark = i == 0 and qid in tracked
+                    panel.blit(_FONT_S.render(("  " if mark else "- " if i == 0 else "  ") + line, True, col), (pad, y))
+                    if mark:
+                        quest_markers._diamond(panel, quest_markers.color_for(tracked, qid), pad + 5, y + lh // 2, 5)
                     y += lh
                 prog = _FONT_S.render(f"{have}/{need}", True, (180, 175, 200))
                 panel.blit(prog, (w - pad - prog.get_width(), y - lh))

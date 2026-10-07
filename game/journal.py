@@ -105,6 +105,7 @@ class Journal:
     def __init__(self):
         self.stack = []
         self.ql_scroll = 0
+        self.ql_sel = None  # the quest selected in the Quest Log (T toggles its marker)
         self.cat = codex.CATEGORIES[0][0]
         self.query = ""
         self.query_all = False  # Ctrl+A selected the whole search text
@@ -217,6 +218,8 @@ class Journal:
                 self._wheel(-8, None, ctx)
             elif event.key == pygame.K_j:
                 self.back()
+            elif event.key == pygame.K_t and self.ql_sel:
+                self._do(("track", self.ql_sel), ctx)
         elif mode == DICTIONARY:
             self._dict_key(event)
         elif mode == QUEST_MAP:
@@ -309,7 +312,7 @@ class Journal:
                 if it.get("action") and content.collidepoint(pos):
                     r = pygame.Rect(content.x + it["x"], content.y + it["y"] - self.ql_scroll, it["w"], it["h"])
                     if r.collidepoint(pos):
-                        self._do(it["action"])
+                        self._do(it["action"], ctx)
                         return
         elif mode == DICTIONARY:
             r = self._dict_rects()
@@ -340,8 +343,15 @@ class Journal:
             if self._close_rect(pygame.Rect(0, 0, C.SCREEN_W, 40)).collidepoint(pos):
                 self.back()
 
-    def _do(self, action):
-        if action[0] == "dict":
+    def _do(self, action, ctx=None):
+        if action[0] == "select":
+            self.ql_sel = action[1]
+        elif action[0] == "track":
+            self.ql_sel = action[1]
+            cb = (ctx or {}).get("on_track")
+            if cb is not None:
+                cb(action[1])
+        elif action[0] == "dict":
             self.open_dictionary(action[1], stack=True)
         elif action[0] == "map":
             self.open_map(action[1], action[2], action[3])
@@ -406,9 +416,32 @@ class Journal:
                                   action=("map", where, map_title, codex.target_note(target))))
             y += lh + 2
 
+        from game import quest_markers
+        tracked = list(ctx.get("tracked") or [])
+        side_all = ctx.get("side") or []
+
+        def marker_button(qid, y0):
+            """'Show marker' / 'Hide marker' (or a disabled 'No location') at the right of a quest line."""
+            bw = 124
+            if not quest_markers.can_locate(qid, story_log, side_all):
+                items.append(dict(x=W - bw, y=y0 - 2, w=bw, h=lh + 2, text="No location", font=fs,
+                                  color=(120, 118, 130), kind="button_off"))
+                return
+            on = qid in tracked
+            items.append(dict(x=W - bw, y=y0 - 2, w=bw, h=lh + 2, text="Hide marker" if on else "Show marker",
+                              font=fs, color=quest_markers.color_for(tracked, qid) if on else (255, 240, 200),
+                              kind="marker", action=("track", qid), on=on, qid=qid))
+
+        def select_line(qid, y0, h):
+            items.insert(0, dict(x=0, y=y0 - 2, w=W - 132, h=h + 2, text="", font=fs, color=(0, 0, 0),
+                                 kind="select", action=("select", qid), qid=qid))
+
         story_log = ctx.get("story")
         if story_log:
             header(f"Story - {story_log.get('title', '')}")
+            if story_log.get("objectives") and quest_markers.quest_entries(story_log, []):
+                marker_button("story", y - fm.get_height() - 6)
+                select_line("story", y - fm.get_height() - 6, fm.get_height())
             if story_log.get("hint"):
                 text(story_log["hint"], (200, 198, 210))
             for o in story_log.get("objectives", []):
@@ -424,7 +457,19 @@ class Journal:
         for q in side:
             status = "READY - hand it in" if q.get("ready") and q.get("turn_in") else \
                 ("DONE" if q.get("ready") else f"{q.get('have', 0)}/{q.get('need', 1)}")
-            text(f"{q['title']}  -  {status}", (255, 230, 150) if q.get("ready") else (235, 232, 240), x=8)
+            qid = f"side:{q['id']}"
+            y0 = y
+            full = f"{q['title']}  -  {status}"
+            title_line = full
+            while fs.size(title_line)[0] > W - 150 and len(title_line) > 8:
+                title_line = title_line[:-2]
+            if title_line != full:
+                title_line = title_line.rstrip() + "."
+            items.append(dict(x=8, y=y, w=fs.size(title_line)[0], h=fs.get_height(), text=title_line, font=fs,
+                              color=(255, 230, 150) if q.get("ready") else (235, 232, 240), kind="text"))
+            y += fs.get_height() + 3
+            marker_button(qid, y0)
+            select_line(qid, y0, fs.get_height())
             text(q.get("desc", ""), (190, 188, 200), x=16)
             extra = []
             for role in ("giver", "turn_in"):
@@ -462,6 +507,25 @@ class Journal:
                 continue
             r = pygame.Rect(content.x + it["x"], y, it["w"], it["h"])
             hov = it.get("action") and r.collidepoint(mouse)
+            if it["kind"] == "select":
+                if it["qid"] == self.ql_sel:
+                    pygame.draw.rect(surf, (58, 52, 84), r, border_radius=3)
+                elif hov:
+                    pygame.draw.rect(surf, (36, 34, 50), r, border_radius=3)
+                continue
+            if it["kind"] == "button_off":
+                pygame.draw.rect(surf, (34, 33, 42), r, border_radius=4)
+                pygame.draw.rect(surf, (70, 68, 80), r, width=1, border_radius=4)
+                t = it["font"].render(it["text"], True, it["color"])
+                surf.blit(t, (r.centerx - t.get_width() // 2, r.centery - t.get_height() // 2))
+                continue
+            if it["kind"] == "marker":
+                from game import quest_markers
+                ui._bevel_button(surf, r, (40, 70, 60) if it.get("on") else (60, 58, 90), hovered=hov)
+                t = it["font"].render(it["text"], True, it["color"])
+                surf.blit(t, (r.x + 22, r.centery - t.get_height() // 2))
+                quest_markers._diamond(surf, it["color"] if it.get("on") else (150, 148, 160), r.x + 11, r.centery, 5)
+                continue
             if it["kind"] == "button":
                 ui._bevel_button(surf, r, (60, 58, 90), hovered=hov)
                 t = it["font"].render(it["text"], True, it["color"])
@@ -476,7 +540,7 @@ class Journal:
                 pygame.draw.line(surf, (*ui.CHROME_GOLD, ), (r.x, r.y + it["h"] + 2), (content.right - 8, r.y + it["h"] + 2))
         surf.set_clip(old)
         self._scrollbar(surf, content, self.ql_scroll, total)
-        hint = ui._FONT_S.render("Wheel/arrows scroll - click a blue name to look it up, Map to see where - Esc closes",
+        hint = ui._FONT_S.render("Click a quest, then Show marker (or T) to pin it on your maps - Map / blue names: look it up",
                                  True, (140, 138, 155))
         surf.blit(hint, (win.centerx - hint.get_width() // 2, win.bottom - 26))
 
