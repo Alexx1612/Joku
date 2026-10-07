@@ -128,6 +128,9 @@ class NightDirector:
             return
         planned = (getattr(sim, "tonight", None) or {}).get("event")  # from the calendar (RealmSim.forecast)
         self.event = planned if planned in EVENTS else random.choice(EVENTS)
+        if getattr(self, "force_event", None) in EVENTS:  # /nightevent (game/admin.py) beats the calendar
+            self.event = self.force_event
+        self.force_event = None
         text, col = EVENT_TEXT[self.event]
         place = "the Realm"
         if self.event == "hunter" and alive:

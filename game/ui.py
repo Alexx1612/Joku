@@ -1441,8 +1441,8 @@ HELP_LINES = [
     ("Options menu", "O"),
     ("Close / quit", "Esc"),
 ]
-HELP_NOTE = ("Chat commands: /nexus /realm /vault /bazaar /trade /help "
-             "(co-op also: /w <name> <msg>, /crew). Aim gets a soft assist near enemies.")
+HELP_NOTE = ("Chat: /help lists every command - including the admin / testing ones (/give, /xp, /time, "
+             "/spawn, /tp...). Co-op: /w <name> <msg>, /crew, /trade. Aim gets a soft assist near enemies.")
 
 _OPT_ROW_H = 26
 _OPT_HEADER_H = 24
@@ -3287,3 +3287,109 @@ def draw_island_chests(surf, cam, chests):
         if not opened:
             t = _FONT_S.render("[F] Open", True, (255, 225, 140))
             surf.blit(t, (sx - t.get_width() // 2, sy - img.get_height() // 2 - 16))
+
+
+# ------------------------------------------------------------ admin / testing commands (game/admin.py)
+CMD_PANEL_W = 640
+CMD_PANEL_LINE_H = 17
+
+
+def cmd_panel_rect():
+    """The scrollable command-output panel: left of the dock, under the top banners."""
+    w = min(CMD_PANEL_W, _panel_block_x0() - 40)
+    h = min(560, C.SCREEN_H - 200)
+    x = max(16, (_panel_block_x0() - w) // 2)
+    return pygame.Rect(x, 96, w, h)
+
+
+def _cmd_panel_rows(panel, width):
+    key = (id(panel.get("lines")), width)
+    if panel.get("_wrap_key") != key:
+        rows = []
+        for text, color in panel["lines"]:
+            indent = len(text) - len(text.lstrip(" "))
+            parts = _wrap_text(text, _FONT_S, width - indent * 8) if text.strip() else [""]
+            for i, part in enumerate(parts):
+                rows.append((" " * (indent + (2 if i else 0)) + part, tuple(color)))
+        panel["_rows"], panel["_wrap_key"] = rows, key
+    return panel["_rows"]
+
+
+def cmd_panel_visible_rows():
+    return (cmd_panel_rect().h - 52) // CMD_PANEL_LINE_H
+
+
+def draw_cmd_panel(surf, panel):
+    """panel = {"title", "lines": [(text, color)], "scroll"} - long admin / help output."""
+    r = cmd_panel_rect()
+    rows = _cmd_panel_rows(panel, r.w - 34)
+    r.h = min(r.h, 52 + len(rows) * CMD_PANEL_LINE_H + 8)  # short output: a short panel
+    box = pygame.Surface(r.size, pygame.SRCALPHA)
+    box.fill((14, 16, 24, 255))
+    pygame.draw.rect(box, CHROME_GOLD, box.get_rect(), 2)
+    pygame.draw.line(box, CHROME_GOLD_DIM, (10, 32), (r.w - 10, 32), 1)
+    t = _FONT_M.render(panel.get("title", "Commands"), True, (255, 215, 120))
+    box.blit(t, (12, 7))
+    hint = _FONT_S.render("wheel / PgUp PgDn scroll - Esc closes", True, (140, 150, 170))
+    box.blit(hint, (r.w - hint.get_width() - 12, 11))
+    vis = cmd_panel_visible_rows()
+    panel["scroll"] = max(0, min(panel.get("scroll", 0), max(0, len(rows) - vis)))
+    y = 40
+    for text, color in rows[panel["scroll"]:panel["scroll"] + vis]:
+        if text:
+            box.blit(_FONT_S.render(text, True, color), (14, y))
+        y += CMD_PANEL_LINE_H
+    if len(rows) > vis:  # scrollbar
+        track = pygame.Rect(r.w - 12, 40, 5, vis * CMD_PANEL_LINE_H)
+        pygame.draw.rect(box, (50, 54, 70), track)
+        th = max(16, int(track.h * vis / len(rows)))
+        ty = track.y + int((track.h - th) * panel["scroll"] / max(1, len(rows) - vis))
+        pygame.draw.rect(box, CHROME_GOLD, (track.x, ty, track.w, th))
+        more = _FONT_S.render(f"{panel['scroll'] + 1}-{min(len(rows), panel['scroll'] + vis)} of {len(rows)}",
+                              True, (140, 150, 170))
+        box.blit(more, (r.w - more.get_width() - 20, r.h - 18))
+    surf.blit(box, r.topleft)
+
+
+def handle_cmd_panel_event(panel, event, chat_open=False):
+    """Returns (consumed, close)."""
+    if event.type == pygame.MOUSEWHEEL and cmd_panel_rect().collidepoint(pygame.mouse.get_pos()):
+        panel["scroll"] = max(0, panel.get("scroll", 0) - event.y * 3)
+        return True, False
+    if event.type == pygame.KEYDOWN:
+        if event.key == pygame.K_PAGEUP:
+            panel["scroll"] = max(0, panel.get("scroll", 0) - cmd_panel_visible_rows() + 1)
+            return True, False
+        if event.key == pygame.K_PAGEDOWN:
+            panel["scroll"] = panel.get("scroll", 0) + cmd_panel_visible_rows() - 1
+            return True, False
+        if event.key == pygame.K_ESCAPE and not chat_open:
+            return True, True
+    if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and not cmd_panel_rect().collidepoint(event.pos):
+        return False, True  # a click elsewhere closes it (and still does its normal thing)
+    return False, False
+
+
+def draw_hitboxes(surf, cam, players=(), enemies=(), bullets=()):
+    """/hitboxes: the real collision circles (players green, mobs red, bullets yellow / cyan)."""
+    for p in players:
+        if p is None:
+            continue
+        x, y = cam(p.pos)
+        pygame.draw.circle(surf, (90, 255, 120), (int(x), int(y)), int(getattr(p, "radius", 12)), 1)
+    for e in enemies:
+        if not getattr(e, "alive", True):
+            continue
+        x, y = cam(e.pos)
+        from game.entities import ENEMY_KINDS
+        r = int(getattr(e, "radius", None) or ENEMY_KINDS.get(getattr(e, "kind", ""), {}).get("radius", 12))
+        pygame.draw.circle(surf, (255, 80, 80) if not getattr(e, "neutral", False) else (150, 150, 255),
+                           (int(x), int(y)), r, 1)
+        ag = getattr(e, "aggro_range", 0)
+        if ag and getattr(e, "aggro", False):
+            pygame.draw.circle(surf, (120, 40, 40), (int(x), int(y)), int(ag), 1)
+    for b in bullets:
+        x, y = cam(b.pos)
+        own = getattr(b, "owner", "enemy")
+        pygame.draw.circle(surf, (255, 230, 90) if own == "enemy" else (90, 230, 255), (int(x), int(y)),
+                           max(1, int(getattr(b, "radius", 4) or 4)), 1)

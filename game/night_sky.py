@@ -127,6 +127,9 @@ class NightSky:
         kinds, weights = zip(*NIGHT_WEATHER)
         planned = (getattr(sim, "tonight", None) or {}).get("weather")  # from the calendar
         self.weather = planned if planned in kinds else random.choices(kinds, weights)[0]
+        if getattr(self, "force_weather", None) in CLOUD_DARK:  # /weather (game/admin.py) beats the calendar
+            self.weather = self.force_weather
+        self.force_weather = None
         if self.weather in WEATHER_TEXT:
             text, col = WEATHER_TEXT[self.weather]
             sim.events.append((None, text, col))
@@ -143,10 +146,11 @@ class NightSky:
         sim.sound_events.append(("sfx", "thunder", pos.x, pos.y))
         sim.vfx_events.append(("lightning", pos.x, pos.y, (220, 225, 255)))
 
-    def _shooting_star(self, alive):
+    def _shooting_star(self, alive, fall=None):
         sim = self.sim
         self._star_seq += 1
-        fall = random.random() < STAR_FALL_CHANCE and len(self.fallen) < 2
+        if fall is None:  # (/star forces it - game/admin.py)
+            fall = random.random() < STAR_FALL_CHANCE and len(self.fallen) < 2
         ang = random.uniform(15, 50) * random.choice((1, -1))
         self.star = [self._star_seq, round(ang, 1), 1 if fall else 0]
         p = random.choice(alive)

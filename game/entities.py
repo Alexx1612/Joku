@@ -222,6 +222,7 @@ class Player:
 
     def speed(self):
         mult = self.ROOT_MULT if self.root_time > 0 else self.HASTE_MULT if self.haste_time > 0 else 1.0
+        mult *= getattr(self, "admin_speed", 1.0)  # /speed (game/admin.py)
         return C.speed_tiles_per_sec(self.total_stat("spd")) * C.TILE * mult
 
     def atk_interval(self):
@@ -612,6 +613,8 @@ class Player:
         at 0.8x) - looked up from the player's CURRENT tile, same as real RotMG
         terrain-speed tiles.
         """
+        if getattr(self, "noclip", False):  # /noclip (game/admin.py): walk through walls
+            is_solid = None
         if self._dash_time > 0.0:
             # Dash overrides normal WASD movement entirely for its short duration -
             # still resolved through the same per-axis _circle_clear wall check so
@@ -689,7 +692,7 @@ class Player:
         self._fire_cd = self.atk_interval()
 
     def take_damage(self, dmg, pierce_armor=False):
-        if self._dash_iframes > 0.0:
+        if self._dash_iframes > 0.0 or getattr(self, "god", False):  # /god (game/admin.py)
             return 0
         real = dmg if pierce_armor else C.player_defense(dmg, self.total_stat("deF"))
         if self.shield_hp > 0:

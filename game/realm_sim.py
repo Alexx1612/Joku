@@ -1598,6 +1598,11 @@ class RealmSim:
             tonight = self._resolve_night(entry, self.moon_phase(), self._nights_since_blood_moon, None)
             self.tonight = tonight  # the night director / night sky read the event and the weather
             self.blood_moon_active = tonight["blood"]
+            if getattr(self, "force_blood_moon", None) is not None:  # /bloodmoon (game/admin.py)
+                self.blood_moon_active = bool(self.force_blood_moon)
+                self.force_blood_moon = None
+                if self.blood_moon_active:
+                    self.tonight = dict(tonight, blood=True, weather="clear", event="blood_moon")
             self._ensure_forecast()
             if self.blood_moon_active:
                 self._nights_since_blood_moon = 0

@@ -213,6 +213,8 @@ class NetLink:
         self.story_feed = []  # story lines/banners ride ONE snapshot each - collected here as each
         self.story_banners = []  # snapshot is seen, same reason as pending_map below
         self.dialogue_msgs = []  # server "dialogue" messages ({"view": dict | None}), in order
+        self.admin_results = []  # server "admin_result" replies to /commands (game/admin.py)
+        self.server_admin = False  # did the server start with --admin?
         self.welcome_pid = None
         self.error = None
         self._stop = False
@@ -281,8 +283,12 @@ class NetLink:
                     elif t == "dialogue":
                         with self.lock:
                             self.dialogue_msgs.append(msg)
+                    elif t == "admin_result":
+                        with self.lock:
+                            self.admin_results.append(msg)
                     elif t == "welcome":
                         self.welcome_pid = msg["pid"]
+                        self.server_admin = bool(msg.get("admin", False))
         except (ConnectionError, OSError) as e:
             self.error = str(e) or "connection lost"
 
@@ -347,6 +353,11 @@ class NetLink:
             v = (self.story_feed, self.story_banners)
             self.story_feed, self.story_banners = [], []
             return v
+
+    def pop_admin_results(self):
+        with self.lock:
+            v, self.admin_results = self.admin_results, []
+        return v
 
     def pop_dialogue(self):
         """The newest dialogue message since the last call, or None if none arrived."""
@@ -439,6 +450,8 @@ class CoopClient:
         self._dust_cd = 0.0
         self._prev_you_pos = None
         self.feed = []
+        self.cmd_panel = None  # long /help or admin output (game/admin.py)
+        self.debug_hitboxes = False  # /hitboxes
         self.death_info = None
         self.cam = world.Camera(C.SCREEN_W, C.SCREEN_H)
 
@@ -729,6 +742,12 @@ class CoopClient:
                     and event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_ESCAPE)):
                 self.credits_t = None  # skip the end credits
                 continue
+            if self.cmd_panel is not None:
+                used, close = ui.handle_cmd_panel_event(self.cmd_panel, event, self.chat_open)
+                if close:
+                    self.cmd_panel = None
+                if used:
+                    continue
             if self._chat_mouse_event(event):
                 continue
             if event.type == pygame.KEYDOWN:
@@ -1031,7 +1050,27 @@ class CoopClient:
         else:
             self.link.send({"type": "chat", "text": text})
 
+    def _show_cmd_result(self, res, title=None):
+        """Admin / help output: a few lines go to the feed, anything longer opens the panel."""
+        from game import admin
+        if admin.wants_panel(res):
+            self.cmd_panel = {"title": getattr(res, "title", title or "Command"), "lines": list(res), "scroll": 0}
+            return
+        for text, color in reversed(list(res)):
+            self.feed.insert(0, [text, tuple(color), 4.0])
+        self.feed = self.feed[:4]
+
     def _handle_chat_command(self, cmd_text):
+        from game import admin
+        name = cmd_text.split()[0] if cmd_text.split() else ""
+        if admin.is_admin_command(name):
+            if admin.runs_on_client(name):  # help, minimap reveal, FPS, hitboxes, position
+                ctx = admin.ClientCtx(self)
+                ctx.admin_on = bool(getattr(self.link, "server_admin", False))
+                self._show_cmd_result(admin.run(ctx, cmd_text), "/" + name)
+            else:  # the server owns the game - it runs it and replies with an "admin_result"
+                self.link.send({"type": "action", "action": "admin", "text": cmd_text})
+            return
         parts = cmd_text.split(maxsplit=1)
         cmd = parts[0].lower() if parts else ""
         if cmd == "nexus":
@@ -1816,6 +1855,11 @@ class CoopClient:
             from game.items import Item
             self.open_bag_id = bag_state["id"]
             self.bag_items = [Item.from_json(d) for d in bag_state["items"]]
+        for res in (self.link.pop_admin_results() if hasattr(self.link, "pop_admin_results") else ()):  # admin replies
+            from game import admin as _admin
+            lines = [(t, tuple(c)) for t, c in res.get("lines", [])]
+            self._show_cmd_result(_admin.Panel(res.get("title", "Command"), lines) if res.get("panel") else lines,
+                                  res.get("title"))
         dmsg = self.link.pop_dialogue()
         if dmsg is not None:
             self.dialogue_view = dmsg.get("view")
@@ -2064,6 +2108,8 @@ class CoopClient:
                                        selected_idx=self.echo_shop_selected, mouse_pos=pygame.mouse.get_pos())
         if self.state == STATE_PLAY and self.zone != "dead" and self.dialogue_view is not None:
             ui.draw_dialogue(s, self.dialogue_view, pygame.mouse.get_pos())
+        if self.state == STATE_PLAY and self.cmd_panel is not None:
+            ui.draw_cmd_panel(s, self.cmd_panel)
         if self.state == STATE_PLAY and self.journal.is_open():
             self.journal.draw(s, self._journal_ctx(), pygame.mouse.get_pos(), 1 / max(1, self.clock.get_fps() or 60))
         if self.state == STATE_PLAY and self.zone != "dead" and not self.journal.is_open():  # the Quest Map's title used to sit under it
@@ -2373,6 +2419,9 @@ class CoopClient:
                                                self.tilemap.tile_at, (world.SNOW, world.ICE), self.light_level)
             self.sky_fx.draw(s, self.cam)
         self._draw_quest_markers_world(s, qmarks)
+        if self.debug_hitboxes:
+            ui.draw_hitboxes(s, self.cam, list(getattr(self, "peers", [])) or [self.you], self.enemies,
+                             self.bullets)
         if fog:
             ui.draw_fog_veil(s, 1.0 - self.light_level, self.cam)
         ui.draw_light_glows(s, lights, self.light_level)
