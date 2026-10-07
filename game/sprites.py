@@ -2703,6 +2703,43 @@ def _potion_icon_art(stat_key, dramatic=False) -> pygame.Surface | None:
     return surf
 
 
+def _draw_rune_icon(surf, effect, rim):
+    """A Weapon Shard: a faceted crystal splinter glowing in its effect's colour, a tiny
+    glyph of the effect etched in it, framed in its rarity colour (see game/runes.py)."""
+    from game.runes import EFFECTS
+    col = EFFECTS.get(effect, ("", (200, 200, 210), ""))[1]
+    dark = tuple(max(0, c // 3) for c in col)
+    mid = tuple(min(255, int(c * 0.75)) for c in col)
+    glow = pygame.Surface((28, 28), pygame.SRCALPHA)
+    pygame.draw.circle(glow, (*col, 60), (14, 14), 11)
+    surf.blit(glow, (0, 0))
+    outer = [(14, 3), (20, 9), (18, 22), (14, 25), (9, 20), (8, 9)]
+    pygame.draw.polygon(surf, dark, outer)
+    pygame.draw.polygon(surf, mid, [(14, 3), (20, 9), (14, 13)])
+    pygame.draw.polygon(surf, col, [(14, 3), (14, 13), (8, 9)])
+    pygame.draw.polygon(surf, mid, [(8, 9), (14, 13), (9, 20)])
+    pygame.draw.line(surf, (255, 255, 255), (13, 6), (11, 11), 1)
+    g = (230, 230, 240)
+    cx, cy = 14, 17
+    if effect in ("bleed", "leech"):
+        pygame.draw.circle(surf, g, (cx, cy), 2)
+    elif effect == "burn":
+        pygame.draw.polygon(surf, g, [(cx, cy - 3), (cx + 2, cy + 2), (cx - 2, cy + 2)])
+    elif effect == "frostbite":
+        pygame.draw.line(surf, g, (cx - 3, cy), (cx + 3, cy), 1)
+        pygame.draw.line(surf, g, (cx, cy - 3), (cx, cy + 3), 1)
+    elif effect == "chain":
+        pygame.draw.lines(surf, g, False, [(cx - 3, cy - 3), (cx + 1, cy - 1), (cx - 1, cy + 1), (cx + 3, cy + 3)], 1)
+    elif effect in ("keen", "executioner"):
+        pygame.draw.line(surf, g, (cx - 3, cy + 3), (cx + 3, cy - 3), 1)
+    elif effect == "echo":
+        pygame.draw.circle(surf, g, (cx, cy), 3, 1)
+    else:
+        pygame.draw.rect(surf, g, (cx - 1, cy - 1, 3, 3))
+    pygame.draw.polygon(surf, OUTLINE, outer, width=1)
+    pygame.draw.rect(surf, rim, (0, 0, 28, 28), width=2, border_radius=4)
+
+
 def item_icon(tier_color, shape="sword") -> pygame.Surface:
     key = ("item", tier_color, shape)
     if key in _cache:
@@ -2719,6 +2756,10 @@ def item_icon(tier_color, shape="sword") -> pygame.Surface:
             _cache[key] = surf
             return surf
         shape = "potion"  # neutral bottle art missing - fall back to the plain primitive draw below
+    if shape.startswith("rune_"):
+        _draw_rune_icon(surf, shape[5:], tier_color)
+        _cache[key] = surf
+        return surf
     art = _load_art(f"decorations/items/icon_{shape}.png", 24)
     if art is not None:
         surf.blit(art, (2, 2))

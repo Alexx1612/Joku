@@ -105,9 +105,14 @@ def check_bag_swap_on_full_inventory():
     assert len(bag.items) == 1 and bag.items[0].name == "Old2"
 
     # edge case: target_idx out of range must fall back cleanly (no crash), and
-    # since the backpack is still full, a normal (non-swap) withdraw must fail
+    # since the backpack AND Bag 2 are full, a normal (non-swap) withdraw must fail
+    p.backpack2 = [_sword(f"Spare{i}") for i in range(p.backpack2_size)]
     r2 = withdraw_from_bag([bag], bag.id, 0, p, target_idx=99)
     assert r2 is None
+    # ...with room in Bag 2, a full backpack overflows into it instead
+    p.backpack2 = []
+    r3 = withdraw_from_bag([bag], bag.id, 0, p, target_idx=99)
+    assert r3 is not None and p.backpack2 and p.backpack2[-1].name == r3.name
     print("check_bag_swap_on_full_inventory: PASSED")
 
 

@@ -799,10 +799,19 @@ class CoopClient:
                       and self._dock_mode() == "pet"
                       and ui.pet_pack_button_rect(self.you).collidepoint(event.pos)):
                     self.link.send({"type": "action", "action": "pack_pet"})
+                elif (self.you and self.zone in ("nexus", "bazaar", "realm", "bonus")
+                      and ui.panel_tab_at(event.pos) is not None):
+                    tab = ui.panel_tab_at(event.pos)  # clicking a dock tab label picks it
+                    if tab != "pet" or getattr(self.you, "pet", None) is not None:
+                        self.right_panel_mode = tab
                 elif self.you and self.zone in ("nexus", "bazaar", "vault_room", "realm", "bonus"):
                     self._inventory_mouse_down(event.pos)
             elif event.type == pygame.MOUSEMOTION:
                 self.panel_drag.motion(event.pos)
+                if self.drag_from is not None and self.you is not None:
+                    tab = ui.panel_tab_at(event.pos)  # dragging onto a tab label opens that tab
+                    if tab in ("inventory", "bag2", "shards"):
+                        self.right_panel_mode = tab
             elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 dragged_panel, panel_moved = self.panel_drag.up()
                 if dragged_panel == "quest" and not panel_moved and self.state == STATE_PLAY:
@@ -1196,10 +1205,11 @@ class CoopClient:
                 return
 
     def _dock_mode(self):
-        """The right dock's effective Tab mode - falls back to inventory with no pet."""
-        if self.right_panel_mode == "pet" and getattr(self.you, "pet", None) is not None:
-            return "pet"
-        return "inventory"
+        """The right dock's effective tab - Items / Bag 2 / Shards / Pet (falls back to
+        Items with no pet)."""
+        if self.right_panel_mode == "pet" and getattr(self.you, "pet", None) is None:
+            return "inventory"
+        return self.right_panel_mode if self.right_panel_mode in ("inventory", "bag2", "shards", "pet") else "inventory"
 
     def _slot_at(self, pos):
         if self.vault_chest_open is not None and self.zone == "vault_room":
@@ -1218,6 +1228,13 @@ class CoopClient:
         for rect, slot_type in ui.equip_slot_rects():
             if rect.collidepoint(pos):
                 return ("equip", slot_type)
+        mode = self._dock_mode() if self.zone != "vault_room" else "inventory"
+        if mode in ("bag2", "shards"):
+            kind = "bag2" if mode == "bag2" else "rune"
+            for i, rect in enumerate(ui.container_slot_rects()):
+                if rect.collidepoint(pos):
+                    return (kind, i)
+            return None
         for i, rect in enumerate(ui.backpack_slot_rects(self.you)):
             if rect.collidepoint(pos):
                 return ("backpack", i)
@@ -1233,6 +1250,8 @@ class CoopClient:
             return self.bag_items[key] if key < len(self.bag_items) else None
         if kind == "vault":
             return self.vault_items[key] if key < len(self.vault_items) else None
+        if kind in ("bag2", "rune"):
+            return self.you._get_slot((kind, key))
         return getattr(self.you, key)
 
     def _inventory_mouse_down(self, pos):
@@ -1255,6 +1274,8 @@ class CoopClient:
         elif kind == "pet":
             has_item = False  # the pet panel is a drop TARGET only (feed an item onto it) -
             # there's nothing to pick UP and drag out of it
+        elif kind in ("bag2", "rune"):
+            has_item = self.you._get_slot((kind, key)) is not None
         else:
             has_item = getattr(self.you, key) is not None
         if has_item:
@@ -1350,6 +1371,8 @@ class CoopClient:
             return
         dest = self._slot_at(pos)
         dropped_far = math.hypot(pos[0] - self.drag_start_pos[0], pos[1] - self.drag_start_pos[1]) > 6
+        if dest is not None and dest[0] != origin[0] and origin[0] != "bag":
+            dropped_far = True  # a different tab's grid sits in the same spot - a cross-container drop is real
         if self.trade is not None and origin[0] == "backpack":
             # trade open: a plain click or a drop onto "my offer" offers the item (it stays in
             # the backpack, highlighted, until the swap); anywhere else off the dock does nothing -
@@ -1384,6 +1407,13 @@ class CoopClient:
                 else:
                     self._dblclick_slot = origin
                     self._dblclick_time = now
+            return
+        if origin[0] in ("bag2", "rune") or (dest is not None and dest[0] in ("bag2", "rune")):
+            # Bag 2 / the Shards tab: one generic authoritative server action
+            if dest is None:
+                self.link.send({"type": "action", "action": "drop_item", "from": list(origin)})
+            elif dest[0] in ("backpack", "bag2", "rune", "equip"):
+                self.link.send({"type": "action", "action": "move_item", "from": list(origin), "to": list(dest)})
             return
         if dest is None:
             # dragged clean off the inventory bar, into the play area - drop it on the ground
@@ -1460,7 +1490,7 @@ class CoopClient:
                                   (150, 220, 255) if self.auto_fire_enabled else (170, 170, 180), 4.0])
             self.feed = self.feed[:4]
         elif key == pygame.K_TAB and self.zone in ("nexus", "bazaar", "realm", "bonus"):
-            self.right_panel_mode = "pet" if self.right_panel_mode == "inventory" else "inventory"
+            self.right_panel_mode = ui.next_panel_mode(self._dock_mode(), getattr(self.you, "pet", None) is not None)
         elif pygame.K_1 <= key <= pygame.K_8:
             self.link.send({"type": "action", "action": "equip", "idx": key - pygame.K_1})
         elif key == pygame.K_l:
@@ -2017,7 +2047,7 @@ class CoopClient:
         else:
             ui.draw_inventory(s, self.you, mp, dragging_from=self.drag_from,
                               highlighted=set(self.trade.get("my_offer_idx", [])) if self.trade else (),
-                              socket_pair=self.pending_socket)
+                              socket_pair=self.pending_socket, mode=mode)
 
     def _current_place(self):
         """(zone_kind, key, title, subtitle, music_zone) for game.zone_banner, or None."""

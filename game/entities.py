@@ -49,6 +49,12 @@ def _circle_clear(is_solid_fn, cx, cy, radius):
                 or is_solid_fn(cx, cy + radius) or is_solid_fn(cx, cy - radius))
 
 
+# precise combat (night-horror update): players shoot about half as often but every hit lands
+# about twice as hard (realm_sim.PLAYER_DAMAGE_MULT) - same DPS, but aim matters
+PLAYER_FIRE_RATE_MULT = 0.55
+BACKPACK2_SIZE = 12   # the dock's "Bag 2" tab
+RUNE_SLOT_COUNT = 12  # the dock's "Shards" tab (game/runes.py)
+EQUIP_ATTRS = ("weapon", "ability", "armor", "ring")
 LEVEL_CAP = 20
 PRETELEGRAPH_WINDOW = 0.2  # seconds before a ranged enemy's shot that Enemy._pretelegraph
 # turns on (a readability glow, see Enemy.update()/draw()) - pure visual, no gameplay effect
@@ -144,6 +150,11 @@ class Player:
         self.pet_fused = False  # one-shot: set by a successful fusion, cleared by the owner after its VFX
         self.backpack = []  # up to 8 loose items
         self.backpack_size = 8
+        # the dock's extra tabs: "Bag 2" (a second dense backpack) and "Shards" (12 Weapon
+        # Shard slots, the first runes.RUNE_ACTIVE_SLOTS of which are ACTIVE - see game/runes.py)
+        self.backpack2 = []
+        self.backpack2_size = BACKPACK2_SIZE
+        self.rune_slots = [None] * RUNE_SLOT_COUNT
         self.alive = True
         self.kills = 0
         self.spawn_time = 0.0
@@ -214,7 +225,7 @@ class Player:
 
     def atk_interval(self):
         mult = self.HASTE_MULT if self.haste_time > 0 else 1.0
-        return 1.0 / max(0.5, C.attacks_per_sec(self.total_stat("dex")) * mult)
+        return 1.0 / max(0.3, C.attacks_per_sec(self.total_stat("dex")) * mult * PLAYER_FIRE_RATE_MULT)
 
     def gain_xp(self, amount):
         if self.level >= LEVEL_CAP:
@@ -273,6 +284,119 @@ class Player:
         self.backpack.append(it)
         return True
 
+    # ---------------------------------------------- generic containers (dock tabs) --
+    def _get_slot(self, ref):
+        kind, idx = ref
+        if kind == "backpack":
+            return self.backpack[idx] if 0 <= idx < len(self.backpack) else None
+        if kind == "bag2":
+            return self.backpack2[idx] if 0 <= idx < len(self.backpack2) else None
+        if kind == "rune":
+            return self.rune_slots[idx] if 0 <= idx < len(self.rune_slots) else None
+        if kind == "equip" and idx in EQUIP_ATTRS:
+            return getattr(self, idx)
+        return None
+
+    def _valid_ref(self, ref):
+        kind, idx = ref
+        if kind == "backpack":
+            return isinstance(idx, int) and 0 <= idx < self.backpack_size
+        if kind == "bag2":
+            return isinstance(idx, int) and 0 <= idx < self.backpack2_size
+        if kind == "rune":
+            return isinstance(idx, int) and 0 <= idx < RUNE_SLOT_COUNT
+        return kind == "equip" and idx in EQUIP_ATTRS
+
+    def _fits(self, item, ref):
+        """Can `item` (or None) sit in slot `ref`?"""
+        if item is None:
+            return True
+        kind, idx = ref
+        from game import runes
+        if kind == "rune":
+            return runes.is_rune(item)
+        if kind == "equip":
+            return item.slot == idx
+        return True
+
+    def move_item(self, src, dst):
+        """Moves (or swaps) an item between the backpack, Bag 2, the Shard slots and the
+        equipment - the one authoritative rule both single-player and the co-op server
+        use. Shards only go into Shard slots / bags; nothing else goes into a Shard slot;
+        equipment only takes its own slot type. Returns True if anything moved."""
+        src, dst = (src[0], src[1]), (dst[0], dst[1])
+        if src == dst or not (self._valid_ref(src) and self._valid_ref(dst)):
+            return False
+        it = self._get_slot(src)
+        if it is None:
+            return False
+        tgt = self._get_slot(dst)
+        if not self._fits(it, dst) or not self._fits(tgt, src):
+            return False
+        dense = {"backpack": (self.backpack, self.backpack_size), "bag2": (self.backpack2, self.backpack2_size)}
+        if tgt is not None:  # a straight swap of the two slots' contents
+            self._set_slot(src, tgt)
+            self._set_slot(dst, it)
+            return True
+        if dst[0] in dense:
+            lst, cap = dense[dst[0]]
+            if len(lst) >= cap and src[0] != dst[0]:
+                return False
+        self._clear_slot(src)
+        if dst[0] in dense:
+            lst, _cap = dense[dst[0]]
+            lst.insert(min(dst[1], len(lst)), it)
+        else:
+            self._set_slot(dst, it)
+        return True
+
+    def _set_slot(self, ref, item):
+        kind, idx = ref
+        if kind == "backpack":
+            self.backpack[idx] = item
+        elif kind == "bag2":
+            self.backpack2[idx] = item
+        elif kind == "rune":
+            self.rune_slots[idx] = item
+        else:
+            setattr(self, idx, item)
+
+    def _clear_slot(self, ref):
+        kind, idx = ref
+        if kind == "backpack":
+            self.backpack.pop(idx)
+        elif kind == "bag2":
+            self.backpack2.pop(idx)
+        elif kind == "rune":
+            self.rune_slots[idx] = None
+        else:
+            setattr(self, idx, None)
+
+    def take_slot(self, ref):
+        """Removes and returns the item in `ref` (e.g. to drop it on the ground)."""
+        it = self._get_slot(ref)
+        if it is not None:
+            self._clear_slot(ref)
+        return it
+
+    def put_slot(self, ref, item):
+        """Puts `item` back into `ref` (an empty slot / the end of a bag). True if it fit."""
+        if not self._valid_ref(ref) or not self._fits(item, ref) or self._get_slot(ref) is not None:
+            return False
+        kind, idx = ref
+        if kind in ("backpack", "bag2"):
+            lst, cap = (self.backpack, self.backpack_size) if kind == "backpack" else (self.backpack2, self.backpack2_size)
+            if len(lst) >= cap:
+                return False
+            lst.insert(min(idx, len(lst)), item)
+        else:
+            self._set_slot(ref, item)
+        return True
+
+    def active_rune_effects(self):
+        from game import runes
+        return runes.active_effects(self.rune_slots)
+
     def swap_backpack(self, i, j):
         """Reorders two backpack slots (drag-and-drop within the bag)."""
         if 0 <= i < len(self.backpack) and 0 <= j < len(self.backpack) and i != j:
@@ -282,6 +406,9 @@ class Player:
 
     def try_pickup(self, item):
         if len(self.backpack) >= self.backpack_size:
+            if len(self.backpack2) < self.backpack2_size:  # overflow into Bag 2
+                self.backpack2.append(item)
+                return True
             return False
         self.backpack.append(item)
         return True
@@ -667,6 +794,8 @@ class Player:
             ability=self.ability.to_json() if self.ability else None,
             backpack=[it.to_json() for it in self.backpack],
             backpack_size=self.backpack_size,
+            backpack2=[it.to_json() for it in self.backpack2],
+            rune_slots=[it.to_json() if it is not None else None for it in self.rune_slots],
             shield_hp=round(self.shield_hp, 1),
             pet=self.pet.net_state() if self.pet else None,
             title=self.title,
@@ -698,6 +827,10 @@ class Player:
         # default 8 for save files written before the Batch-12 Echo Keeper
         # backpack-slot unlock existed - never silently shrinks an old save
         p.backpack_size = d.get("backpack_size", 8)
+        # Bag 2 / Shards (night-horror update) - absent from older saves -> empty
+        p.backpack2 = [Item.from_json(j) for j in (d.get("backpack2") or [])][:BACKPACK2_SIZE]
+        runes = list(d.get("rune_slots") or [])[:RUNE_SLOT_COUNT]
+        p.rune_slots = [Item.from_json(j) if j else None for j in runes] + [None] * (RUNE_SLOT_COUNT - len(runes))
         p.shield_hp = d.get("shield_hp", 0.0)
         p.pet = Pet.from_net_state(d["pet"]) if d.get("pet") else None
         p.title = d.get("title", "")
@@ -1280,6 +1413,8 @@ class Enemy:
         outcrops in the open Realm, dungeon walls) - same sliding-along-a-wall
         approach as Player.net_update. tile_map=None (e.g. old call sites/tests)
         skips collision entirely, same as before this was added."""
+        if getattr(self, "slow_time", 0.0) > 0:
+            delta = delta * (1.0 - getattr(self, "slow_amount", 0.0))  # Frostbite shard
         if tile_map is None:
             self.pos += delta
             return
@@ -1304,6 +1439,7 @@ class Enemy:
         # games' status effects (actual damage application is in RealmSim.update())
         self.bleed_time = max(0.0, self.bleed_time - dt)
         self.burn_time = max(0.0, self.burn_time - dt)
+        self.slow_time = max(0.0, getattr(self, "slow_time", 0.0) - dt)  # Frostbite shard
         self.vulnerable_time = max(0.0, self.vulnerable_time - dt)
         self._fire_pose_t = max(0.0, self._fire_pose_t - dt)
         if self.frozen_time > 0:
@@ -1992,7 +2128,9 @@ class Bullet:
                  # enemy-attack motions (game/enemy_attacks.py): sine sway, accelerate/brake,
                  # capped-turn homing, split-on-expiry, plus who fired it (boss hits shake more)
                  "age", "wave_amp", "wave_freq", "wave_phase", "base_dir", "accel", "max_speed", "min_speed",
-                 "home_turn", "target", "split", "split_speed", "split_aimed", "src_rank")
+                 "home_turn", "target", "split", "split_speed", "split_aimed", "src_rank",
+                 # player shots: Weapon Shard effects (game/runes.py), heavy/crit hits, Seeker homing
+                 "rune_fx", "heavy", "crit", "seek")
 
     def __init__(self, pos, vel, dmg, owner, color, pierce, radius, life, motion="straight", status_effect=None,
                  shape="bolt"):
@@ -2030,6 +2168,10 @@ class Bullet:
         self.split_speed = 0.0
         self.split_aimed = False
         self.src_rank = None     # enemy bullets: the shooter's rank ("boss" hits shake harder)
+        self.rune_fx = None      # {effect: strength} from the shooter's ACTIVE Weapon Shards
+        self.heavy = False       # a top-of-range roll or a crit (gold popup)
+        self.crit = False
+        self.seek = 0.0          # Seeker shard: homing turn rate (rad/s)
 
     def update(self, dt):
         self.prev_pos = pygame.Vector2(self.pos)

@@ -45,7 +45,9 @@ ENEMY_WEIGHTS = [16, 12, 7, 5, 14, 6, 3, 3, 7, 6, 6, 5, 5, 5,
                  4, 4, 4, 4, 4, 4, 4, 4, 4, 4]
 MOB_PORTAL_CHANCE = 0.08  # elite kills have this chance to open a bonus-room portal
 
-AUTO_AIM_CONE_DEG = 16
+AUTO_AIM_CONE_DEG = 7  # precise combat: aim assist only nudges, it doesn't aim for you
+PLAYER_DAMAGE_MULT = 1.8  # see entities.PLAYER_FIRE_RATE_MULT (0.55): ~same DPS, heavier hits
+HEAVY_HIT_RATIO = 1.5  # a rolled hit this far above the weapon's average shows a gold popup
 AUTO_AIM_RANGE = 520
 
 # Class balance constants (see player_fire) - grounded against the real RotMG
@@ -1633,6 +1635,19 @@ class RealmSim:
         """Advances every bullet; enemy homers steer at the nearest player and
         "split" bullets (seed mines, splitting stones) burst into children on expiry."""
         kept, children = [], []
+        seekers = [b for b in self.bullets if getattr(b, "seek", 0) and b.owner != "enemy"]
+        if seekers:
+            foes = [e for e in self.enemies if e.alive and not e.neutral and not e.unshootable]
+            for b in seekers:
+                near = [e for e in foes if e.pos.distance_squared_to(b.pos) < 300 * 300]
+                if near and b.vel.length_squared() > 1:
+                    tgt = min(near, key=lambda e: e.pos.distance_squared_to(b.pos))
+                    want = (tgt.pos - b.pos)
+                    if want.length_squared() > 1:
+                        ang = b.vel.angle_to(want)
+                        ang = (ang + 180) % 360 - 180
+                        step = math.degrees(b.seek) * dt
+                        b.vel.rotate_ip(max(-step, min(step, ang)))
         for b in self.bullets:
             if b.motion == "homing" and b.owner == "enemy" and alive:
                 b.target = min(alive, key=lambda q: q.pos.distance_squared_to(b.pos)).pos
@@ -2319,9 +2334,20 @@ class RealmSim:
                 # sitting in the grid's bucket for a later bullet to (correctly) skip.
                 for e in _nearby_enemies(b.pos):
                     if e.alive and b.hit_test(e.pos, e.radius):
-                        killed = e.take_damage(b.dmg)
+                        fx = getattr(b, "rune_fx", None) or {}
+                        hit = b.dmg
+                        if "executioner" in fx and e.hp < e.hp_max * 0.3:
+                            from game import runes as _runes
+                            hit = int(round(hit * (1 + _runes.magnitude("executioner", fx["executioner"]))))
+                        killed = e.take_damage(hit)
                         self._credit_hit(e, b.owner, e._last_hit_damage)
-                        self.damage_popups.append((e.pos.x, e.pos.y, e._last_hit_damage, (255, 220, 90)))
+                        heavy = getattr(b, "heavy", False)
+                        self.damage_popups.append((e.pos.x, e.pos.y, e._last_hit_damage,
+                                                   (255, 160, 30) if heavy else (255, 220, 90)))
+                        if heavy:
+                            self.vfx_events.append(("heavy_hit", e.pos.x, e.pos.y, (255, 190, 60)))
+                        if fx:
+                            killed = self._apply_rune_hit(b, e, fx, killed, killer, players) or killed
                         hit_kind = "hit_boss" if e.rank == "boss" else "hit_enemy"
                         self.vfx_events.append((hit_kind, e.pos.x, e.pos.y, (255, 220, 90)))
                         if b.status_effect == "bleed":
@@ -2369,8 +2395,80 @@ class RealmSim:
                             break
             if not consumed:
                 remaining.append(b)
+        remaining.extend(self._rune_spawned)
+        self._rune_spawned = []
         self.bullets = remaining
         self.obstacles = [ob for ob in self.obstacles if ob.alive]
+
+    _rune_spawned = []
+
+    def _rune_damage(self, e, amount, pid, players, color, reward=True):
+        """Extra damage from a shard effect (chain arcs, echoes): popup, credit, reward."""
+        if not e.alive or amount <= 0:
+            return False
+        killed = e.take_damage(amount)
+        self._credit_hit(e, pid, e._last_hit_damage)
+        self.damage_popups.append((e.pos.x, e.pos.y, e._last_hit_damage, color))
+        if killed and reward:
+            self._reward(e, players.get(pid))
+        return killed
+
+    def _apply_rune_hit(self, b, e, fx, killed, killer, players):
+        """Weapon Shard effects on a landed player shot (see game/runes.py). Returns True if
+        the target died from one of them (the caller rewards a kill from the main hit)."""
+        from game import runes as R_
+        mag = R_.magnitude
+        pid = b.owner
+        died = False
+        col = R_.effect_color(fx)
+        if e.alive:
+            if "bleed" in fx:
+                e.bleed_time = BLEED_DURATION
+                e.bleed_dps = max(e.bleed_dps, b.dmg * BLEED_DPS_FRACTION * mag("bleed", fx["bleed"]))
+                e.status_source_pid = pid
+            if "burn" in fx:
+                e.burn_time = BURN_DURATION
+                e.burn_dps = b.dmg * BURN_DPS_FRACTION * mag("burn", fx["burn"])
+                e.status_source_pid = pid
+            if "vulnerable" in fx:
+                e.vulnerable_time = VULNERABLE_DURATION
+                e.vulnerable_mult = max(getattr(e, "vulnerable_mult", 1.0), 1.0 + mag("vulnerable", fx["vulnerable"]))
+                e.status_source_pid = pid
+            if "frostbite" in fx:
+                e.slow_time = 2.5
+                e.slow_amount = mag("frostbite", fx["frostbite"])
+            if "impact" in fx and b.vel.length_squared() > 1:
+                push = mag("impact", fx["impact"]) * (0.4 if e.rank == "boss" else 1.0)
+                e._move(b.vel.normalize() * push, self.enemy_view)
+        if killer is not None and "leech" in fx:
+            killer.hp = min(killer.hp_max, killer.hp + max(1, int(round(e._last_hit_damage * mag("leech", fx["leech"])))))
+        if "chain" in fx:
+            jumps = mag("chain", fx["chain"])
+            near = sorted((o for o in self.enemies if o is not e and o.alive and not o.neutral and not o.unshootable
+                           and o.pos.distance_squared_to(e.pos) < 170 * 170),
+                          key=lambda o: o.pos.distance_squared_to(e.pos))[:jumps]
+            src = pygame.Vector2(e.pos)
+            for o in near:
+                self.vfx_events.append(("rune_chain", src.x, src.y, (170, 150, 255), o.pos.x, o.pos.y))
+                self._rune_damage(o, int(round(b.dmg * 0.4)), pid, players, (190, 170, 255))
+                src = pygame.Vector2(o.pos)
+        if "splinter" in fx and b.vel.length_squared() > 1:
+            n = mag("splinter", fx["splinter"])
+            d = b.vel.normalize()
+            for k in range(n):
+                off = -35 + 70 * k / max(1, n - 1)
+                sb = _mk_bullet(e.pos + d * (e.radius + 4), d.rotate(off), 360, max(1, int(b.dmg * 0.35)),
+                                (230, 220, 180), owner=pid, radius=3, lifetime=0.35, shape="star")
+                self._rune_spawned.append(sb)
+        if "echo" in fx and killer is not None and e.alive:
+            killer._rune_echo = getattr(killer, "_rune_echo", 0) + 1
+            if killer._rune_echo >= mag("echo", fx["echo"]):
+                killer._rune_echo = 0
+                self.vfx_events.append(("rune_echo", e.pos.x, e.pos.y, (160, 220, 255)))
+                died = self._rune_damage(e, int(round(b.dmg * 0.6)), pid, players, (170, 225, 255), reward=False)
+        if col is not None:
+            self.vfx_events.append(("rune_hit", e.pos.x, e.pos.y, col))
+        return died and not killed
 
     def _priest_heal_on_hit(self, caster, players):
         """A small passive heal to every nearby ally on every Priest hit - see
@@ -2943,9 +3041,18 @@ class RealmSim:
         matching the per-class weapon behaviour. Returns the list of Bullets
         (already appended to self.bullets) so a caller can also broadcast them.
         """
-        from game.constants import damage_roll
+        from game import runes as _runes
         p._fire_flash_t = p.FIRE_FLASH_DURATION  # brief recoil-nudge + tint - see Player.draw()
-        dmg = damage_roll(p.weapon.min_dmg, p.weapon.max_dmg, p.total_stat("att"))
+        # precise combat: slower shots (entities.PLAYER_FIRE_RATE_MULT) that hit much harder; a roll
+        # in the top 15% of the weapon's range is a "heavy" hit (gold popup)
+        mn, mx = sorted((p.weapon.min_dmg, p.weapon.max_dmg))
+        base = random.randint(mn, mx)
+        dmg = max(1, round(base * (p.total_stat("att") + 25) / 50 * PLAYER_DAMAGE_MULT))
+        heavy = mx > mn and base >= mn + 0.85 * (mx - mn)
+        rune_fx = p.active_rune_effects() if hasattr(p, "rune_slots") else {}
+        crit = "keen" in rune_fx and random.random() < _runes.magnitude("keen", rune_fx["keen"])
+        if crit:
+            dmg *= 2
         # a socketed proc (see items.apply_socket) always wins over the weapon's own
         # native UT mechanic - it can only ever exist on a weapon that either has no
         # native mechanic of its own, or had one deliberately overwritten by socketing.
@@ -3022,6 +3129,15 @@ class RealmSim:
                                             (255, 240, 170), owner=p.pid, pierce=3, radius=6, lifetime=0.9,
                                             shape="star"))
                 self.sound_events.append(("sfx", "starfall", p.pos.x, p.pos.y))
+        tint = _runes.effect_color(rune_fx)
+        for b in made:
+            b.rune_fx = rune_fx
+            b.heavy = heavy or crit
+            b.crit = crit
+            if "seeker" in rune_fx:
+                b.seek = _runes.magnitude("seeker", rune_fx["seeker"])
+            if tint is not None:  # the shot carries its strongest shard's colour
+                b.color = tuple((c + t) // 2 for c, t in zip(b.color, tint))
         self.bullets.extend(made)
         return made
 

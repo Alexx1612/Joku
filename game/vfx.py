@@ -532,6 +532,19 @@ def dispatch(vfx_events):
             spawn_ring(pos, (255, 230, 180), max_radius=110, life=0.45)
             if _listener_dist(x, y) <= BOSS_SHAKE_RANGE:
                 trigger_shake(0.6, 12)
+        elif kind == "heavy_hit":
+            # precise combat: a hit from the top of the weapon's range (or a crit) cracks harder
+            spawn_burst(pos, color, count=16, speed=(90, 230), life=(0.15, 0.35), radius=(2, 4))
+            spawn_ring(pos, color, max_radius=34, life=0.22)
+        elif kind == "rune_hit":
+            spawn_burst(pos, color, count=8, speed=(40, 140), life=(0.18, 0.35), radius=(1, 3))
+        elif kind == "rune_chain":
+            x2, y2 = (ev[4], ev[5]) if len(ev) > 5 else (x + 40, y)
+            _add_shape("bolt", pos, color, 0.22, points=_jagged((x, y), (x2, y2), segments=6, jitter=8))
+            spawn_burst((x2, y2), color, count=6, speed=(40, 120), life=(0.15, 0.3), radius=(1, 2))
+        elif kind == "rune_echo":
+            spawn_ring(pos, color, max_radius=44, life=0.3)
+            spawn_ring(pos, (255, 255, 255), max_radius=24, life=0.2)
         elif kind == "divine_second_wind":
             # the Divine armor saving you: a golden pillar + halo rings rising off the player
             _add_shape("pillar", pos, color, 0.7, w=26, h=120)

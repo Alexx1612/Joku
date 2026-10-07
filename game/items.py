@@ -71,6 +71,9 @@ class Item:
     # "second_wind" (armor) / "" - the effects live in realm_sim.player_fire / Player.take_damage
     divine: bool = False
     divine_proc: str = ""
+    # Weapon Shards only (slot "rune", see game/runes.py): which effect, how strong
+    rune_effect: str = ""
+    rune_rarity: str = ""
 
     @property
     def band(self) -> str:
@@ -80,13 +83,17 @@ class Item:
 
     @property
     def color(self):
+        if self.rune_rarity:  # Weapon Shards are framed by rarity (game/runes.py)
+            from game.runes import RARITY_COLORS
+            return RARITY_COLORS.get(self.rune_rarity, TIER_COLORS[self.band])
         return TIER_COLORS[self.band]
 
     @property
     def display_name(self) -> str:
         if self.divine:
             return f"[Divine] {self.name}"
-        prefix = f"[T{self.tier}] " if not self.is_ut and self.shape not in ("carrier", "quest", "ingot") else ""
+        prefix = (f"[T{self.tier}] " if not self.is_ut and self.shape not in ("carrier", "quest", "ingot")
+                  and not self.rune_effect else "")
         return f"{prefix}{self.name}"
 
     def to_json(self):
@@ -96,7 +103,8 @@ class Item:
                     effect=self.effect, mp_cost=self.mp_cost, magnitude=self.magnitude,
                     description=self.description, pet_kind=self.pet_kind, shard_theme=self.shard_theme,
                     socketed_proc=self.socketed_proc, pet_state=self.pet_state,
-                    quest_key=self.quest_key, divine=self.divine, divine_proc=self.divine_proc)
+                    quest_key=self.quest_key, divine=self.divine, divine_proc=self.divine_proc,
+                    rune_effect=self.rune_effect, rune_rarity=self.rune_rarity)
 
     @staticmethod
     def from_json(d):
@@ -751,6 +759,10 @@ def _roll_loot_once(cls_name: str, enemy_rank: str, difficulty: float = 0.5, sou
             drops.append(("purple", _random_temp_potion()))
     if source:
         drops.extend(_source_extras(cls_name, enemy_rank, source))
+    from game import runes
+    rune = runes.maybe_drop(enemy_rank)  # Weapon Shards: elites ~4%, bosses ~25%
+    if rune is not None:
+        drops.append(("purple", rune))
     return drops
 
 
