@@ -986,7 +986,7 @@ def _glow_sprite(radius, color):
     spr = _GLOW_CACHE.get(key)
     if spr is None:
         spr = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
-        for r in range(radius, 0, -2):
+        for r in range(radius, 0, -1):  # every radius: no visible banding
             f = (1.0 - r / radius) ** 1.6
             pygame.draw.circle(spr, (int(color[0] * f), int(color[1] * f), int(color[2] * f)), (radius, radius), r)
         _GLOW_CACHE[key] = spr
@@ -1184,13 +1184,35 @@ def draw_night_emissives(surf, cam, enemies, light_level):
     if dark <= 0.2:
         return
     from game.entities import ENEMY_KINDS
+    from game import sprites as _spr
     t = pygame.time.get_ticks() / 1000.0
+    bucket = max(1, min(10, int(round(dark * 10))))
     for e in enemies:
         d = ENEMY_KINDS.get(e.kind, {})
         if e.kind == "fireflies":
             _draw_firefly_swarm(surf, cam, e, t, dark)
             continue
         if not d.get("night_only") or getattr(e, "_disguised", False):
+            continue
+        scale = getattr(e, "scale", None) or d.get("scale", 1.0)
+        which, idx = getattr(e, "_anim_frame", ("move", 0))
+        glows = _spr.enemy_frames(e.kind, scale, "glow_attack" if which == "attack" else "glow") \
+            or _spr.enemy_frames(e.kind, scale, "glow")
+        if glows:
+            # the painted emissive layer of the CURRENT frame (eyes, lure, iris, scythe edge),
+            # added over the darkness - you see it from beyond your light
+            gi = idx % len(glows)
+            key = ("emit", e.kind, round(scale, 2), which, gi, bucket)
+            gs = _EYE_GLOW.get(key)
+            if gs is None:
+                gs = glows[gi].copy()
+                f = bucket / 10.0
+                gs.fill((int(255 * f), int(255 * f), int(255 * f), 255), special_flags=pygame.BLEND_RGBA_MULT)
+                _EYE_GLOW[key] = gs
+            x, y = cam(e.pos)
+            surf.blit(gs, gs.get_rect(center=(int(x), int(y))), special_flags=pygame.BLEND_ADD)
+            continue
+        if e.kind == "fireflies":  # (handled above)
             continue
         col = {"hollow_watcher": (255, 60, 60), "red_harvester": (255, 50, 40),
                "lantern_eater": (255, 210, 120)}.get(e.kind, (230, 230, 255))
