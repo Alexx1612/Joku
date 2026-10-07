@@ -301,11 +301,19 @@ def draw_world(surf, marks, cam, player_pos, view_rect, font, t=0.0):
         if inner.collidepoint(sx, sy):
             bob = 4 * math.sin(t * 3.0)
             top = int(sy - 46 + bob)
-            pygame.draw.line(surf, m["color"], (sx, top + 10), (sx, sy - 6), 2)
+            # two targets close together (Father Given by the Realm portal): fan the pins out
+            # sideways, each stem still leading down to its own spot
+            px, step = int(sx), 0
+            pr = pygame.Rect(px - 10, top - 10, 20, 20)
+            while any(pr.colliderect(q) for q in placed) and step < 8:
+                step += 1
+                px = int(sx) + 24 * ((step + 1) // 2) * (1 if step % 2 else -1)
+                pr.x = px - 10
+            pygame.draw.line(surf, m["color"], (px, top + 10), (sx, sy - 6), 2)
             pygame.draw.circle(surf, m["color"], (int(sx), int(sy)), int(_pulse(t, 10, 6)), width=2)
-            _diamond(surf, m["color"], int(sx), top, 9)
-            placed.append(pygame.Rect(int(sx) - 10, top - 10, 20, 20))
-            labels.append((m, sx, top))
+            _diamond(surf, m["color"], px, top, 9)
+            placed.append(pr)
+            labels.append((m, px, top))
         else:
             ps = cam(pygame.Vector2(player_pos))
             cx, cy = view_rect.center if not view_rect.collidepoint(ps) else ps

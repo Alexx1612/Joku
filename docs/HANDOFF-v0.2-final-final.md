@@ -67,6 +67,11 @@ It is committed **locally only**: not pushed, and the release has not been rebui
    - Spawn-on-top-of-you fix.
    - Committed **locally** after be3256b; not pushed.
 
+9. **Night sky, quest markers and gem forging (docs 35 §11, 36, 37; local, not pushed)**
+   - **Night sky:** the golden-hour sweep, cloudy / rain / storm nights with lightning, shooting stars and Star Fragments, night herbs, owls, frost sparkle.
+   - **Quest markers:** Show marker / T; pins on the minimap, full map and world, plus edge arrows.
+   - **Gem forging:** 7 stones in 5 grades, set into weapons at the Anvil, elemental trails and bursts, gem veins mined with F.
+
 ## Checkpoint commits (local, on top of 23123be)
 - `cf3a9ec`: telegraphs, story v2, NetLink fix
 - `50cc80d`: gear, forge, Divine, Heroic, gates
@@ -74,7 +79,7 @@ It is committed **locally only**: not pushed, and the release has not been rebui
 - `2b134b5`: Mad God's Room, effects wiring, docs
 
 ## Conventions (unchanged, keep following)
-- Run `python tests/run_all_checks.py` after every batch. There are now **77 scripts**.
+- Run `python tests/run_all_checks.py` after every batch. There are now **80 scripts**. `check_areas_trees_bosses` and `check_big_islands` can flake on the random map or timing; re-run them alone.
 - Look at headless screenshots for visual work: set `RR_SHOT_DIR` for the new checks.
 - All art and music must be original.
 - Don't commit, push or release without the user's OK.
