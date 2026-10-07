@@ -1906,6 +1906,8 @@ class Enemy:
 
         cx, cy = cam(self.pos)
         r = img.get_rect(center=(cx + anim_dx, cy + anim_dy))
+        if self.kind == "fireflies":
+            return  # the swarm IS its light: ui.draw_night_emissives draws the glowing, trailing flies
         if getattr(self, "_disguised", False):
             # a Night Mimic: drawn as an ordinary brown loot bag until it bites
             bag = sprites.bag_sprite(True, (120, 84, 48))

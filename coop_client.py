@@ -1776,6 +1776,10 @@ class CoopClient:
             self.clock_info = snap.get("clock")
             self.sheltered = snap.get("sheltered", False)
             if snap.get("doors") and self.tilemap is not None:
+                sig = hash(tuple(d[2] for d in snap["doors"]))
+                if sig != getattr(self, "_doors_sig", None):
+                    self._doors_sig = sig
+                    self._doors_version = getattr(self, "_doors_version", 0) + 1
                 g = self.tilemap.grid
                 for x, y, is_open in snap["doors"]:
                     if 0 <= y < len(g) and 0 <= x < len(g[0]):
@@ -2187,6 +2191,7 @@ class CoopClient:
         torch_positions = [self.cam(pos) for pos in
                            world.nearby_torch_world_positions(self.tilemap, self.you.pos.x, self.you.pos.y)]
         lights = []
+        lights_world = []
         if self.light_level < 0.98:
             from game.entities import GLOWING_KINDS
             snuffed = {tuple(t) for t in (self.clock_info or {}).get("snuffed", ())}
@@ -2194,22 +2199,37 @@ class CoopClient:
                                                         lit=not (self.clock_info or {}).get("lanterns_out")):
                 if (int(lx // C.TILE), int(ly // C.TILE)) in snuffed:
                     continue
-                sx, sy = self.cam((lx, ly))
-                lights.append((sx, sy, lr, lc))
+                lights_world.append((lx, ly, lr, lc))
             for e in self.enemies:
                 g = GLOWING_KINDS.get(e.kind)
                 if g:
-                    sx, sy = self.cam(e.pos)
-                    lights.append((sx, sy, g[0], g[1]))
+                    lights_world.append((e.pos.x, e.pos.y, g[0], g[1]))
+            for (lx, ly, lr, lc) in lights_world:
+                sx, sy = self.cam((lx, ly))
+                lights.append((sx, sy, lr, lc))
         clock = self.clock_info or {}
-        if clock.get("event") == "fog" and self.light_level < 0.5:
-            ui.draw_night_fog(s, 1.0 - self.light_level)
-        ui.draw_day_night_overlay(s, self.light_level, self.blood_moon, torch_positions,
-                                  luminosity=settings.get("luminosity"), player_screen=self.cam(self.you.pos),
-                                  lights=lights, light_mult=clock.get("light_mult", 1.0))
+        fog = clock.get("event") == "fog" and self.light_level < 0.5
+        if fog:
+            ui.draw_night_fog(s, 1.0 - self.light_level, self.cam)
+        if self.light_level < 0.98 and self.tilemap is not None:
+            vfx.night_ambience(self.you.pos, world.TILE_TO_BIOME_NAME.get(
+                self.tilemap.tile_at(self.you.pos.x, self.you.pos.y)), bool(clock.get("night")), self.blood_moon)
+        ui.draw_day_night_overlay(
+            s, self.light_level, self.blood_moon, torch_positions,
+            luminosity=settings.get("luminosity"), player_screen=self.cam(self.you.pos),
+            lights=lights, light_mult=clock.get("light_mult", 1.0),
+            occlusion=dict(grid=self.tilemap.grid, solid=world.SOLID, cam=self.cam, tile=C.TILE,
+                           player_world=(self.you.pos.x, self.you.pos.y), lights_world=lights_world,
+                           version=getattr(self, "_doors_version", 0))
+            if (self.tilemap is not None and self.zone == "realm") else None)
+        if fog:
+            ui.draw_fog_veil(s, 1.0 - self.light_level, self.cam)
         ui.draw_light_glows(s, lights, self.light_level)
         ui.draw_night_emissives(s, self.cam, self.enemies, self.light_level)
         if clock.get("night"):
+            if any(e.kind == "shade_stalker" and e.pos.distance_to(self.you.pos) < 330 for e in self.enemies):
+                ui.draw_light_shimmer(s, self.cam(self.you.pos),
+                                      int(ui.PLAYER_LIGHT_RADIUS * clock.get("light_mult", 1.0)))
             ui.draw_blood_pulse(s, self._night_pulse(self.blood_moon))
         if getattr(self, "sheltered", False):
             ui.draw_sheltered_badge(s)

@@ -98,10 +98,129 @@ def check_light_sprite_is_cached_not_rebuilt():
     print("check_light_sprite_is_cached_not_rebuilt: PASSED")
 
 
+class _Cam:
+    """Identity camera: world == screen (what the occlusion path expects: cam(world) -> screen)."""
+    angle = 0.0
+
+    def __call__(self, pos):
+        return int(pos[0]), int(pos[1])
+
+
+def _occluded(grid, light_world, player_world=None):
+    from game import world
+    surf = pygame.Surface((C.SCREEN_W, C.SCREEN_H)).convert_alpha()
+    surf.fill((255, 255, 255, 255))
+    occ = dict(grid=grid, solid=world.SOLID, cam=_Cam(), tile=C.TILE,
+               player_world=player_world if player_world is not None else (-5000, -5000),
+               lights_world=[(light_world[0], light_world[1], 320, (255, 220, 160))],
+               version=(id(grid), sum(row.count(world.DOOR_OPEN) for row in grid)))
+    ui.draw_day_night_overlay(surf, 0.0, False, luminosity=0.5, occlusion=occ)
+    return surf
+
+
+def check_walls_cast_shadows():
+    """A wall between a light and a spot leaves that spot dark; the same spot with no wall
+    in the way is lit (rays stop at solid tiles - real shadows)."""
+    from game import world, lighting
+    lighting.clear_caches()
+    w, h = C.SCREEN_W // C.TILE + 2, C.SCREEN_H // C.TILE + 2
+    open_grid = [[world.GRASS] * w for _ in range(h)]
+    walled = [row[:] for row in open_grid]
+    for y in range(h):
+        walled[y][14] = world.ROCK  # a wall at x = 14 tiles (448..480 px)
+    light = (10 * C.TILE, 10 * C.TILE)
+    spot = (16 * C.TILE, 10 * C.TILE)  # 6 tiles right of the light, behind the wall
+    lit_open = _brightness(_occluded(open_grid, light), spot)
+    lit_walled = _brightness(_occluded(walled, light), spot)
+    near_side = _brightness(_occluded(walled, light), (12 * C.TILE, 10 * C.TILE))
+    assert lit_open > lit_walled + 150, (lit_open, lit_walled)
+    assert near_side > lit_walled + 150, "the light's own side of the wall stays lit"
+    # a closed door is a wall too; an open one lets the light out
+    door = [row[:] for row in walled]
+    for y in range(8, 13):
+        door[y][14] = world.DOOR_CLOSED
+    shut = _brightness(_occluded(door, light), spot)
+    for y in range(8, 13):
+        door[y][14] = world.DOOR_OPEN
+    lighting.clear_caches()
+    opened = _brightness(_occluded(door, light), spot)
+    assert opened > shut + 150, (opened, shut)
+    print(f"check_walls_cast_shadows: PASSED (open {lit_open}, behind wall {lit_walled}, door {shut}->{opened})")
+
+
+def check_light_polygons_are_cached():
+    """A static lamp's lit polygon is built once and reused; the player's light only
+    rebuilds when the player moves to another tile."""
+    from game import world, lighting
+    lighting.clear_caches()
+    lighting.stats["poly_builds"] = 0
+    w, h = C.SCREEN_W // C.TILE + 2, C.SCREEN_H // C.TILE + 2
+    grid = [[world.GRASS] * w for _ in range(h)]
+    for _ in range(5):
+        _occluded(grid, (300, 300), player_world=(600, 400))
+    assert lighting.stats["poly_builds"] == 2, lighting.stats  # one lamp + one player tile
+    _occluded(grid, (300, 300), player_world=(605, 404))       # same tile
+    assert lighting.stats["poly_builds"] == 2
+    _occluded(grid, (300, 300), player_world=(700, 400))       # a new tile
+    assert lighting.stats["poly_builds"] == 3
+    print("check_light_polygons_are_cached: PASSED")
+
+
+def check_lights_are_coloured_and_luminosity_orders():
+    """Lit ground takes the colour of the light reaching it (a green firefly light makes a
+    green spot), and the Luminosity setting orders the darkness."""
+    surf = pygame.Surface((400, 300)).convert_alpha()
+    surf.fill((255, 255, 255, 255))
+    ui.draw_day_night_overlay(surf, 0.0, False, luminosity=0.5, player_screen=(-900, -900),
+                              lights=[(200, 150, 100, (60, 255, 60))])
+    r, g, b, _a = surf.get_at((200, 150))
+    assert g > r + 60 and g > b + 60, (r, g, b)
+    vals = []
+    for lum in (0.0, 0.5, 1.0):
+        s2 = pygame.Surface((400, 300)).convert_alpha()
+        s2.fill((255, 255, 255, 255))
+        ui.draw_day_night_overlay(s2, 0.0, False, luminosity=lum, player_screen=(-900, -900))
+        vals.append(_brightness(s2, (200, 150)))
+    assert vals[0] < vals[1] < vals[2], vals
+    print(f"check_lights_are_coloured_and_luminosity_orders: PASSED ({vals})")
+
+
+def check_night_overlay_frame_cost():
+    """The whole night lighting pass (light map with ~10 lights, 7 of them with wall
+    shadows, scale-up + multiply) must stay a small slice of a frame at 1366x820."""
+    import time
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import _timing
+    _timing.disable_power_throttling()
+    from game import world, lighting
+    lighting.clear_caches()
+    w, h = C.SCREEN_W // C.TILE + 2, C.SCREEN_H // C.TILE + 2
+    grid = [[world.GRASS] * w for _ in range(h)]
+    for x in range(5, 40, 6):  # a few walls so the rays have something to stop on
+        for y in range(4, 20):
+            grid[y][x] = world.ROCK
+    lights = [(100 + i * 120, 200 + (i % 3) * 180, 120 + (i % 4) * 25, (255, 200, 120)) for i in range(10)]
+    surf = pygame.Surface((C.SCREEN_W, C.SCREEN_H))
+    occ = dict(grid=grid, solid=world.SOLID, cam=_Cam(), tile=C.TILE, player_world=(683, 410),
+               lights_world=lights, version=0)
+    ui.draw_day_night_overlay(surf, 0.0, False, luminosity=0.5, occlusion=occ)  # warm the caches
+    t0 = time.perf_counter()
+    n = 60
+    for _ in range(n):
+        ui.draw_day_night_overlay(surf, 0.0, False, luminosity=0.5, occlusion=occ)
+    ms = (time.perf_counter() - t0) / n * 1000
+    assert ms < 8.0, f"night lighting costs {ms:.2f} ms/frame"
+    print(f"check_night_overlay_frame_cost: PASSED ({ms:.2f} ms/frame, 10 lights)")
+
+
 if __name__ == "__main__":
     check_center_brighter_than_far_corner_at_night()
     check_light_falls_off_with_distance()
     check_no_overlay_at_full_daylight()
     check_blood_moon_tint_still_applies()
     check_light_sprite_is_cached_not_rebuilt()
+    check_walls_cast_shadows()
+    check_light_polygons_are_cached()
+    check_lights_are_coloured_and_luminosity_orders()
+    check_night_overlay_frame_cost()
     print("\nAll night-lightmap checks passed.")
