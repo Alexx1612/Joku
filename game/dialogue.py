@@ -19,7 +19,7 @@ Conversation (quest grants are authoritative) and sends view() dicts to the clie
 """
 from game.npcs import NPCS, WILDLIFE_TALK, WILDLIFE_DEFAULT
 from game.sidequests import QUESTS
-from game import forge
+from game import forge, gems
 
 BYE = "Bye."
 BACK = "Back."
@@ -40,6 +40,7 @@ class Conversation:
         self.granted = []        # quest ids accepted in this conversation (for callers/tests)
         self.sfx = []            # sound keys the caller should play (forging) - drained by main/server
         self.forged = []         # items made at the Anvil in this conversation (for callers/tests)
+        self.gem_flash = None    # colour of the last stonework (set/combine/pry) - sparks at the Anvil
 
     # ------------------------------------------------------------------ data --
     @property
@@ -95,6 +96,8 @@ class Conversation:
         if d.get("anvil"):  # Brother Hammerstein: whatever the backpack can forge right now comes first
             for i, r in enumerate(forge.forge_options(self.player)):
                 opts.append((r["label"], ("forge", i)))
+            if gems.stonework_options(self.player):  # set / combine / pry gemstones (game/gems.py)
+                opts.append(("Stonework: gems and sockets...", ("stonework",)))
         # quest hand-ins first - that's what you came back for
         for qid in d.get("quests", {}):
             q = QUESTS[qid]
@@ -118,6 +121,9 @@ class Conversation:
             opts = self._root_options()
         elif kind == "offer":
             opts = [("I'll do it!", ("accept", self.node[1])), ("Not right now.", ("back",))]
+        elif kind == "stonework":
+            opts = [(o["label"], ("gem", i)) for i, o in enumerate(gems.stonework_options(self.player, MAX_OPTIONS - 1))]
+            opts.append((BACK, ("back",)))
         else:
             opts = [(BACK, ("back",))] if self._root_options() else []
         return opts + [(BYE, ("bye",))]
@@ -136,6 +142,13 @@ class Conversation:
             return next(t[2] for t in d["topics"] if t[0] == self.node[1])
         if kind == "forged":
             return "CLANG! CLANG! ...CLANG. There. Mind, it's hot."
+        if kind == "stonework":
+            w = self.player.weapon
+            if w is None:
+                return "No weapon in your hand, no sockets to fill. Stones are pretty, mind."
+            n, used = gems.socket_count(w), len(gems.stones_in(w))
+            return (f"Your {w.name} has {n} socket{'s' if n != 1 else ''}, {used} filled. A stone goes in for "
+                    f"good - prying it out cracks it. Two alike hum together; three SING.")
         offer = d["quests"][self.node[1]]
         return {"offer": offer["offer"], "accepted": offer["accept"], "remind": offer["remind"],
                 "thanks": offer["thanks"]}.get(kind, "...")
@@ -200,6 +213,22 @@ class Conversation:
                                   got.color))
                 self.sfx.append("night_market")
             self.node = ("forged",)
+        elif act == "stonework":
+            self.used.discard(key)
+            self.node = ("stonework",)
+        elif act == "gem":
+            self.used.discard(key)
+            opts_ = gems.stonework_options(self.player, MAX_OPTIONS - 1)
+            if key[1] < len(opts_):
+                o = opts_[key[1]]
+                ok, msg, col = gems.apply_stonework(self.player, o)
+                self.msgs.append((msg, col))
+                if ok:
+                    self.sfx.append({"set": "gem_set", "combine": "gem_combine", "pry": "gem_pry"}[o["kind"]])
+                    self.gem_flash = col  # the caller bursts sparks in the stone's colour
+                else:
+                    self.sfx.append("forge_fail")
+            self.node = ("stonework",) if gems.stonework_options(self.player) else ("forged",)
         elif act == "forge":
             self.used.discard(key)  # the same slot can forge again with whatever is left
             recipes = forge.forge_options(self.player)

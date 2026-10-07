@@ -680,6 +680,17 @@ EVENT_SOUND = {
     "night_market": [(0.0, 880, 880, 0.9, "sine", 0.07, "exp_decay", 3), (0.0, 1320, 1320, 0.7, "sine", 0.03, "exp_decay", 4),
                      (0.35, 784, 784, 0.9, "sine", 0.06, "exp_decay", 3)],
     "night_blood_moon": [(0.0, 98, 92, 0.8, "square", 0.08, "exp_decay", 3)],
+    # Gemstones (game/gems.py): a stone set into a weapon - a hammer tap then a crystal chime
+    "gem_set": [(0.0, 0, 0, 0.05, "noise", 0.12, "exp_decay", 40), (0.0, 520, 380, 0.12, "square", 0.05, "exp_decay", 20),
+                (0.06, 1760, 1760, 0.7, "sine", 0.06, "exp_decay", 4), (0.12, 2637, 2637, 0.6, "sine", 0.04, "exp_decay", 5),
+                (0.2, 3520, 3520, 0.5, "triangle", 0.03, "exp_decay", 6)],
+    # three stones fused into one: a rising glassy arpeggio
+    "gem_combine": [(0.0, 1046, 1046, 0.35, "sine", 0.05, "exp_decay", 6), (0.09, 1318, 1318, 0.35, "sine", 0.05, "exp_decay", 6),
+                    (0.18, 1568, 1568, 0.35, "sine", 0.05, "exp_decay", 6), (0.27, 2093, 2093, 0.7, "triangle", 0.05, "exp_decay", 4)],
+    # prying a stone out: it cracks
+    "gem_pry": [(0.0, 0, 0, 0.12, "noise", 0.14, "exp_decay", 25), (0.02, 420, 110, 0.25, "square", 0.06, "exp_decay", 10)],
+    # a pick on a gem vein
+    "gem_mine": [(0.0, 0, 0, 0.04, "noise", 0.12, "exp_decay", 50), (0.0, 1250, 1180, 0.18, "triangle", 0.05, "exp_decay", 18)],
     # the Lamplighter: a match strike, then a warm lantern swell
     "night_lamplighter": [(0.0, 0, 0, 0.06, "noise", 0.12, "exp_decay", 40), (0.05, 0, 0, 0.3, "noise", 0.05, "exp_decay", 8),
                           (0.2, 392, 392, 0.9, "triangle", 0.06, "exp_decay", 3), (0.35, 587, 587, 0.8, "triangle", 0.04, "exp_decay", 3)],

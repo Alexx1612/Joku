@@ -708,6 +708,8 @@ class RealmSim:
         # Batch 15: friendly NPCs, island treasure chests, side-quest bookkeeping
         self.npcs = []           # npcs.NPC entities (open Realm only) - never in self.enemies
         self.island_chests = []  # [{"idx","pos","skin","opened": set(pid)}] - see open_island_chest
+        self.gem_veins = []      # [{"pos","kinds","charges","depleted_at"}] - see start_mining (game/gems.py)
+        self._mining = {}        # pid -> {"vein", "t", "tick"}: a player channelling at a gem vein
         self._players_by_pid = {}
         self._near_cd = 0.0
         self._night_watch = set()
@@ -715,6 +717,7 @@ class RealmSim:
         if not bonus:
             self.npcs = npcs_mod.spawn_realm_npcs(self)
             self._spawn_island_chests()
+            self._spawn_gem_veins()
             for v in self.biome_vignettes:
                 r = world.biome_vignette_rect(v["anchor"])
                 self._vignette_centers.append((pygame.Vector2(r.centerx * TILE, r.centery * TILE), v["biome"]))
@@ -1508,6 +1511,7 @@ class RealmSim:
         self._update_day_night(dt)
         self._tick_night_watch(was_night, alive)
         self._update_fishing(dt, players)
+        self._tick_mining(dt, players)
         self._update_weather_damage(dt, alive)
 
         if not self.is_bonus_room:
@@ -2585,9 +2589,18 @@ class RealmSim:
             if "frostbite" in fx:
                 e.slow_time = 2.5
                 e.slow_amount = mag("frostbite", fx["frostbite"])
+            if "venom" in fx:  # Emerald: a poison DoT (rides the bleed timer, drawn green)
+                from game import gems as _gems
+                e.bleed_time = BLEED_DURATION
+                e.bleed_dps = max(e.bleed_dps, b.dmg * _gems.VENOM_DPS_FRACTION * fx["venom"])
+                e.status_source_pid = pid
+                e._venom = fx["venom"]
             if "impact" in fx and b.vel.length_squared() > 1:
                 push = mag("impact", fx["impact"]) * (0.4 if e.rank == "boss" else 1.0)
                 e._move(b.vel.normalize() * push, self.enemy_view)
+        if getattr(b, "gem", None):
+            # what the stones do when this foe dies (any death - a DoT tick too), see _gem_on_death
+            e._gem_mark = {"pid": pid, "dmg": b.dmg, "fx": fx}
         if killer is not None and "leech" in fx:
             killer.hp = min(killer.hp_max, killer.hp + max(1, int(round(e._last_hit_damage * mag("leech", fx["leech"])))))
         if "chain" in fx:
@@ -2614,9 +2627,66 @@ class RealmSim:
                 killer._rune_echo = 0
                 self.vfx_events.append(("rune_echo", e.pos.x, e.pos.y, (160, 220, 255)))
                 died = self._rune_damage(e, int(round(b.dmg * 0.6)), pid, players, (170, 225, 255), reward=False)
-        if col is not None:
+        gk = getattr(b, "gem", None)
+        if gk:
+            from game import gems as _gems
+            self.vfx_events.append(("gem_hit", e.pos.x, e.pos.y, _gems.color_of(gk), gk))
+        elif col is not None:
             self.vfx_events.append(("rune_hit", e.pos.x, e.pos.y, col))
         return died and not killed
+
+    def _gem_on_death(self, e):
+        """A foe hit by a gemmed weapon died: Resonant fire bursts, frost shatters, lightning
+        discharges, venom spreading, Onyx's soul feast (game/gems.py)."""
+        mark = getattr(e, "_gem_mark", None)
+        if not mark:
+            return
+        e._gem_mark = None
+        from game import gems as G
+        fx, pid, base = mark["fx"], mark["pid"], mark["dmg"]
+        players = self._players_by_pid
+        here = pygame.Vector2(e.pos)
+
+        def foes(radius):
+            return [o for o in self.enemies if o is not e and o.alive and not o.neutral and not o.unshootable
+                    and o.pos.distance_squared_to(here) <= radius * radius]
+
+        if "res_ruby" in fx:
+            self.vfx_events.append(("gem_burst", here.x, here.y, G.color_of("ruby"), "ruby"))
+            for o in foes(G.FIRE_BURST_RADIUS):
+                o.burn_time = BURN_DURATION
+                o.burn_dps = max(o.burn_dps, base * BURN_DPS_FRACTION)
+                o.status_source_pid = pid
+                self._rune_damage(o, int(round(base * 0.6)), pid, players, (255, 120, 60))
+        if "gem_shatter" in fx:
+            self.vfx_events.append(("gem_burst", here.x, here.y, G.color_of("sapphire"), "sapphire"))
+            for o in foes(G.SHATTER_RADIUS):
+                o.slow_time = 2.0
+                o.slow_amount = max(getattr(o, "slow_amount", 0.0), 0.35)
+                if "res_sapphire" in fx:
+                    self._rune_damage(o, int(round(base * 0.4)), pid, players, (150, 200, 255))
+        if "res_topaz" in fx:
+            near = sorted(foes(220), key=lambda o: o.pos.distance_squared_to(here))[:2]
+            for o in near:
+                self.vfx_events.append(("rune_chain", here.x, here.y, G.color_of("topaz"), o.pos.x, o.pos.y))
+                self._rune_damage(o, int(round(base * 0.5)), pid, players, (255, 230, 120))
+        if getattr(e, "_venom", 0) and "venom" in fx:
+            res = "res_emerald" in fx
+            rad = G.VENOM_SPREAD_RADIUS[1 if res else 0]
+            spread = foes(rad)
+            if spread:
+                self.vfx_events.append(("gem_burst", here.x, here.y, G.color_of("emerald"), "emerald"))
+            for o in spread:
+                o.bleed_time = BLEED_DURATION
+                o.bleed_dps = max(o.bleed_dps, base * G.VENOM_DPS_FRACTION * fx["venom"] * (1.0 if res else 0.6))
+                o.status_source_pid = pid
+                o._venom = fx["venom"]
+                o._gem_mark = {"pid": pid, "dmg": base, "fx": {k: v for k, v in fx.items() if k in ("venom", "res_emerald")}}
+        if "res_onyx" in fx:
+            p = players.get(pid)
+            if p is not None and p.alive:
+                p.hp = min(p.hp_max, p.hp + max(1, int(p.hp_max * G.ONYX_FEAST_FRAC)))
+                self.vfx_events.append(("gem_burst", here.x, here.y, G.color_of("onyx"), "onyx", p.pos.x, p.pos.y))
 
     def _priest_heal_on_hit(self, caster, players):
         """A small passive heal to every nearby ally on every Priest hit - see
@@ -2733,6 +2803,93 @@ class RealmSim:
     # ------------------------------------------------------ island chests --
     ISLAND_CHEST_RADIUS = 72
 
+    # ------------------------------------------------------------ gem veins --
+    def _spawn_gem_veins(self):
+        """Glittering rocks in the stony / hot / cold biomes (gems.VEIN_BIOMES). A private
+        RNG, so placing them never shifts the rest of world generation's random stream."""
+        from game import gems as G
+        rng = random.Random(0x6E3 + self.realm_map.w)
+        m = self.realm_map
+        rects = [a["rect"] for a in getattr(self, "areas", ())]
+        want = {b: G.VEINS_PER_BIOME for b in G.VEIN_BIOMES}
+        for _ in range(60000):
+            if not any(want.values()):
+                break
+            tx, ty = rng.randrange(m.w), rng.randrange(m.h)
+            b = world.TILE_TO_BIOME_NAME.get(m.grid[ty][tx])
+            if not want.get(b):
+                continue
+            wx, wy = (tx + 0.5) * TILE, (ty + 0.5) * TILE
+            if m.is_solid(wx, wy) or any(r.collidepoint(tx, ty) for r in rects):
+                continue
+            pos = pygame.Vector2(wx, wy)
+            if any(v["pos"].distance_squared_to(pos) < (30 * TILE) ** 2 for v in self.gem_veins):
+                continue
+            want[b] -= 1
+            self.gem_veins.append({"pos": pos, "kinds": list(G.VEIN_BIOMES[b]), "biome": b,
+                                   "charges": G.VEIN_CHARGES, "depleted_at": None})
+
+    def gem_vein_near(self, pos, radius=None):
+        from game import gems as G
+        r = G.VEIN_RADIUS if radius is None else radius
+        best, bd = None, r * r
+        for v in self.gem_veins:
+            d = v["pos"].distance_squared_to(pos)
+            if d <= bd and v["charges"] > 0:
+                best, bd = v, d
+        return best
+
+    def start_mining(self, player):
+        """F next to a gem vein: start chipping at it (stay close for gems.VEIN_MINE_TIME)."""
+        if player.pid in self._mining:
+            return True
+        v = self.gem_vein_near(player.pos)
+        if v is None:
+            return False
+        self._mining[player.pid] = {"vein": v, "t": 0.0, "tick": 0.0}
+        self.sound_events.append(("sfx", "gem_mine", v["pos"].x, v["pos"].y))
+        self.events.append((player.pid, "You start chipping at the gem vein...", (220, 210, 170)))
+        return True
+
+    def mining_frac(self, pid):
+        from game import gems as G
+        m = self._mining.get(pid)
+        return None if m is None else min(1.0, m["t"] / G.VEIN_MINE_TIME)
+
+    def _tick_mining(self, dt, players):
+        from game import gems as G
+        for v in self.gem_veins:  # veins grow back the morning after they ran dry
+            if v["charges"] <= 0 and v["depleted_at"] is not None and \
+                    getattr(self, "night_count", 0) > v["depleted_at"] and not self.is_night:
+                v["charges"], v["depleted_at"] = G.VEIN_CHARGES, None
+        for pid, m in list(self._mining.items()):
+            p = players.get(pid)
+            v = m["vein"]
+            if p is None or not p.alive or v["charges"] <= 0 or \
+                    p.pos.distance_to(v["pos"]) > G.VEIN_RADIUS * 1.5:
+                del self._mining[pid]
+                if p is not None:
+                    self.events.append((pid, "You stop mining.", (170, 170, 180)))
+                continue
+            m["t"] += dt
+            m["tick"] -= dt
+            if m["tick"] <= 0:  # pick strikes: a clink and a few chips flying
+                m["tick"] = 0.45
+                col = G.color_of(v["kinds"][int(m["t"] * 3) % len(v["kinds"])])
+                self.sound_events.append(("sfx", "gem_mine", v["pos"].x, v["pos"].y))
+                self.vfx_events.append(("gem_mine", v["pos"].x, v["pos"].y - 10, col))
+            if m["t"] >= G.VEIN_MINE_TIME:
+                del self._mining[pid]
+                v["charges"] -= 1
+                if v["charges"] <= 0:
+                    v["depleted_at"] = getattr(self, "night_count", 0)
+                stone = G.vein_stone(v)
+                if not p.try_pickup(stone):
+                    self._spawn_loot_bag([("purple", stone)], v["pos"] + pygame.Vector2(0, TILE), owner_pid=pid)
+                self.events.append((pid, f"A {stone.name} comes loose from the rock!", stone.color))
+                self.vfx_events.append(("gem_forge", v["pos"].x, v["pos"].y - 12, stone.color))
+                self.sound_events.append(("sfx", "gem_set", v["pos"].x, v["pos"].y))
+
     def _spawn_island_chests(self):
         for isl in self.islands:
             pos = npcs_mod._walkable_near(self.realm_map, isl["pos"] + pygame.Vector2(2 * TILE, 1.5 * TILE), 4)
@@ -2769,6 +2926,7 @@ class RealmSim:
 
     def _reward(self, enemy, killer):
         self.kill_count += 1
+        self._gem_on_death(enemy)
         death_color = (255, 140, 0) if enemy.rank == "boss" else (255, 200, 120)
         self.vfx_events.append(("death", enemy.pos.x, enemy.pos.y, death_color))
         if enemy.rank == "boss":
@@ -3200,9 +3358,13 @@ class RealmSim:
         dmg = max(1, round(base * (p.total_stat("att") + 25) / 50 * PLAYER_DAMAGE_MULT))
         heavy = mx > mn and base >= mn + 0.85 * (mx - mn)
         rune_fx = p.active_rune_effects() if hasattr(p, "rune_slots") else {}
+        from game import gems as _gems
+        gem_kind = _gems.lead_kind(p.weapon)
+        if gem_kind is not None:  # stones forged into the weapon (game/gems.py) stack on the Shards tab
+            rune_fx = _gems.merge_fx(rune_fx, _gems.weapon_fx(p.weapon))
         crit = "keen" in rune_fx and random.random() < _runes.magnitude("keen", rune_fx["keen"])
         if crit:
-            dmg *= 2
+            dmg = int(round(dmg * (_gems.DIAMOND_RESONANT_CRIT if "res_diamond" in rune_fx else 2)))
         # a socketed proc (see items.apply_socket) always wins over the weapon's own
         # native UT mechanic - it can only ever exist on a weapon that either has no
         # native mechanic of its own, or had one deliberately overwritten by socketing.
@@ -3280,14 +3442,20 @@ class RealmSim:
                                             shape="star"))
                 self.sound_events.append(("sfx", "starfall", p.pos.x, p.pos.y))
         tint = _runes.effect_color(rune_fx)
+        if gem_kind is not None:
+            tint = _gems.color_of(gem_kind)  # the first stone colours the shot (Diablo II style)
         for b in made:
             b.rune_fx = rune_fx
+            if gem_kind is not None:
+                b.gem = gem_kind
+                b.pierce += rune_fx.get("gem_pierce", 0)
             b.heavy = heavy or crit
             b.crit = crit
             if "seeker" in rune_fx:
                 b.seek = _runes.magnitude("seeker", rune_fx["seeker"])
             if tint is not None:  # the shot carries its strongest shard's colour
-                b.color = tuple((c + t) // 2 for c, t in zip(b.color, tint))
+                b.color = (tint if gem_kind is not None
+                           else tuple((c + t) // 2 for c, t in zip(b.color, tint)))
         self.bullets.extend(made)
         return made
 

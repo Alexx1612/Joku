@@ -180,6 +180,35 @@ Divine items:
 | second_wind | the Divine armor's Second Wind |
 | trial_done | a Heroic trial is turned in |
 
+### Gem forging (`game/gems.py`, doc 37)
+
+| Stone | Element | On hit | Resonant (3 in one weapon) |
+|---|---|---|---|
+| Ruby | fire | burn | kills explode (60% dmg + burn, 90 px) |
+| Sapphire | frost | slow (frostbite) | kills shatter (slow + 40% dmg, 100 px); 2 alike: shatter slows |
+| Topaz | lightning | chain arcs | kills discharge into 2 foes (50%) |
+| Emerald | venom | poison 16%/s x strength, spreads on death 90 px | spreads 160 px, full strength |
+| Amethyst | arcane | homing + 1 pierce per stone | +2 pierce |
+| Onyx | shadow | lifesteal | kills heal 6% max HP |
+| Diamond | radiant | crit chance | crits x2.5 |
+
+| Grade | Strength | Item tier | Set cost | Combine 3 -> next |
+|---|---|---|---|---|
+| Chipped | x0.55 | 2 | free | free |
+| Flawed | x0.75 | 4 | free | free |
+| Regular | x1.0 | 7 | free | free |
+| Flawless | x1.35 | 10 | 1 Forge Ingot | 1 Forge Ingot |
+| Perfect | x1.8 | 13 | 2 Forge Ingots | - |
+
+Sockets: T0-4 = 1, T5-9 = 2, T10+ = 3, UT / Divine = 2. Same stones add up; 2 alike x1.15 (Attuned),
+3 alike x1.3 (Resonant). Pry: the stone shatters.
+
+Drops: elite 6%, boss 30% (night x1.5, Blood Moon x2); grade +1 for island / Heroic / Blood Moon and bosses,
++2 in the Mad God's Room. Gem veins: 7 per biome (highlands, desert, tundra, cave, ashlands, jungle), 2 charges,
+1.4 s to mine, Chipped 62% / Flawed 32% / Regular 6%, regrow the morning after the next night.
+
+New sounds: gem_set, gem_combine, gem_pry, gem_mine.
+
 ### Night horror (`game/realm_sim.py`, `game/night.py`, doc 35)
 
 | | Before | Now |

@@ -76,6 +76,11 @@ class Item:
     # Weapon Shards only (slot "rune", see game/runes.py): which effect, how strong
     rune_effect: str = ""
     rune_rarity: str = ""
+    # Gemstones (slot "gem", see game/gems.py): which stone, which grade
+    gem_kind: str = ""
+    gem_grade: str = ""
+    # weapons only: the stones forged into it at the Anvil, [[kind, grade], ...] (game/gems.py)
+    gems: list = field(default_factory=list)
 
     @property
     def band(self) -> str:
@@ -85,6 +90,9 @@ class Item:
 
     @property
     def color(self):
+        if self.gem_kind:  # Gemstones are framed in their own colour (game/gems.py)
+            from game.gems import color_of
+            return color_of(self.gem_kind)
         if self.rune_rarity:  # Weapon Shards are framed by rarity (game/runes.py)
             from game.runes import RARITY_COLORS
             return RARITY_COLORS.get(self.rune_rarity, TIER_COLORS[self.band])
@@ -95,7 +103,7 @@ class Item:
         if self.divine:
             return f"[Divine] {self.name}"
         prefix = (f"[T{self.tier}] " if not self.is_ut and self.shape not in ("carrier", "quest", "ingot")
-                  and not self.rune_effect else "")
+                  and not self.rune_effect and not self.gem_kind else "")
         return f"{prefix}{self.name}"
 
     def to_json(self):
@@ -106,7 +114,8 @@ class Item:
                     description=self.description, pet_kind=self.pet_kind, shard_theme=self.shard_theme,
                     socketed_proc=self.socketed_proc, pet_state=self.pet_state,
                     quest_key=self.quest_key, divine=self.divine, divine_proc=self.divine_proc,
-                    rune_effect=self.rune_effect, rune_rarity=self.rune_rarity, aura=self.aura)
+                    rune_effect=self.rune_effect, rune_rarity=self.rune_rarity, aura=self.aura,
+                    gem_kind=self.gem_kind, gem_grade=self.gem_grade, gems=[list(g) for g in self.gems])
 
     @staticmethod
     def from_json(d):
@@ -766,6 +775,11 @@ def _roll_loot_once(cls_name: str, enemy_rank: str, difficulty: float = 0.5, sou
     rune = runes.maybe_drop(enemy_rank, RUNE_SOURCE_MULT.get(source, 1.0))
     if rune is not None:
         drops.append(("purple", rune))
+    from game import gems
+    # Gemstones: elites ~6%, bosses ~30%; island / Heroic / Mad God sources roll better grades
+    gem = gems.maybe_drop(enemy_rank, source)
+    if gem is not None:
+        drops.append(("purple", gem))
     return drops
 
 

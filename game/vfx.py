@@ -378,6 +378,71 @@ def _draw_shape(surf, cam, sh):
         surf.blit(layer, (px - r - 1, py - r - 1))
 
 
+def _gem_hit(pos, color, kind):
+    """A gemmed shot landing: each element bursts its own way (game/gems.py)."""
+    x, y = pos
+    if kind == "ruby":
+        spawn_burst(pos, (255, 210, 100), count=14, speed=(60, 190), life=(0.2, 0.45), radius=(2, 4))
+        spawn_rise(pos, color, count=8, life=(0.35, 0.6), speed=(35, 80), radius=(2, 3), spread=8)
+        spawn_ring(pos, (255, 150, 60), max_radius=26, life=0.22)
+    elif kind == "sapphire":
+        for _ in range(7):
+            ang = random.uniform(0, math.tau)
+            _add_shape("shard", pos, (190, 225, 255), 0.4, vel=pygame.Vector2(math.cos(ang), math.sin(ang)) * 110,
+                       ang=ang, r=5)
+        spawn_ring(pos, (200, 230, 255), max_radius=30, life=0.28)
+        spawn_burst(pos, (240, 250, 255), count=6, speed=(30, 90), life=(0.25, 0.45), radius=(1, 2))
+    elif kind == "topaz":
+        for _ in range(3):
+            ang = random.uniform(0, math.tau)
+            end = (x + math.cos(ang) * 34, y + math.sin(ang) * 34)
+            _add_shape("bolt", pos, color, 0.18, points=_jagged(pos, end, segments=4, jitter=6))
+        spawn_burst(pos, (255, 255, 210), count=10, speed=(90, 210), life=(0.12, 0.25), radius=(1, 2))
+    elif kind == "emerald":
+        _add_shape("cloud", pos, color, 0.7, r=16)
+        spawn_burst(pos, (120, 240, 140), count=10, speed=(30, 110), life=(0.3, 0.55), radius=(1, 3))
+    elif kind == "amethyst":
+        spawn_converge(pos, (220, 160, 255), count=12, radius=34, life=(0.2, 0.35), pradius=(1, 3))
+        spawn_ring(pos, color, max_radius=26, life=0.25)
+        spawn_ring(pos, (255, 140, 220), max_radius=14, life=0.2)
+    elif kind == "onyx":
+        _add_shape("cloud", pos, (50, 25, 65), 0.55, r=14)
+        spawn_burst(pos, (170, 120, 210), count=9, speed=(30, 110), life=(0.25, 0.45), radius=(1, 3))
+    elif kind == "diamond":
+        for c in ((255, 130, 130), (255, 235, 130), (130, 255, 170), (130, 200, 255), (225, 150, 255)):
+            spawn_burst(pos, c, count=3, speed=(80, 200), life=(0.18, 0.4), radius=(1, 3))
+        spawn_ring(pos, (255, 255, 255), max_radius=22, life=0.2)
+    else:
+        spawn_burst(pos, color, count=8, speed=(40, 140), life=(0.18, 0.35), radius=(1, 3))
+
+
+def _gem_burst(pos, color, kind, to=None):
+    """A gem's on-kill effect: Resonant fire explosion, frost shatter, venom spreading,
+    Onyx's soul feast flowing back to the wielder."""
+    if kind == "ruby":
+        spawn_burst(pos, (255, 220, 120), count=26, speed=(80, 240), life=(0.25, 0.6), radius=(2, 4))
+        spawn_burst(pos, color, count=20, speed=(40, 160), life=(0.35, 0.7), radius=(2, 5))
+        spawn_ring(pos, (255, 160, 60), max_radius=90, life=0.4)
+        _add_shape("cloud", pos, (90, 40, 30), 0.8, r=26)
+    elif kind == "sapphire":
+        for _ in range(12):
+            ang = random.uniform(0, math.tau)
+            _add_shape("shard", pos, (200, 230, 255), 0.55, vel=pygame.Vector2(math.cos(ang), math.sin(ang)) * 170,
+                       ang=ang, r=6)
+        spawn_ring(pos, (180, 220, 255), max_radius=100, life=0.45)
+        spawn_burst(pos, (240, 250, 255), count=14, speed=(40, 140), life=(0.3, 0.6), radius=(1, 2))
+    elif kind == "emerald":
+        _add_shape("cloud", pos, color, 1.0, r=34)
+        _add_shape("cloud", pos, (30, 120, 60), 1.2, r=22)
+        spawn_burst(pos, (140, 255, 160), count=16, speed=(40, 140), life=(0.3, 0.7), radius=(1, 3))
+    elif kind == "onyx" and to is not None:
+        spawn_stream(pos, to, (170, 110, 210), count=12, life=0.45)
+        spawn_rise(to, (200, 150, 240), count=8, life=(0.4, 0.7))
+    else:
+        spawn_burst(pos, color, count=18, speed=(60, 200), life=(0.3, 0.6), radius=(1, 3))
+        spawn_ring(pos, color, max_radius=60, life=0.35)
+
+
 # ability NAME -> visual style (each spell looks like what it's called)
 ABILITY_STYLES = {
     "Orb of Shatter": "shatter", "Orb of Ruin": "ruin", "Orb of the Void": "void",
@@ -536,6 +601,23 @@ def dispatch(vfx_events):
             # precise combat: a hit from the top of the weapon's range (or a crit) cracks harder
             spawn_burst(pos, color, count=16, speed=(90, 230), life=(0.15, 0.35), radius=(2, 4))
             spawn_ring(pos, color, max_radius=34, life=0.22)
+        elif kind == "gem_hit":
+            _gem_hit(pos, color, ev[4] if len(ev) > 4 else "")
+        elif kind == "gem_burst":
+            _gem_burst(pos, color, ev[4] if len(ev) > 4 else "", ev[5:7] if len(ev) > 6 else None)
+        elif kind == "gem_forge":
+            # a stone set at the Anvil: sparks in its colour, a white flash, a converging glint
+            spawn_burst(pos, color, count=34, speed=(90, 260), life=(0.3, 0.7), radius=(1, 3),
+                        angle_range=(math.pi * 1.05, math.pi * 1.95))
+            spawn_burst(pos, (255, 230, 170), count=14, speed=(60, 180), life=(0.2, 0.45), radius=(1, 2),
+                        angle_range=(math.pi * 1.1, math.pi * 1.9))
+            spawn_converge(pos, (255, 255, 255), count=12, radius=46, life=(0.3, 0.5), pradius=(1, 2))
+            spawn_ring(pos, color, max_radius=48, life=0.4)
+            spawn_ring(pos, (255, 255, 255), max_radius=22, life=0.25)
+        elif kind == "gem_mine":
+            spawn_burst(pos, color, count=10, speed=(60, 170), life=(0.2, 0.45), radius=(1, 3),
+                        angle_range=(math.pi * 1.0, math.pi * 2.0))
+            spawn_burst(pos, (150, 140, 130), count=6, speed=(30, 90), life=(0.2, 0.4), radius=(1, 2))
         elif kind == "rune_hit":
             spawn_burst(pos, color, count=8, speed=(40, 140), life=(0.18, 0.35), radius=(1, 3))
         elif kind == "rune_chain":

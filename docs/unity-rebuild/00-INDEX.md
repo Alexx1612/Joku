@@ -57,6 +57,7 @@ pipeline history), both in
 | 33 | [33-endgame-gear-forge-heroic.md](33-endgame-gear-forge-heroic.md) | T12-T14 tiers + loot sources, Brother Hammerstein's Anvil (temper / reforge), Divine items (Starfall, Second Wind), Heroic dungeons + trial quests, level gates, new SFX/VFX | "v0.2 final final" | **done** |
 | 34 | [34-big-islands-mad-god-room.md](34-big-islands-mad-god-room.md) | ~260-tile level-20 islands (12 camps, island loot), faster island stamping, power-throttle-proof budget checks; the Mad God's Room with Unhinged + Absolutely Livid forms | "v0.2 final final" | **done** |
 | 35 | [35-night-horror-shards-realism.md](35-night-horror-shards-realism.md) | Night horror: 10-min cycle / 4-min night, big time bar, light map + Luminosity, safe houses + doors, night rules / events / night mobs / Blood Moon + Red Harvester; precise combat; Weapon Shards + Bag 2 tabs; night realism (golden/blue hour, moon phases, mist, lit windows, sleeping animals, eye adaptation, ambience); the Lamplighter + Light of RDV ring; spawn-distance fix | "v0.2 final final" | **done** |
+| 37 | [37-gem-forging.md](37-gem-forging.md) | Gem forging: 7 stones x 5 grades set into weapons at the Anvil (set / combine / pry), 1-3 sockets by tier, additive + Attuned / Resonant stacking, element trails / on-hit / on-kill VFX, weapon glow + pips, player aura, gem veins you mine; research sources | "v0.2 final final" | **done** |
 
 **All batches 1-10 now have a doc, and rotmg-03's full assigned scope (Batch 1
 parts 1-4 + the art/VFX pipeline) is complete - no gaps remain in the

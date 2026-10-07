@@ -554,6 +554,13 @@ Built in batches; each has a detailed doc in `docs/unity-rebuild/`.
 - **Night realism**: golden / blue hour, moon phases (full moon = brighter
   night + Blood Moon more likely), dawn mist, lit windows, day animals asleep,
   town folk indoors, eyes adapting to the dark, crickets / owls / dawn chorus.
+- **Gem forging** (doc 37): Ruby, Sapphire, Topaz, Emerald, Amethyst, Onyx
+  and Diamond stones (Chipped .. Perfect) that Brother Hammerstein forges
+  INTO your weapon (1-3 sockets by tier). Each element has its own shot
+  trail, hit burst and effect (burn, frost, chain lightning, spreading
+  venom, homing pierce, lifesteal, crits); 2 alike are Attuned, 3 are
+  Resonant (kills explode, shatter, discharge...). Stones drop from elites
+  and bosses, or mine glittering gem veins with F.
 - **The Light of RDV**: keep Old Wick the Lamplighter alive until dawn and
   he gives you a ring that widens your light x1.6 and scares monsters off.
 - **Fix**: mobs could spawn right on top of you (tiles passed as pixels) -

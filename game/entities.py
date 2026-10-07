@@ -755,6 +755,9 @@ class Player:
             flash = img.copy()
             flash.fill((255, 240, 180, 90), special_flags=pygame.BLEND_RGBA_MULT)
             surf.blit(flash, r)
+        if self.weapon is not None and getattr(self.weapon, "gems", None):
+            from game import gem_art  # stones in the weapon: a subtle element aura
+            gem_art.draw_player_aura(surf, r.center, self.weapon, self.facing)
         if self.shield_hp > 0:
             pulse = 1.0 + 0.08 * math.sin(pygame.time.get_ticks() / 120.0)
             pygame.draw.circle(surf, (140, 210, 255), r.center, int(r.width * 0.62 * pulse), 2)
@@ -2210,7 +2213,9 @@ class Bullet:
                  "age", "wave_amp", "wave_freq", "wave_phase", "base_dir", "accel", "max_speed", "min_speed",
                  "home_turn", "target", "split", "split_speed", "split_aimed", "src_rank",
                  # player shots: Weapon Shard effects (game/runes.py), heavy/crit hits, Seeker homing
-                 "rune_fx", "heavy", "crit", "seek")
+                 "rune_fx", "heavy", "crit", "seek",
+                 # a gemmed weapon's shot: the first stone's kind (game/gems.py) - its trail + core
+                 "gem")
 
     def __init__(self, pos, vel, dmg, owner, color, pierce, radius, life, motion="straight", status_effect=None,
                  shape="bolt"):
@@ -2252,6 +2257,7 @@ class Bullet:
         self.heavy = False       # a top-of-range roll or a crit (gold popup)
         self.crit = False
         self.seek = 0.0          # Seeker shard: homing turn rate (rad/s)
+        self.gem = None          # "ruby" .. "diamond" when fired from a gemmed weapon
 
     def update(self, dt):
         self.prev_pos = pygame.Vector2(self.pos)
@@ -2335,15 +2341,21 @@ class Bullet:
                 pygame.draw.circle(layer, (*self.color, int(140 * t)), (d // 2, d // 2), r)
                 tx, ty = cam(trail_pos)
                 surf.blit(layer, (tx - d // 2, ty - d // 2))
+        if getattr(self, "gem", None):  # a gemmed weapon's shot: element trail + glowing core
+            from game import gem_art
+            gem_art.draw_bullet(surf, cam, self)
         img = sprites.bullet_surface(self.color, self.radius, self.shape)
         if self.shape in Bullet._DIRECTIONAL_SHAPES and self.vel.length_squared() > 0:
             img = pygame.transform.rotate(img, -self.vel.angle_to(pygame.Vector2(1, 0)))
         surf.blit(img, img.get_rect(center=cam(self.pos)))
 
     def net_state(self):
-        return dict(x=round(self.pos.x, 1), y=round(self.pos.y, 1), owner=self.owner,
-                    color=list(self.color), radius=self.radius, shape=self.shape,
-                    vel=[round(self.vel.x, 1), round(self.vel.y, 1)])
+        d = dict(x=round(self.pos.x, 1), y=round(self.pos.y, 1), owner=self.owner,
+                 color=list(self.color), radius=self.radius, shape=self.shape,
+                 vel=[round(self.vel.x, 1), round(self.vel.y, 1)])
+        if getattr(self, "gem", None):
+            d["gem"] = self.gem
+        return d
 
     def split_children(self, target_pos=None):
         """The child bullets a "split" bullet (seed mine, splitting stone) bursts
