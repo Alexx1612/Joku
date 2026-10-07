@@ -155,6 +155,7 @@ class Player:
         self.backpack2 = []
         self.backpack2_size = BACKPACK2_SIZE
         self.rune_slots = [None] * RUNE_SLOT_COUNT
+        self.tracked_quests = []  # quest ids with a map marker (game/quest_markers.py)
         self.alive = True
         self.kills = 0
         self.spawn_time = 0.0
@@ -812,6 +813,7 @@ class Player:
             echoes_this_life=self._echoes_this_life,
             story=self.story.to_json(),
             sidequests=self.sidequests.to_json(),
+            tracked_quests=list(self.tracked_quests),
         )
 
     @staticmethod
@@ -847,6 +849,7 @@ class Player:
         p._echoes_this_life = d.get("echoes_this_life", 0)
         p.story = StoryProgress.from_json(d.get("story"))
         p.sidequests = SideQuestProgress.from_json(d.get("sidequests"))
+        p.tracked_quests = [str(q) for q in (d.get("tracked_quests") or [])][:3]
         return p
 
     @staticmethod

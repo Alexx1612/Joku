@@ -922,6 +922,11 @@ def _apply_action(state, s, action):
             ok = False
         if not ok:
             s.story_feed.append(("That doesn't go there.", (200, 150, 110)))
+    elif kind == "track_quests":
+        # the Quest Log's "Show marker" toggles (client-side markers; saved with the character)
+        ids = action.get("ids")
+        if isinstance(ids, list):
+            p.tracked_quests = [str(q)[:60] for q in ids][:3]
     elif kind == "dialogue_choice":
         if s.conversation is not None:
             s.conversation.choose(int(action.get("idx", -1)))

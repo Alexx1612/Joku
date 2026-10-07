@@ -495,6 +495,7 @@ class CoopClient:
         self.realm_grid = None  # the last open-Realm grid + its area info, kept for the journal
         self.realm_areas = None  # even while you're back in the Nexus
         self.npcs = []  # friendly NPCs in view (npcs.NPC rebuilt from snapshots)
+        self.tracked_quests = None  # Quest Log markers (game/quest_markers.py) - loaded from the first snapshot
         self.island_chests = []  # [(pos, skin, opened_for_me)]
         self.quest_log_expanded = True  # J toggles it between full and title-only
         self.story_banner = None  # [text, remaining_seconds]
@@ -603,7 +604,63 @@ class CoopClient:
             "grid": self.realm_grid,
             "areas": self.realm_areas,
             "player_tile": (you.pos.x / C.TILE, you.pos.y / C.TILE) if in_realm else None,
+            "tracked": list(self.tracked_quests or []),
+            "on_track": self._toggle_quest_marker,
         }
+
+    # ------------------------------------------------------- quest markers --
+    def _toggle_quest_marker(self, qid):
+        from game import quest_markers
+        tracked = list(self.tracked_quests or [])
+        if qid not in tracked and not quest_markers.can_locate(qid, self.quest_log, self.sidequest_log):
+            self._push_feed_line("That quest has no place to mark.", (200, 170, 140))
+            return
+        self.tracked_quests = quest_markers.toggle(tracked, qid)
+        self.link.send({"type": "action", "action": "track_quests", "ids": self.tracked_quests})
+        audio.play_pickup()
+
+    def _push_feed_line(self, msg, color):
+        feed = getattr(self, "feed", None)
+        if isinstance(feed, list):
+            feed.insert(0, [msg, color, 4.0])
+            del feed[4:]
+
+    def _quest_world(self):
+        from game import npcs as _npcs
+        zone = {"realm": "realm", "nexus": "nexus", "bonus": "dungeon", "bazaar": "hub",
+                "vault_room": "hub"}.get(self.zone)
+        grid = {"nexus": self.nexus_map.grid, "bazaar": self.bazaar_map.grid,
+                "vault_room": self.vault_room_map.grid}.get(self.zone)
+        if self.zone == "realm" and self.tilemap is not None:
+            grid = self.tilemap.grid
+        if not hasattr(self, "_qm_nexus"):
+            self._qm_nexus = {k: (v.x, v.y) for k, v in _npcs.nexus_positions(self.nexus_map).items()}
+        nexus = dict(self._qm_nexus)
+        if self.zone == "nexus":
+            nexus.update({n.npc_id: (n.pos.x, n.pos.y) for n in self.npcs})
+            if self.nexus_bot is not None:
+                nexus["father_given"] = (self.nexus_bot.pos.x, self.nexus_bot.pos.y)
+        nexus.setdefault("father_given", (self.nexus_map.center_world_pos().x, self.nexus_map.center_world_pos().y))
+        live = {n.npc_id: (n.pos.x, n.pos.y) for n in self.npcs} if self.zone == "realm" else {}
+        return {"zone": zone, "player": (self.you.pos.x, self.you.pos.y), "grid": grid, "areas": self.realm_areas,
+                "live_npcs": live, "nexus_npcs": nexus, "_portal_cache": self.__dict__.setdefault("_qm_portals", {})}
+
+    def _quest_marks(self):
+        from game import quest_markers
+        if self.you is None or not self.tracked_quests:
+            return []
+        if self.quest_log is not None:
+            self.tracked_quests = quest_markers.prune(self.tracked_quests, self.quest_log, self.sidequest_log)
+        return quest_markers.markers(self.tracked_quests, self.quest_log, self.sidequest_log, self._quest_world())
+
+    def _draw_quest_markers_world(self, s, marks):
+        from game import quest_markers
+        if not marks:
+            return
+        view = pygame.Rect(0, 0, ui.dock_frame_rect(self.you).x, C.SCREEN_H)
+        t = pygame.time.get_ticks() / 1000.0
+        quest_markers.draw_world(s, marks, self.cam, (self.you.pos.x, self.you.pos.y), view, ui._FONT_S, t)
+        quest_markers.draw_tracker(s, marks, ui._FONT_S, 12, C.SCREEN_H - 58 - 24 * len(marks))
 
     def _set_auto_fire(self, enabled):
         self.auto_fire_enabled = bool(enabled)
@@ -1720,6 +1777,8 @@ class CoopClient:
             if title == story.ACTS[-1]["title"]:
                 self.credits_t = 0.0
         you = Player.from_full_state(snap["you"])
+        if self.tracked_quests is None:  # the character save's markers, once - after that the client owns them
+            self.tracked_quests = list(you.tracked_quests)
         if you.level > self._last_level:
             audio.play_levelup()
             vfx.dispatch([("levelup", you.pos.x, you.pos.y, (255, 215, 90))])
@@ -2095,8 +2154,9 @@ class CoopClient:
 
     def _draw_hub(self, tmap, mm, name, hint_text):
         s = self.screen
+        qmarks = self._quest_marks()
         if mm.full_map_open:
-            minimap.draw_full_map(s, tmap, mm, self.you.pos, peers=self.peers, zone_name=name)
+            minimap.draw_full_map(s, tmap, mm, self.you.pos, peers=self.peers, zone_name=name, quest_marks=qmarks)
             return
         if tmap is self.nexus_map:
             tmap.draw_backdrop(s, self.cam)
@@ -2126,6 +2186,7 @@ class CoopClient:
         ui.draw_npc_labels(s, self.cam, self.npcs, self.you.pos if self.you else None)
         self._draw_speech_bubbles(s)
         vfx.draw(s, self.cam)
+        self._draw_quest_markers_world(s, qmarks)
         self._draw_hover_tooltip()
         if not (self.help_open or self.journal.is_open() or self.dialogue_view is not None
                 or getattr(self, "echo_shop_open", False)):
@@ -2141,7 +2202,8 @@ class CoopClient:
         ui.draw_hud(s, name, None, False)  # hubs: no kill counter
         if not (self.echo_shop_open or self.help_open or self.vault_chest_open is not None
                 or self.dialogue_view is not None or self.journal.is_open()):  # a modal overlay owns that space
-            ui.draw_story_log(s, self.quest_log, self.quest_log_expanded, side=self.sidequest_log)
+            ui.draw_story_log(s, self.quest_log, self.quest_log_expanded, side=self.sidequest_log,
+                              tracked=self.tracked_quests)
         if settings.get("show_fps"):
             ui.draw_fps_counter(s, self.clock.get_fps())
         mp = pygame.mouse.get_pos()
@@ -2163,7 +2225,7 @@ class CoopClient:
                                        mp, dragging_from=self.drag_from)
             if dragged:
                 ui.draw_dragged_item(s, dragged, mp)
-        minimap.draw_corner(s, tmap, mm, self.you.pos, peers=self.peers)
+        minimap.draw_corner(s, tmap, mm, self.you.pos, peers=self.peers, quest_marks=qmarks)
         ui.draw_chat_log(s, self.chat_log, scroll=self.chat_scroll, selection=self.chat_log_sel.span())
         if self.chat_open:
             ui.draw_chat_box(s, self.chat_buffer, chat_input=self.chat_in, recent=self.chat_log)
@@ -2173,9 +2235,11 @@ class CoopClient:
     def _draw_sim(self, name):
         s = self.screen
         mm = self._current_minimap()
+        qmarks = self._quest_marks()
         if mm is not None and mm.full_map_open:
             minimap.draw_full_map(s, self.tilemap, mm, self.you.pos,
-                                   peers=self.peers, portals=self.portals, zone_name=name, enemies=self.enemies)
+                                   peers=self.peers, portals=self.portals, zone_name=name, enemies=self.enemies,
+                                   quest_marks=qmarks)
             return
         fog = mm.explored if (self.zone == "bonus" and mm is not None) else None
         self.tilemap.canopy_overlay = True  # trunks in the floor pass, canopies drawn over entities below
@@ -2284,6 +2348,7 @@ class CoopClient:
                 self.sky_fx.draw_frost_sparkle(s, self.cam, (self.you.pos.x, self.you.pos.y),
                                                self.tilemap.tile_at, (world.SNOW, world.ICE), self.light_level)
             self.sky_fx.draw(s, self.cam)
+        self._draw_quest_markers_world(s, qmarks)
         if fog:
             ui.draw_fog_veil(s, 1.0 - self.light_level, self.cam)
         ui.draw_light_glows(s, lights, self.light_level)
@@ -2316,7 +2381,8 @@ class CoopClient:
             ui.draw_portal_prompt(s)
         if ((self.zone != "bonus" or self.theme_name == DUNGEON_THEMES["forge"]["label"]) and not self.help_open
                 and self.dialogue_view is None and not self.journal.is_open()):
-            ui.draw_story_log(s, self.quest_log, self.quest_log_expanded, side=self.sidequest_log)
+            ui.draw_story_log(s, self.quest_log, self.quest_log_expanded, side=self.sidequest_log,
+                              tracked=self.tracked_quests)
         else:
             ui.draw_quest_panel(s, self.secret_quest, self.secret_quest_progress, self.secret_quest_timer,
                                  secret_quest_target=self.secret_quest_target,
@@ -2339,7 +2405,7 @@ class CoopClient:
         ui.draw_item_feed(s, self.feed)
         if mm is not None:
             minimap.draw_corner(s, self.tilemap, mm, self.you.pos, peers=self.peers, portals=self.portals,
-                                 enemies=self.enemies)
+                                 enemies=self.enemies, quest_marks=qmarks)
         ui.draw_chat_log(s, self.chat_log, scroll=self.chat_scroll, selection=self.chat_log_sel.span())
         if self.chat_open:
             ui.draw_chat_box(s, self.chat_buffer, chat_input=self.chat_in, recent=self.chat_log)
