@@ -668,7 +668,10 @@ def _apply_action(state, s, action):
     elif kind == "drop_item" and s.zone in (ZONE_REALM, ZONE_BONUS, ZONE_BAZAAR):
         slot = action.get("slot")
         item = None
-        if slot:
+        frm = action.get("from")
+        if isinstance(frm, list) and len(frm) == 2 and frm[0] in ("bag2", "rune"):
+            item = p.take_slot((frm[0], frm[1]))  # dropped out of Bag 2 / the Shards tab
+        elif slot:
             item = getattr(p, slot, None)
             if item is not None:
                 setattr(p, slot, None)
@@ -909,6 +912,16 @@ def _apply_action(state, s, action):
             send_msg(target.sock, {"type": "whisper", "from": p.name, "text": text})
             send_msg(s.sock, {"type": "whisper", "from": p.name, "text": text,
                                "to": target.player.name, "echo": True})
+    elif kind == "move_item":
+        # the dock's Bag 2 / Shards tabs (and backpack / equipment) - entities.Player.move_item
+        # is the one authoritative rule (shards only into shard slots, gear into its own slot)
+        try:
+            src, dst = action.get("from"), action.get("to")
+            ok = p.move_item((str(src[0]), src[1]), (str(dst[0]), dst[1]))
+        except (TypeError, IndexError, ValueError):
+            ok = False
+        if not ok:
+            s.story_feed.append(("That doesn't go there.", (200, 150, 110)))
     elif kind == "dialogue_choice":
         if s.conversation is not None:
             s.conversation.choose(int(action.get("idx", -1)))

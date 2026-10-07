@@ -42,7 +42,8 @@ def _tiered_stats(kind, rolls=ROLLS):
             # eggs always drop at a flat tier=1 regardless of rank/difficulty (pre-
             # existing behavior, untouched by this change) - only weapon/armor/
             # ring/ability drops go through the difficulty-nudged tier bands
-            if item.tier and not item.is_ut and item.slot != SLOT_EGG:
+            # Weapon Shards ("rune") carry a rarity badge in .tier, not a gear tier - skip them too
+            if item.tier and not item.is_ut and item.slot not in (SLOT_EGG, "rune"):
                 tiers.append(item.tier)
     avg = sum(tiers) / len(tiers) if tiers else 0.0
     return avg, tiers

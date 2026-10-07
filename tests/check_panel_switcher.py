@@ -31,10 +31,14 @@ def check_toggle_state_main():
     game.state = main_module.STATE_REALM
     pygame.event.post(ev)
     game.handle_events()
-    assert game.right_panel_mode == "pet", "Tab should switch to pet mode"
+    # 4 tabs now (Items / Bag 2 / Shards / Pet); with no pet, Pet is skipped
+    assert game.right_panel_mode == "bag2", "Tab should switch to Bag 2"
     pygame.event.post(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_TAB))
     game.handle_events()
-    assert game.right_panel_mode == "inventory", "Tab should switch back to inventory"
+    assert game.right_panel_mode == "shards", "then the Shards tab"
+    pygame.event.post(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_TAB))
+    game.handle_events()
+    assert game.right_panel_mode == "inventory", "and back to Items (no pet to show)"
     print("check_toggle_state_main: PASSED")
 
 
@@ -45,10 +49,10 @@ def check_toggle_state_coop_client():
     client.zone = "realm"
     # Exercise the same branch handle_key uses, without needing a live server
     # connection - confirms the toggle LOGIC (mirrors main.py's) is correct.
-    key = pygame.K_TAB
-    if key == pygame.K_TAB and client.zone in ("nexus", "bazaar", "realm", "bonus"):
-        client.right_panel_mode = "pet" if client.right_panel_mode == "inventory" else "inventory"
-    assert client.right_panel_mode == "pet"
+    from game import ui
+    for want in ("bag2", "shards", "pet", "inventory"):  # with a pet, Tab visits all 4 tabs
+        client.right_panel_mode = ui.next_panel_mode(client.right_panel_mode, has_pet=True)
+        assert client.right_panel_mode == want, (client.right_panel_mode, want)
     print("check_toggle_state_coop_client: PASSED")
 
 

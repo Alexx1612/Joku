@@ -11,6 +11,8 @@ Recipes
             class and armor type. (It used to need 3 of the same slot too - the pacing bot
             showed random loot rarely gives you that by Act III.)
             Results of T12-T13 cost 1 Forge Ingot, T14 costs 2. T14 exists ONLY here.
+  Fuse    - 3 Weapon Shards of the same rarity -> 1 shard of the next rarity
+            (the first one's effect; see game/runes.py).
   Reforge - 1 UT weapon + 2 Forge Ingots -> "Reforged <name>": +20% damage, its proc
             kept (socketed so it survives the rename). A Reforged UT can't be reforged
             again.
@@ -132,6 +134,19 @@ def forge_options(player, limit=3):
         extra = f" + {cost} Ingot{'s' if cost > 1 else ''}" if cost else ""
         out.append(dict(kind="temper", use=its[:3], ingots=ingots[:cost], result=res,
                         label=f"Temper 3 T{tier} {pretty}{extra} -> [T{res.tier}] {res.name}"))
+    # Weapon Shards: 3 of the same rarity fuse into 1 of the next rarity (game/runes.py)
+    from game import runes as _runes
+    by_rarity = {}
+    for it in bag:
+        if _runes.is_rune(it):
+            by_rarity.setdefault(it.rune_rarity, []).append(it)
+    for rar in reversed(_runes.RARITIES):
+        its = by_rarity.get(rar, [])
+        if len(its) >= 3:
+            res = _runes.fuse_result(its[:3])
+            if res is not None:
+                out.append(dict(kind="fuse", use=its[:3], ingots=[], result=res,
+                                label=f"Fuse 3 {rar} Shards -> {res.name}"))
     if len(ingots) >= REFORGE_INGOTS:
         for it in bag:
             res = reforge_result(it)

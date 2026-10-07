@@ -200,7 +200,10 @@ def check_fuzz_smoke():
                 p.backpack = p.backpack[:4] + [make_old_boot(), make_egg("hatchling"), make_potion(rnd.choice(STAT_KEYS))]
                 if rnd.random() < 0.5:
                     p.pet = Pet("wisp", p.pos)
+            if rnd.random() < 0.3:
+                g.right_panel_mode = "inventory"  # keep returning to the backpack so drags start often
             pts = ([r.center for r in ui.backpack_slot_rects(p)] + [r.center for r, _ in ui.equip_slot_rects()]
+                   + [r.center for r in ui.container_slot_rects()] + [r.center for r, _m in ui.panel_tab_rects()]
                    + [ui.pet_tab_rect().center, _world_pos(), (rnd.randrange(C.SCREEN_W), rnd.randrange(C.SCREEN_H))])
             r = rnd.random()
             if r < 0.3:

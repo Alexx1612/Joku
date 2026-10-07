@@ -406,6 +406,16 @@ def _item_entries():
         ("help:trading", "Trading",
          "Right-click a player (co-op) and choose Trade - they must accept. Offered items stay in your backpack "
          "until both accept and a short countdown finishes; any change resets it."),
+        ("help:weapon_shards", "Weapon Shards (the Shards tab)",
+         "Weapon Shards drop from elites and bosses (more at night and on a Blood Moon). Open the Shards tab "
+         "(Tab) and drag a shard into one of the 4 ACTIVE sockets in the top row: it adds its effect to every "
+         "shot of your equipped weapon - Bleeding, Burning, Sundering, Frostbite, Chain Spark, Keen Edge (crits), "
+         "Leech, Splinter, Seeker, Impact, Executioner or Echo. Rarer shards are stronger; the same effect twice "
+         "only adds a small bonus. The other 8 slots are storage. Brother Hammerstein fuses 3 shards of one rarity "
+         "into 1 of the next."),
+        ("help:bag2", "Bag 2",
+         "A second 12-slot backpack in its own dock tab (Tab). Loot overflows into it when your backpack is full; "
+         "drag items between the two bags, your equipment and the ground."),
         ("help:potions", "Potions",
          "Stat potions permanently raise a stat (up to a cap); temporary potions give a short buff."),
     ]

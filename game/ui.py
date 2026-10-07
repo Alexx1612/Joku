@@ -107,8 +107,8 @@ def _tier_badge(surf, rect, item):
     """Small tier number (or "UT" for untiered) in a slot's bottom-right corner -
     lets you tell an item's tier at a glance in the inventory grid, not just from
     the hover tooltip."""
-    if item is None:
-        return
+    if item is None or getattr(item, "rune_effect", ""):
+        return  # Weapon Shards are framed by rarity instead of a tier number
     label = "UT" if item.is_ut else (str(item.tier) if item.tier else None)
     if not label:
         return
@@ -198,7 +198,8 @@ def dock_frame_rect(player=None):
     left = _panel_block_x0() - 6 - DOCK_FRAME_PAD
     bottom = _dock_top_y() + (SLOT_SIZE + SLOT_GAP) * 3 + 14  # equip row + 2 backpack rows
     if player is not None:
-        bottom = max([bottom] + [r.bottom for r in backpack_slot_rects(player)])
+        bottom = max([bottom] + [r.bottom for r in backpack_slot_rects(player)]
+                     + [r.bottom for r in container_slot_rects()])  # the Bag 2 / Shards grids
         if getattr(player, "pet", None) is not None:
             bottom = max(bottom, pet_panel_rect(player).bottom)
     bottom = min(bottom + DOCK_FRAME_PAD, C.SCREEN_H - SCREEN_EDGE_MARGIN)
@@ -362,11 +363,8 @@ def pet_pack_button_rect(player):
 
 
 def pet_tab_rect():
-    """The "Pet" label in the Inventory/Pet tab strip (see draw_panel_tabs)."""
-    x0 = _panel_block_x0()
-    y0 = _player_panel_top_y() + PLAYER_PANEL_HEIGHT + 14
-    seg_w = PLAYER_PANEL_WIDTH // 2
-    return pygame.Rect(x0 + seg_w, y0 - 2, seg_w, PANEL_TAB_STRIP_H + 2)
+    """The "Pet" label in the dock tab strip (see draw_panel_tabs)."""
+    return next(r for r, m in panel_tab_rects() if m == "pet")
 
 
 def pet_feed_target_rect(player, mode="pet"):
@@ -457,34 +455,52 @@ def _dock_top_y():
     return _player_panel_top_y() + PLAYER_PANEL_HEIGHT + 14 + PANEL_TAB_STRIP_H + 6
 
 
-def draw_panel_tabs(surf, active_mode, feed_drop_hint=False):
-    """A small RotMG-style tab strip labeling which of Inventory/Pet is
-    currently shown in the switched dock slot below (see draw_inventory/
-    draw_pet_panel - only one of the two is ever drawn per frame; this is
-    what makes the Tab key discoverable instead of a hidden keybind).
-    feed_drop_hint: an item is being dragged in inventory mode - the Pet tab is
-    then the feed drop target (see pet_feed_target_rect), so it lights up."""
+# the dock's switched slot: Tab cycles these, a click on a label picks one (see panel_tab_rects)
+PANEL_TABS = (("Items", "inventory"), ("Bag 2", "bag2"), ("Shards", "shards"), ("Pet", "pet"))
+CONTAINER_SLOTS = 12  # Bag 2 and the Shards tab are both 4x3 grids
+
+
+def panel_tab_rects():
+    """[(rect, mode)] for the 4 dock tabs (Items / Bag 2 / Shards / Pet)."""
     x0 = _panel_block_x0()
     y0 = _player_panel_top_y() + PLAYER_PANEL_HEIGHT + 14
-    w = PLAYER_PANEL_WIDTH
-    seg_w = w // 2
-    if feed_drop_hint and active_mode == "inventory":
-        tab = pet_tab_rect()
-        pygame.draw.rect(surf, (70, 55, 25), tab, border_radius=4)
-        pygame.draw.rect(surf, CHROME_GOLD, tab, width=1, border_radius=4)
-    for i, (label, mode) in enumerate((("Inventory", "inventory"), ("Pet", "pet"))):
+    seg_w = PLAYER_PANEL_WIDTH // len(PANEL_TABS)
+    return [(pygame.Rect(x0 + i * seg_w, y0 - 2, seg_w, PANEL_TAB_STRIP_H + 2), mode)
+            for i, (_label, mode) in enumerate(PANEL_TABS)]
+
+
+def panel_tab_at(pos):
+    for rect, mode in panel_tab_rects():
+        if rect.collidepoint(pos):
+            return mode
+    return None
+
+
+def next_panel_mode(mode, has_pet=True):
+    """Tab: Items -> Bag 2 -> Shards -> Pet (skipped without a pet) -> Items."""
+    modes = [m for _l, m in PANEL_TABS if has_pet or m != "pet"]
+    return modes[(modes.index(mode) + 1) % len(modes)] if mode in modes else modes[0]
+
+
+def draw_panel_tabs(surf, active_mode, feed_drop_hint=False):
+    """A small RotMG-style tab strip labeling which dock view is shown below (Items =
+    equipment + backpack, Bag 2, Shards = Weapon Shard sockets, Pet) - Tab cycles them,
+    clicking a label picks one. feed_drop_hint: an item is being dragged - the Pet tab is
+    then the feed drop target (see pet_feed_target_rect), so it lights up."""
+    hint_pet = feed_drop_hint and active_mode != "pet"
+    for rect, mode in panel_tab_rects():
+        label = next(l for l, m in PANEL_TABS if m == mode)
         active = mode == active_mode
         color = (230, 210, 150) if active else (120, 120, 132)
-        if feed_drop_hint and mode == "pet" and active_mode == "inventory":
-            label, color = "Feed pet", (255, 220, 120)
+        if hint_pet and mode == "pet":
+            pygame.draw.rect(surf, (70, 55, 25), rect, border_radius=4)
+            pygame.draw.rect(surf, CHROME_GOLD, rect, width=1, border_radius=4)
+            label, color = "Feed", (255, 220, 120)
         t = _FONT_S.render(label, True, color)
-        surf.blit(t, (x0 + i * seg_w + seg_w // 2 - t.get_width() // 2, y0))
+        surf.blit(t, (rect.centerx - t.get_width() // 2, rect.y + 2))
         if active:
-            pygame.draw.line(surf, color, (x0 + i * seg_w + 4, y0 + t.get_height() + 1),
-                              (x0 + (i + 1) * seg_w - 4, y0 + t.get_height() + 1), 2)
-    if not (feed_drop_hint and active_mode == "inventory"):
-        hint = _FONT_S.render("[Tab]", True, (100, 100, 112))
-        surf.blit(hint, (x0 + w - hint.get_width(), y0))
+            pygame.draw.line(surf, color, (rect.x + 4, rect.y + 2 + t.get_height() + 1),
+                             (rect.right - 4, rect.y + 2 + t.get_height() + 1), 2)
 
 
 def equip_slot_rects():
@@ -503,7 +519,7 @@ def equip_slot_rects():
     return rects
 
 
-def draw_inventory(surf, player, mouse_pos, dragging_from=None, highlighted=(), socket_pair=None):
+def draw_inventory(surf, player, mouse_pos, dragging_from=None, highlighted=(), socket_pair=None, mode="inventory"):
     """dragging_from: the (kind, index_or_slot) currently being dragged, if any - so its
     origin slot can be dimmed instead of showing the item twice (once in-place, once
     following the cursor). highlighted: backpack indices to mark (items offered in an
@@ -525,6 +541,11 @@ def draw_inventory(surf, player, mouse_pos, dragging_from=None, highlighted=(), 
             lbl = _FONT_S.render(EQUIP_LABELS[i], True, (70, 70, 78))
             surf.blit(lbl, (rect.centerx - lbl.get_width() // 2, rect.centery - lbl.get_height() // 2))
 
+    if mode in ("bag2", "shards"):
+        hovered = _draw_container(surf, player, mode, mouse_pos, dragging_from) or hovered
+        if hovered and dragging_from is None:
+            _tooltip(surf, mouse_pos, hovered)
+        return
     for i, rect in enumerate(backpack_slot_rects(player)):
         show = i < len(player.backpack) and dragging_from != ("backpack", i)
         _slot_frame(surf, rect, filled=show, hovered=rect.collidepoint(mouse_pos), border=False)
@@ -543,6 +564,44 @@ def draw_inventory(surf, player, mouse_pos, dragging_from=None, highlighted=(), 
             pygame.draw.rect(surf, (200, 150, 255), rect.inflate(4, 4), width=3, border_radius=4)
     if hovered and dragging_from is None:
         _tooltip(surf, mouse_pos, hovered)
+
+
+def _draw_container(surf, player, mode, mouse_pos, dragging_from):
+    """Bag 2 (a second 12-slot backpack) or the Shards tab (12 Weapon Shard slots - the
+    top row of 4 are ACTIVE sockets on the equipped weapon, the rest storage)."""
+    from game import runes
+    hovered = None
+    kind = "bag2" if mode == "bag2" else "rune"
+    items = list(getattr(player, "backpack2", [])) if kind == "bag2" else list(getattr(player, "rune_slots", []))
+    rects = container_slot_rects()
+    for i, rect in enumerate(rects):
+        it = items[i] if i < len(items) else None
+        show = it is not None and dragging_from != (kind, i)
+        active = kind == "rune" and i < runes.RUNE_ACTIVE_SLOTS
+        _slot_frame(surf, rect, filled=show, hovered=rect.collidepoint(mouse_pos), border=False)
+        if active:
+            pygame.draw.rect(surf, (255, 200, 90), rect, width=2, border_radius=3)
+        if show:
+            icon = sprites.item_icon(it.color, it.shape)
+            surf.blit(pygame.transform.smoothscale(icon, (SLOT_SIZE - 6, SLOT_SIZE - 6)), (rect.x + 3, rect.y + 3))
+            _tier_badge(surf, rect, it)
+            if rect.collidepoint(mouse_pos):
+                hovered = it
+        if active and not show:
+            lbl = _FONT_S.render("ACTIVE", True, (150, 120, 70))
+            surf.blit(lbl, (rect.centerx - lbl.get_width() // 2, rect.centery - lbl.get_height() // 2))
+    if kind == "rune":
+        # a header in the gap above the grid: what the ACTIVE row is doing to your shots
+        fx = runes.active_effects(items)
+        txt = ("ACTIVE: " + ", ".join(runes.EFFECTS[e][0] for e in sorted(fx))) if fx else \
+            "ACTIVE row = sockets on your weapon"
+        width = rects[3].right - rects[0].x
+        t = _FONT_S.render(txt, True, (255, 205, 110))
+        while t.get_width() > width and len(txt) > 8:
+            txt = txt[:-4] + "..."
+            t = _FONT_S.render(txt, True, (255, 205, 110))
+        surf.blit(t, (rects[0].x, rects[0].y - t.get_height() - 1))
+    return hovered
 
 
 def draw_dragged_item(surf, item, mouse_pos):
@@ -2295,6 +2354,18 @@ def draw_class_select(surf, selected_idx, mouse_pos=(-1, -1)):
 
 
 # ---------------------------------------------------------------- vault --
+def container_slot_rects(n=CONTAINER_SLOTS):
+    """The 4x3 grid Bag 2 / the Shards tab draw in place of the backpack (same spot)."""
+    x1 = _dock_right_x()
+    y0 = _dock_top_y() + (SLOT_SIZE + SLOT_GAP) + 14
+    out = []
+    for i in range(n):
+        col, row = i % BACKPACK_COLS, i // BACKPACK_COLS
+        out.append(pygame.Rect(x1 - (BACKPACK_COLS - col) * (SLOT_SIZE + SLOT_GAP) + SLOT_GAP,
+                               y0 + row * (SLOT_SIZE + SLOT_GAP), SLOT_SIZE, SLOT_SIZE))
+    return out
+
+
 def backpack_slot_rects(player):
     """4-wide grid right below the (single-row) equip grid, same right-docked column."""
     x1 = _dock_right_x()

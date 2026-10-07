@@ -379,10 +379,11 @@ class Game:
         self.state = STATE_DEAD
 
     def _dock_mode(self):
-        """The right dock's effective Tab mode - falls back to inventory with no pet."""
-        if self.right_panel_mode == "pet" and getattr(self.player, "pet", None) is not None:
-            return "pet"
-        return "inventory"
+        """The right dock's effective tab - Items / Bag 2 / Shards / Pet (falls back to
+        Items with no pet)."""
+        if self.right_panel_mode == "pet" and getattr(self.player, "pet", None) is None:
+            return "inventory"
+        return self.right_panel_mode if self.right_panel_mode in ("inventory", "bag2", "shards", "pet") else "inventory"
 
     def _show_pet_msg(self):
         """Shows the feed/pack/fuse result Player left in pet_msg, plus the fusion burst."""
@@ -595,7 +596,8 @@ class Game:
                                     (150, 220, 255) if self.auto_fire_enabled else (170, 170, 180))
                 elif (event.key == pygame.K_TAB
                       and self.state in (STATE_NEXUS, STATE_BAZAAR, STATE_REALM, STATE_BONUS)):
-                    self.right_panel_mode = "pet" if self.right_panel_mode == "inventory" else "inventory"
+                    self.right_panel_mode = ui.next_panel_mode(self._dock_mode(),
+                                                               getattr(self.player, "pet", None) is not None)
                 elif event.key == pygame.K_SPACE and self.state in (STATE_REALM, STATE_BONUS):
                     self._use_ability()
                 elif (event.key in (pygame.K_LSHIFT, pygame.K_RSHIFT)
@@ -695,10 +697,20 @@ class Game:
                       and ui.pet_pack_button_rect(self.player).collidepoint(event.pos)):
                     self.player.pack_pet()
                     self._show_pet_msg()
+                elif (self.state in (STATE_NEXUS, STATE_BAZAAR, STATE_REALM, STATE_BONUS)
+                      and self.player is not None and ui.panel_tab_at(event.pos) is not None):
+                    tab = ui.panel_tab_at(event.pos)  # clicking a dock tab label picks it
+                    if tab != "pet" or getattr(self.player, "pet", None) is not None:
+                        self.right_panel_mode = tab
                 elif self.state in (STATE_NEXUS, STATE_BAZAAR, STATE_VAULT_ROOM, STATE_REALM, STATE_BONUS):
                     self._inventory_mouse_down(event.pos)
             elif event.type == pygame.MOUSEMOTION:
                 self.panel_drag.motion(event.pos)
+                if self.drag_from is not None and self.player is not None:
+                    # dragging onto a tab label opens that tab (the Pet tab stays the feed target)
+                    tab = ui.panel_tab_at(event.pos)
+                    if tab in ("inventory", "bag2", "shards"):
+                        self.right_panel_mode = tab
             elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 dragged_panel, panel_moved = self.panel_drag.up()
                 if dragged_panel == "quest" and not panel_moved and self.player is not None:
@@ -780,6 +792,13 @@ class Game:
         for rect, slot_type in ui.equip_slot_rects():
             if rect.collidepoint(pos):
                 return ("equip", slot_type)
+        mode = self._dock_mode() if self.state != STATE_VAULT_ROOM else "inventory"
+        if mode in ("bag2", "shards"):
+            kind = "bag2" if mode == "bag2" else "rune"
+            for i, rect in enumerate(ui.container_slot_rects()):
+                if rect.collidepoint(pos):
+                    return (kind, i)
+            return None
         for i, rect in enumerate(ui.backpack_slot_rects(self.player)):
             if rect.collidepoint(pos):
                 return ("backpack", i)
@@ -796,6 +815,8 @@ class Game:
             return bag.items[key] if bag is not None and key < len(bag.items) else None
         if kind == "vault":
             return self.vault_items[key] if key < len(self.vault_items) else None
+        if kind in ("bag2", "rune"):
+            return self.player._get_slot((kind, key))
         return getattr(self.player, key)
 
     def _inventory_mouse_down(self, pos):
@@ -815,6 +836,8 @@ class Game:
         elif kind == "pet":
             has_item = False  # the pet panel is a drop TARGET only (feed an item onto it) -
             # there's nothing to pick UP and drag out of it
+        elif kind in ("bag2", "rune"):
+            has_item = self.player._get_slot((kind, key)) is not None
         else:
             has_item = getattr(self.player, key) is not None
         if has_item:
@@ -845,6 +868,8 @@ class Game:
             return
         dest = self._slot_at(pos)
         dropped_far = math.hypot(pos[0] - self.drag_start_pos[0], pos[1] - self.drag_start_pos[1]) > 6
+        if dest is not None and dest[0] != origin[0] and origin[0] != "bag":
+            dropped_far = True  # a different tab's grid sits in the same spot - a cross-container drop is real
         if origin[0] == "bag":
             # bag -> backpack/equip only (never back into a ground bag) - a plain
             # click on a bag slot is also a quick withdraw, matching the backpack's
@@ -887,6 +912,8 @@ class Game:
         p = self.player
         if kind == "backpack":
             return p.backpack.pop(key) if key < len(p.backpack) else None
+        if kind in ("bag2", "rune"):
+            return p.take_slot((kind, key))
         it = getattr(p, key)
         setattr(p, key, None)
         return it
@@ -896,6 +923,9 @@ class Game:
         p = self.player
         if kind == "backpack":
             p.backpack.insert(key, item) if key <= len(p.backpack) else p.backpack.append(item)
+        elif kind in ("bag2", "rune"):
+            if not p.put_slot((kind, key), item):
+                p.try_pickup(item)
         else:
             setattr(p, key, item)
 
@@ -921,6 +951,14 @@ class Game:
         """Performs a drag-and-drop transfer between two inventory slots. Invalid drops
         (wrong item type for the target equip slot, etc.) are silently cancelled."""
         p = self.player
+        if origin[0] in ("bag2", "rune") or dest[0] in ("bag2", "rune"):
+            # Bag 2 / the Shards tab: one generic rule (entities.Player.move_item) - shards only
+            # into shard slots, nothing else into them, equipment only its own slot type
+            if dest[0] in ("backpack", "bag2", "rune", "equip") and p.move_item(origin, dest):
+                moved = p._get_slot(dest)
+                if dest[0] == "rune" and moved is not None and dest[1] < 4:
+                    self.push_feed(f"{moved.name} socketed (ACTIVE)", moved.color)
+            return
         if origin[0] == "backpack" and dest[0] == "backpack":
             i, j = origin[1], dest[1]
             if i < len(p.backpack) and j < len(p.backpack):
@@ -1879,7 +1917,8 @@ class Game:
         if mode == "pet":
             ui.draw_pet_panel(s, self.player, dragging=dragging, mouse_pos=mp)
         else:
-            ui.draw_inventory(s, self.player, mp, dragging_from=self.drag_from, socket_pair=self.pending_socket)
+            ui.draw_inventory(s, self.player, mp, dragging_from=self.drag_from, socket_pair=self.pending_socket,
+                              mode=mode)
 
     def _current_place(self):
         """(zone_kind, key, title, subtitle, music_zone) for game.zone_banner, or None."""
