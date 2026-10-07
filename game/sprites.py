@@ -2348,6 +2348,46 @@ def enemy_sprite(kind: str, scale: float = 1.0) -> pygame.Surface:
     return _cache[skey]
 
 
+_FRAME_FILES = {"move": "_anim", "attack": "_attack", "glow": "_glow", "glow_attack": "_glow_attack"}
+
+
+def enemy_frames(kind: str, scale: float = 1.0, which: str = "move"):
+    """Hand-painted animation frames for a kind (night-horror update): an optional strip
+    enemies/enemy_<kind>_anim.png (move/idle), _attack.png, _glow.png and _glow_attack.png
+    (the emissive layer, drawn over the darkness). Frames are as wide as the kind's still PNG,
+    scaled exactly like enemy_sprite() (same size, aspect kept, crisp). [] if there's no strip."""
+    scale = scale or 1.0
+    skey = ("frames", kind, round(scale, 2), which)
+    if skey in _cache:
+        return _cache[skey]
+    frames = []
+    still = _art_native_size(f"enemies/enemy_{kind}.png")
+    fname = f"enemies/enemy_{kind}{_FRAME_FILES.get(which, '_anim')}.png"
+    path = os.path.join(_SPRITE_DIR, fname)
+    if still is not None and os.path.isfile(path):
+        try:
+            sheet = pygame.image.load(path).convert_alpha()
+            fw, fh = still
+            n = max(1, sheet.get_width() // fw)
+            longest = (BOSS_FINAL_SIZE if kind in BOSS_KINDS else FINAL_SIZE) * scale
+            target = _fit(still, longest)
+            for i in range(n):
+                f = sheet.subsurface((i * fw, 0, fw, min(fh, sheet.get_height()))).copy()
+                if target[0] < fw:
+                    f = pygame.transform.smoothscale(f, target)
+                else:
+                    f = pygame.transform.scale(f, target)
+                frames.append(f)
+        except Exception:
+            frames = []
+    _cache[skey] = frames
+    return frames
+
+
+def anim_frame_index(n, t, seed=0.0, fps=8.0):
+    return int(t * fps + seed) % n if n else 0
+
+
 # Heroic dungeon bosses: an obsidian-and-crimson recolour of the boss's own sprite with a
 # glowing crimson rim and a spiked iron crown - same size as the normal sprite, so hitboxes
 # and layout never change. Built procedurally from the base sprite, cached per (kind, scale).

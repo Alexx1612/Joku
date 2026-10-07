@@ -1070,8 +1070,7 @@ def night_view_lit(pos):
 NIGHT_MOB_KINDS = ("lantern_eater", "shade_stalker", "night_mimic", "hollow_watcher", "red_harvester")
 
 GLOWING_KINDS = {
-    "lantern_eater": (80, (255, 196, 90)), "hollow_watcher": (70, (230, 60, 60)),
-    "red_harvester": (140, (220, 30, 40)),
+    "lantern_eater": (46, (255, 196, 90)),  # just its lure - the rest of the night mobs stay dark
     "fireflies": (95, (210, 255, 120)), "cave_moth": (70, (200, 180, 255)),
     "fire_beetle": (60, (255, 150, 60)), "mushroom_folk": (85, (120, 220, 255)),
     "cinder_wisp": (75, (255, 140, 50)), "frost_sprite": (60, (160, 225, 255)),
@@ -1092,6 +1091,8 @@ ENEMY_MOVE_RADIUS_CAP = 26
 for _bk in BOSS_KINDS + [f"{k}_phase2" for k in BOSS_KINDS] + list(MAD_GOD_KINDS):
     ENEMY_KINDS[_bk]["scale"] = BOSS_SCALE
 ENEMY_KINDS["red_harvester"]["scale"] = BOSS_SCALE  # the Blood Moon boss reads as big as any boss
+for _nk in ("lantern_eater", "shade_stalker", "night_mimic", "hollow_watcher"):
+    ENEMY_KINDS[_nk]["scale"] = 1.3  # the hand-painted night elites are drawn a size up so their detail reads
 for _bk in ISLAND_MINI_BOSS_KINDS:
     if _bk in ENEMY_KINDS:
         ENEMY_KINDS[_bk]["scale"] = MINI_BOSS_SCALE
@@ -1881,6 +1882,21 @@ class Enemy:
         img = sprites.enemy_sprite(self.kind, scale)
         if getattr(self, "_heroic", False) and getattr(self, "rank", None) == "boss":
             img = sprites.heroic_sprite(self.kind, scale)  # Heroic dungeon bosses look the part
+        else:
+            # hand-painted frame animation (night mobs): attack frames while winding up / firing
+            attacking = getattr(self, "_fire_pose_t", 0.0) > 0 or getattr(self, "_pretelegraph", False) \
+                or (getattr(self, "_windup_frac", 0.0) or 0.0) > 0
+            which = "attack" if attacking else "move"
+            frames = sprites.enemy_frames(self.kind, scale, which)
+            if not frames and attacking:
+                which = "move"
+                frames = sprites.enemy_frames(self.kind, scale, "move")
+            if frames:
+                seed = (self.pos.x * 0.013 + self.pos.y * 0.007) % 7
+                fps = 10.0 if which == "attack" else 7.0
+                idx = sprites.anim_frame_index(len(frames), pygame.time.get_ticks() / 1000.0, seed, fps)
+                img = frames[idx]
+                self._anim_frame = (which, idx)
 
         # --- draw-only idle/walk animation (Batch 13, Track P) ---
         # getattr(..., default) throughout: a co-op GhostEnemy reuses this exact
