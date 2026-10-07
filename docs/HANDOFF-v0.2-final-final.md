@@ -54,6 +54,19 @@ It is committed **locally only**: not pushed, and the release has not been rebui
    - Co-op `NetLink` lost or replayed one-shot snapshot events (chat, sounds, popups). This made `check_full_playthrough` fail even on 23123be; it is fixed.
    - The old "second build is 3x slower" quirk was **Windows 11 power throttling** of headless test processes (SDL dummy audio, no window). `tests/_timing.py` opts the budget checks out.
 
+8. **Night horror update (doc 35, after be3256b was pushed and released)**
+   - 10-minute cycle and a 4-minute night, with a big countdown time bar.
+   - A light map with wall shadows, plus a Luminosity setting.
+   - Safe houses with doors.
+   - Night rules, events and night-only mobs, and the Blood Moon with the Red Harvester.
+   - Precise combat: slower, heavier hits.
+   - Weapon Shards and Bag 2 dock tabs.
+   - Hand-painted night-mob art with glow layers.
+   - Night realism: golden and blue hour, moon phases, mist, lit windows, sleeping animals, town folk indoors, eye adaptation, ambience.
+   - The Lamplighter event, which rewards the **Light of RDV** ring.
+   - Spawn-on-top-of-you fix.
+   - Committed **locally** after be3256b; not pushed.
+
 ## Checkpoint commits (local, on top of 23123be)
 - `cf3a9ec`: telegraphs, story v2, NetLink fix
 - `50cc80d`: gear, forge, Divine, Heroic, gates
@@ -61,7 +74,7 @@ It is committed **locally only**: not pushed, and the release has not been rebui
 - `2b134b5`: Mad God's Room, effects wiring, docs
 
 ## Conventions (unchanged, keep following)
-- Run `python tests/run_all_checks.py` after every batch. There are now **70 scripts**, all green.
+- Run `python tests/run_all_checks.py` after every batch. There are now **77 scripts**.
 - Look at headless screenshots for visual work: set `RR_SHOT_DIR` for the new checks.
 - All art and music must be original.
 - Don't commit, push or release without the user's OK.
@@ -69,7 +82,7 @@ It is committed **locally only**: not pushed, and the release has not been rebui
 - Keep the goofy tone.
 
 ## Open items
-- **Not pushed / not released:** the user decides. Releasing means pushing `main` and moving/force-pushing the `v0.2` tag, or a new tag if they want one.
+- **Night update not pushed / not released:** everything after be3256b. The user decides. Releasing means pushing `main` and moving/force-pushing the `v0.2` tag, or a new tag if they want one.
 - **Pacing:** not re-measured for the 7-act arc. The old bot figure was about 66 minutes for 5 acts.
 - **Art:** the new sprites are original grid art (Hammerstein, the two Mad God evolutions) and procedural icons (ingot, key). There are no hand-painted PNG versions yet. Heroic bosses reuse the normal boss sprite plus the crimson aura and tint.
 - **Co-op map payload:** about 5.5 MB of JSON before; still uncompressed and now ~40% bigger (zlib would cut it about 50x).

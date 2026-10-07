@@ -86,6 +86,7 @@ class GhostEnemy:
         self._shelled_vis = d.get("sh", False)
         self._heroic = d.get("hero", False)  # the Heroic-dungeon aura
         self._disguised = d.get("dz", False)  # a Night Mimic still pretending to be a loot bag
+        self._asleep = d.get("zz", False)  # a day animal asleep for the night
 
 
 class GhostBullet:
@@ -2234,24 +2235,43 @@ class CoopClient:
                 g = GLOWING_KINDS.get(e.kind)
                 if g:
                     lights_world.append((e.pos.x, e.pos.y, g[0], g[1]))
+            for (hx, hy) in (self.clock_info or {}).get("house_lights", ()):  # window glow
+                if (hx - self.you.pos.x) ** 2 + (hy - self.you.pos.y) ** 2 < (16 * C.TILE) ** 2:
+                    lights_world.append((hx, hy, 120, (255, 186, 110)))
             for (lx, ly, lr, lc) in lights_world:
                 sx, sy = self.cam((lx, ly))
                 lights.append((sx, sy, lr, lc))
         clock = self.clock_info or {}
+        from game import lighting as _lighting, eyes as _eyesmod, items as _items
+        _lighting.set_grade(clock)
+        if not hasattr(self, "_eyes"):
+            self._eyes = _eyesmod.EyeAdaptation()
+        bright = any((lx - self.you.pos.x) ** 2 + (ly - self.you.pos.y) ** 2 < (lr * 0.45) ** 2
+                     for (lx, ly, lr, _c) in lights_world if lr >= 110)
+        vision = clock.get("light_mult", 1.0) * self._eyes.update(1 / 60, bool(clock.get("night")), bright)
+        if self.you.ring is not None and getattr(self.you.ring, "aura", "") == "rdv":
+            vision *= _items.RDV_VISION
+        audio.night_ambience(1 / 60, clock)
         fog = clock.get("event") == "fog" and self.light_level < 0.5
         if fog:
             ui.draw_night_fog(s, 1.0 - self.light_level, self.cam)
+        else:
+            ui.draw_dawn_mist(s, clock, self.cam)
         if self.light_level < 0.98 and self.tilemap is not None:
             vfx.night_ambience(self.you.pos, world.TILE_TO_BIOME_NAME.get(
                 self.tilemap.tile_at(self.you.pos.x, self.you.pos.y)), bool(clock.get("night")), self.blood_moon)
         ui.draw_day_night_overlay(
             s, self.light_level, self.blood_moon, torch_positions,
             luminosity=settings.get("luminosity"), player_screen=self.cam(self.you.pos),
-            lights=lights, light_mult=clock.get("light_mult", 1.0),
+            lights=lights, light_mult=vision,
             occlusion=dict(grid=self.tilemap.grid, solid=world.SOLID, cam=self.cam, tile=C.TILE,
                            player_world=(self.you.pos.x, self.you.pos.y), lights_world=lights_world,
                            version=getattr(self, "_doors_version", 0))
             if (self.tilemap is not None and self.zone == "realm") else None)
+        if self.zone == "realm":
+            ui.draw_sky_grade(s, clock, self.light_level)
+        for n in self.npcs:
+            n.draw_ward_bar(s, self.cam)
         if fog:
             ui.draw_fog_veil(s, 1.0 - self.light_level, self.cam)
         ui.draw_light_glows(s, lights, self.light_level)

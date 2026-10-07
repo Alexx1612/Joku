@@ -1881,6 +1881,23 @@ _ASHENREACH_DEVOURER_NEW = _mirror([
 _ASHENREACH_DEVOURER_NEW_PAL = dict(_ASHENREACH_DEVOURER_PAL, T=(245, 240, 225))
 
 # --- NPC people (16 wide, same scale as the class sprites) -------------------
+_NPC_LAMPLIGHTER = (_pad([   # Old Wick: a stooped lamplighter with a long pole and a lit lantern
+    "            LL  ",
+    "     ggg   kLLk ",
+    "    ghhhg   kk  ",
+    "    hEhEh    t  ",
+    "    hhhhh    t  ",
+    "     mmm    t   ",
+    "   ccccccc t    ",
+    "  cccbbccchh    ",
+    "  ccbbbbcc t    ",
+    "  hcbbbbc  t    ",
+    "   cbbbbc t     ",
+    "   cc  cc t     ",
+    "   ll  ll       ",
+    "   kk  kk       ",
+]), {"g": (190, 190, 196), "h": (226, 176, 136), "E": (30, 25, 25), "m": (160, 150, 150), "c": (60, 70, 96),
+     "b": (90, 100, 128), "L": (255, 214, 110), "k": (40, 30, 24), "t": (120, 90, 60), "l": (50, 44, 40)})
 _NPC_GHOST_MERCHANT = (_pad([   # a hooded, see-through peddler with a floating lantern
     "     ppppp  LL  ",
     "    pppppp kLLk ",
@@ -2097,6 +2114,7 @@ ENEMY_GRIDS.update({
     "npc_frostine": _NPC_FROSTINE, "npc_driftwood": _NPC_DRIFTWOOD, "npc_murk": _NPC_MURK,
     "npc_tipsy": _NPC_TIPSY, "npc_cinder_pete": _NPC_CINDER_PETE, "npc_fernleaf": _NPC_FERNLEAF,
     "npc_glimmer": _NPC_GLIMMER, "npc_hammerstein": _NPC_HAMMERSTEIN, "npc_ghost_merchant": _NPC_GHOST_MERCHANT,
+    "npc_lamplighter": _NPC_LAMPLIGHTER,
 })
 
 

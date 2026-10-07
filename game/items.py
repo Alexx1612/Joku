@@ -67,6 +67,8 @@ class Item:
     pet_state: dict = None
     # quest items only (slot "quest", see game/sidequests.QUEST_ITEMS): which quest item this is
     quest_key: str = ""
+    # a special always-on effect: "rdv" = the Light of RDV ring (bigger vision, frightens monsters)
+    aura: str = ""
     # the Mad God's Room's Divine items (see make_divine): divine_proc = "starfall" (weapons) /
     # "second_wind" (armor) / "" - the effects live in realm_sim.player_fire / Player.take_damage
     divine: bool = False
@@ -104,7 +106,7 @@ class Item:
                     description=self.description, pet_kind=self.pet_kind, shard_theme=self.shard_theme,
                     socketed_proc=self.socketed_proc, pet_state=self.pet_state,
                     quest_key=self.quest_key, divine=self.divine, divine_proc=self.divine_proc,
-                    rune_effect=self.rune_effect, rune_rarity=self.rune_rarity)
+                    rune_effect=self.rune_effect, rune_rarity=self.rune_rarity, aura=self.aura)
 
     @staticmethod
     def from_json(d):
@@ -1122,6 +1124,20 @@ def make_mad_god_key() -> Item:
     return Item("Mad God's Room Key", SLOT_SHARD, 0, "key", shard_theme=MAD_GOD_ROOM_THEME,
                 description="Heavy, warm, and it hums a song nobody likes. Use it in the Realm to open the Mad "
                             "God's Room - level 20 and at least one T12+ item, or it won't turn.")
+
+
+# ------------------------------------------------------------ the Light of RDV --
+RDV_VISION = 1.6  # your light reaches this much further while you wear it
+
+
+def make_rdv_ring() -> Item:
+    """The Lamplighter's gift for keeping him alive through the night (game/night.py "lamplighter").
+    RDV = Real Diagonal Vision: you see much further in the dark (even Shade Stalkers), and
+    monsters - bosses aside - lose their nerve near you and won't come close or attack."""
+    return Item("Light of RDV", SLOT_RING, 0, "ring", is_ut=True, stat_bonus={"wis": 6, "vit": 4, "dex": 3},
+                aura="rdv", proc="Real Diagonal Vision: +60% light, monsters near you lose their nerve",
+                description="A tiny lantern-flame trapped in a band of old brass. It sees around corners. "
+                            "The things in the dark hate that.")
 
 
 # ------------------------------------------------------------ forge materials --

@@ -224,6 +224,18 @@ NPCS = {
             "Three cave spots, please! I've drawn the frame already. It's the easy part.",
             "Now my map has THINGS on it! Look at all those things. Here, take this for your trouble.")},
         barks=["Left at the stalagmite... no, the OTHER stalagmite.", "Is it dark in here or is it me?"]),
+    "lamplighter": dict(
+        name="Old Wick the Lamplighter", kind="person", sprite=("enemy", "npc_lamplighter"), tint=None,
+        zone="event", area="event", wander=3,
+        greeting="\"Evening! Or it will be. I keep the lamps lit - and the things out there HATE that. "
+                 "Keep them off me till dawn and I'll give you my old ring. It makes the dark afraid of YOU.\"",
+        again="\"Still here? Good. Stay close. Mind the lamps.\"",
+        exhausted="\"Lamps don't light themselves. Well. These ones sort of do. Long story.\"",
+        topics=[("ring", "What's the ring?",
+                 "\"The Light of RDV. Real Diagonal Vision. Sees round corners, makes monsters nervous. "
+                 "Mostly makes ME nervous. Keep me alive and it's yours.\"", False)],
+        quests={},
+        barks=["Another lamp lit!", "Did you hear that? ...Keep close.", "Dawn can't come soon enough."]),
     "ghost_merchant": dict(
         name="The Ghost Merchant", kind="person", sprite=("enemy", "npc_ghost_merchant"), tint=None,
         zone="event", area="event", wander=1, market=True,  # only during a Midnight Market night
@@ -555,16 +567,29 @@ class NPC:
             sx, sy = cam((self.pos.x + ox, self.pos.y + oy))
             surf.blit(img, img.get_rect(center=(sx, sy + (bob if i % 2 == 0 else -bob))))
 
+    def draw_ward_bar(self, surf, cam):
+        """The protected NPC's health bar - drawn after the night darkness so it's always readable."""
+        hpf = getattr(self, "hp_frac", None)
+        if hpf is None:
+            return
+        bx, by = cam((self.pos.x, self.pos.y - 50))
+        pygame.draw.rect(surf, (20, 20, 24), (bx - 21, by - 3, 42, 6))
+        pygame.draw.rect(surf, (90, 220, 120) if hpf > 0.35 else (230, 90, 70), (bx - 20, by - 2, int(40 * hpf), 4))
+
     def net_state(self):
-        return dict(id=self.npc_id, x=round(self.pos.x, 1), y=round(self.pos.y, 1),
-                    speech=self.speech if self.speech_age < self.SPEECH_LIFETIME else "",
-                    speech_age=round(self.speech_age, 2))
+        d = dict(id=self.npc_id, x=round(self.pos.x, 1), y=round(self.pos.y, 1),
+                 speech=self.speech if self.speech_age < self.SPEECH_LIFETIME else "",
+                 speech_age=round(self.speech_age, 2))
+        if getattr(self, "hp_frac", None) is not None:
+            d["hpf"] = round(self.hp_frac, 3)  # an NPC you're protecting (the Lamplighter)
+        return d
 
     @staticmethod
     def from_net_state(d):
         n = NPC(d["id"], (d["x"], d["y"]))
         n.speech = d.get("speech", "")
         n.speech_age = d.get("speech_age", 99.0)
+        n.hp_frac = d.get("hpf")
         return n
 
 

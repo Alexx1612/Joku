@@ -651,6 +651,15 @@ EVENT_SOUND = {
                    (0.18, 0, 0, 0.08, "noise", 0.12, "exp_decay", 40),
                    (0.34, 900, 860, 0.06, "square", 0.05, "exp_decay", 40)],
     # night-horror update
+    # realism pass: the night soundscape (crickets, an owl, a distant howl) and the dawn chorus
+    "crickets": [(0.0, 4200, 4300, 0.03, "square", 0.012, "linear", 0), (0.06, 4200, 4300, 0.03, "square", 0.012, "linear", 0),
+                 (0.12, 4200, 4300, 0.03, "square", 0.012, "linear", 0), (0.4, 4500, 4600, 0.03, "square", 0.01, "linear", 0),
+                 (0.46, 4500, 4600, 0.03, "square", 0.01, "linear", 0)],
+    "owl": [(0.0, 420, 400, 0.22, "sine", 0.05, "exp_decay", 8), (0.35, 390, 360, 0.5, "sine", 0.05, "exp_decay", 4)],
+    "howl": [(0.0, 300, 520, 0.6, "sine", 0.04, "linear", 0), (0.6, 520, 380, 1.4, "sine", 0.04, "exp_decay", 1.8)],
+    "dawn_chorus": [(0.0, 2600, 3200, 0.08, "sine", 0.03, "linear", 0), (0.12, 3000, 2400, 0.08, "sine", 0.03, "linear", 0),
+                    (0.5, 2200, 3100, 0.1, "sine", 0.025, "linear", 0), (0.9, 3400, 2800, 0.07, "sine", 0.03, "linear", 0),
+                    (1.0, 3100, 3500, 0.07, "sine", 0.03, "linear", 0)],
     "heartbeat": [(0.0, 62, 48, 0.12, "sine", 0.22, "exp_decay", 16),
                   (0.0, 0, 0, 0.05, "noise", 0.04, "exp_decay", 60),
                   (0.22, 55, 42, 0.14, "sine", 0.18, "exp_decay", 14)],
@@ -671,6 +680,9 @@ EVENT_SOUND = {
     "night_market": [(0.0, 880, 880, 0.9, "sine", 0.07, "exp_decay", 3), (0.0, 1320, 1320, 0.7, "sine", 0.03, "exp_decay", 4),
                      (0.35, 784, 784, 0.9, "sine", 0.06, "exp_decay", 3)],
     "night_blood_moon": [(0.0, 98, 92, 0.8, "square", 0.08, "exp_decay", 3)],
+    # the Lamplighter: a match strike, then a warm lantern swell
+    "night_lamplighter": [(0.0, 0, 0, 0.06, "noise", 0.12, "exp_decay", 40), (0.05, 0, 0, 0.3, "noise", 0.05, "exp_decay", 8),
+                          (0.2, 392, 392, 0.9, "triangle", 0.06, "exp_decay", 3), (0.35, 587, 587, 0.8, "triangle", 0.04, "exp_decay", 3)],
     "mimic_snap": [(0.0, 0, 0, 0.08, "noise", 0.14, "exp_decay", 50), (0.02, 120, 60, 0.18, "square", 0.12, "exp_decay", 14)],
     "watcher_shriek": [(0.0, 1500, 2600, 0.5, "square", 0.06, "linear", 0), (0.0, 1520, 2650, 0.5, "triangle", 0.05, "linear", 0),
                        (0.0, 0, 0, 0.5, "noise", 0.04, "exp_decay", 4)],
@@ -694,6 +706,35 @@ def _event_sound(key):
                                      decay_rate=decay or 8.0))
     out = _mix(*layers)
     return out[:int(SAMPLE_RATE * (total + 0.02))]
+
+
+_AMB = {"t": 0.0, "owl": 9.0, "howl": 14.0, "phase": None}
+
+
+def night_ambience(dt, clock):
+    """Call every frame in the Realm with RealmSim.clock_info(): crickets at night, an owl now
+    and then, distant howls under a Blood Moon, and a bird chorus when dawn breaks."""
+    if not clock:
+        return
+    import random as _r
+    phase = clock.get("phase")
+    if _AMB["phase"] == "night" and phase == "dawn":
+        play_event("dawn_chorus")
+    _AMB["phase"] = phase
+    if not clock.get("night"):
+        return
+    _AMB["t"] -= dt
+    _AMB["owl"] -= dt
+    _AMB["howl"] -= dt
+    if _AMB["t"] <= 0:
+        _AMB["t"] = _r.uniform(1.6, 3.5)
+        play_event("crickets")
+    if _AMB["owl"] <= 0:
+        _AMB["owl"] = _r.uniform(14, 30)
+        play_event("owl")
+    if clock.get("blood") and _AMB["howl"] <= 0:
+        _AMB["howl"] = _r.uniform(12, 22)
+        play_event("howl")
 
 
 def play_event(key):

@@ -117,6 +117,19 @@ DAY_LENGTH = 600.0  # night-horror update: a 10-minute day, 4 minutes of it nigh
 DUSK_START, NIGHT_START, NIGHT_END, DAWN_END = 300.0, 330.0, 540.0, 570.0
 NIGHTFALL_T, DAYBREAK_T = 315.0, 555.0      # is_night flips here (the middle of dusk / dawn)
 BLOOD_MOON_NIGHT_SPEED = 1.4                # a Blood Moon night runs faster: 3 minutes instead of 4
+# realism pass: colour grading of the light (golden hour before sunset / after sunrise, blue hour
+# just after sunset / before sunrise), an 8-night moon cycle, dawn mist
+GOLDEN_TINT = (1.0, 0.80, 0.58)
+BLUE_TINT = (0.70, 0.80, 1.0)
+MOON_PHASES = ("New Moon", "Waxing Crescent", "First Quarter", "Waxing Gibbous", "Full Moon",
+               "Waning Gibbous", "Last Quarter", "Waning Crescent")
+MOON_LIGHT = 0.16           # how much brighter a full-moon night is (and darker a new moon)
+FULL_MOON_BLOOD_MULT = 2.0  # a Blood Moon is twice as likely under a full moon
+# day animals sleep at night (nocturnal ones and the fireflies come out instead)
+DIURNAL_WILDLIFE = ("songbird", "deer", "forest_hare", "elk", "mountain_goat", "flamingo", "tortoise",
+                    "desert_lizard", "marsh_heron", "ice_penguin")
+# the Light of RDV ring: monsters near its wearer lose their nerve and back off
+RDV_FEAR_RADIUS = 240.0
 BLOOD_MOON_CHANCE = 0.12  # rolled once each time night falls
 MOONLIT_CHANCE = 0.10     # each night spawn has this chance to be a tougher "Moonlit" variant
 
@@ -1369,6 +1382,48 @@ class RealmSim:
     def is_night(self):
         return not self.is_bonus_room and self.light_level < 0.5
 
+    def moon_phase(self):
+        """0 = new moon .. 4 = full moon .. 7 (an 8-night cycle, one step per night)."""
+        return getattr(self, "night_count", 0) % len(MOON_PHASES)
+
+    def sky_grade(self):
+        """The look of the light right now: a colour tint (golden hour warm, blue hour cool),
+        the moon's extra night light, the low sun's glow side, and the dawn mist strength."""
+        t = self.day_time
+        tint, sun, sun_side, mist = (1.0, 1.0, 1.0), 0.0, None, 0.0
+
+        def tri(x, a, peak, b):
+            if x <= a or x >= b:
+                return 0.0
+            return (x - a) / (peak - a) if x < peak else (b - x) / (b - peak)
+
+        golden = max(tri(t, DUSK_START - 75, DUSK_START + 5, NIGHT_START), tri(t, NIGHT_END, DAWN_END - 5, DAWN_END + 75))
+        blue = max(tri(t, DUSK_START + 5, NIGHT_START + 5, NIGHT_START + 45), tri(t, NIGHT_END - 45, NIGHT_END - 5, DAWN_END - 5))
+        if golden > 0:
+            tint = tuple(1 + (g - 1) * golden for g in GOLDEN_TINT)
+            sun, sun_side = golden, ("west" if t < DAY_LENGTH / 2 else "east")
+        if blue > golden:
+            tint = tuple(1 + (b - 1) * blue for b in BLUE_TINT)
+        if NIGHT_END <= t < DAWN_END + 70:
+            mist = 1.0 - abs((t - (DAWN_END - 5)) / 75.0)
+        phase = self.moon_phase()
+        moon = MOON_LIGHT * math.cos((phase - 4) / len(MOON_PHASES) * math.tau)
+        return {"tint": [round(c, 3) for c in tint], "sun": round(sun, 3), "sun_side": sun_side,
+                "mist": round(max(0.0, mist), 3), "moon": round(moon, 3), "moon_phase": phase}
+
+    def house_light_points(self):
+        """Window glow: the middle of every house at night (lit from inside)."""
+        pts = getattr(self, "_house_light_pts", None)
+        if pts is None:
+            pts = []
+            for h in getattr(self, "safe_houses", ()):
+                xs = [x for x, _y in h["interior"]]
+                ys = [y for _x, y in h["interior"]]
+                if xs:
+                    pts.append(((sum(xs) / len(xs) + 0.5) * TILE, (sum(ys) / len(ys) + 0.5) * TILE))
+            self._house_light_pts = pts
+        return pts
+
     def phase(self):
         """"day" | "dusk" | "night" | "dawn" (dungeons are always "day")."""
         if self.is_bonus_room:
@@ -1391,6 +1446,9 @@ class RealmSim:
             until = "night"
         info = {"frac": round(t / DAY_LENGTH, 4), "phase": self.phase(), "left": round(left, 1),
                 "until": until, "blood": bool(self.blood_moon_active), "night": self.is_night}
+        info.update(self.sky_grade())
+        if (self.is_night or self.phase() == "dusk") and not (self.night is not None and self.night.lanterns_out):
+            info["house_lights"] = [[round(c[0]), round(c[1])] for c in self.house_light_points()]
         if self.night is not None:
             info.update(self.night.info())
         return info
@@ -1404,11 +1462,14 @@ class RealmSim:
         self.day_time = (self.day_time + dt * speed) % DAY_LENGTH
         night_now = self.is_night
         if night_now and not self._was_night:
+            self.night_count = getattr(self, "night_count", 0) + 1  # the moon moves on a phase
             # a pity-counter lifecycle rather than a flat independent roll every
             # single night - the longer it's been since the last Blood Moon, the
             # more likely the next one is (capped), so it's a real, structured
             # cadence instead of pure chance every time
             base_chance = BLOOD_MOON_CHANCE * live_events.get_multiplier("blood_moon_chance")
+            if self.moon_phase() == 4:
+                base_chance *= FULL_MOON_BLOOD_MULT  # blood moons favour the full moon
             effective_chance = min(0.5, base_chance + self._nights_since_blood_moon * 0.03)
             self.blood_moon_active = random.random() < effective_chance
             if self.blood_moon_active:
@@ -1491,11 +1552,24 @@ class RealmSim:
                 e.fire_rate_mult *= HEROIC_FIRE_RATE
             if getattr(e, "_disguised", False):
                 continue  # a Night Mimic pretending to be a loot bag (game/night.py reveals it)
+            if e.neutral and e.kind in DIURNAL_WILDLIFE:
+                e._asleep = self.is_night  # day animals sleep through the night
+                if e._asleep:
+                    continue
+            if not e.neutral and e.rank != "boss" and self._rdv_scared(e, alive):
+                continue
             exposed = [p for p in alive if not getattr(p, "sheltered", False)]
             target = min(exposed or alive, key=lambda p: p.pos.distance_to(e.pos))
             hunt = getattr(e, "hunt_pid", None)
             if hunt is not None and hunt in players and players[hunt] in exposed:
                 target = players[hunt]
+            ward = getattr(self.night, "ward", None) if self.night is not None else None
+            if getattr(e, "ward_target", False) and ward is not None and ward["hp"] > 0:
+                wpos = ward["npc"].pos
+                if target.pos.distance_to(e.pos) > wpos.distance_to(e.pos) * 0.7:
+                    e.update(dt, pygame.Vector2(wpos), self.bullets, tile_map=self.enemy_view)
+                    self._drain_enemy_attack_outputs(e)
+                    continue
             if not self.is_bonus_room and target.pos.distance_to(e.pos) > ACTIVE_SIM_RADIUS:
                 continue  # dormant - too far from every player to be worth simulating this tick
             if not exposed:
@@ -1983,7 +2057,13 @@ class RealmSim:
         """[(x, y, r, colour)] world-space lights near `pos`: lit props plus glowing creatures."""
         from game.entities import GLOWING_KINDS
         nd = getattr(self, "night", None)
-        out = world.nearby_lights(self.realm_map, pos.x, pos.y, radius_tiles,
+        extra = []
+        dark = getattr(self, "lanterns_out", False) or (nd is not None and nd.lanterns_out)
+        if (self.is_night or self.phase() == "dusk") and not dark:  # Lanterns Out: windows go dark too
+            reach = (radius_tiles * TILE) ** 2
+            extra = [(x, y, 120, (255, 186, 110)) for (x, y) in self.house_light_points()
+                     if (x - pos.x) ** 2 + (y - pos.y) ** 2 <= reach]
+        out = extra + world.nearby_lights(self.realm_map, pos.x, pos.y, radius_tiles,
                                   lit=not (getattr(self, "lanterns_out", False) or (nd is not None and nd.lanterns_out)))
         if nd is not None and nd.snuffed:
             out = [l for l in out if (int(l[0] // TILE), int(l[1] // TILE)) not in nd.snuffed]
@@ -2087,6 +2167,50 @@ class RealmSim:
         grid = self.realm_map.grid
         return [[x, y, 1 if grid[y][x] == world.DOOR_OPEN else 0]
                 for h in getattr(self, "safe_houses", ()) for (x, y) in h["doors"]]
+
+    def _npc_schedules(self):
+        """Town folk go indoors at night (to the nearest house in reach) and come back out at dawn."""
+        night = self.is_night
+        if getattr(self, "_npcs_night", None) == night or not getattr(self, "safe_houses", None):
+            return
+        self._npcs_night = night
+        from game.npcs import NPCS
+        pts = self.house_light_points()
+        for n in self.npcs:
+            if NPCS.get(n.npc_id, {}).get("kind") != "person" or NPCS[n.npc_id].get("zone") != "realm":
+                continue
+            if not hasattr(n, "day_home"):
+                n.day_home = pygame.Vector2(n.home)
+            if night:
+                best = min(pts, key=lambda q: (q[0] - n.day_home.x) ** 2 + (q[1] - n.day_home.y) ** 2, default=None)
+                if best is not None and (best[0] - n.day_home.x) ** 2 + (best[1] - n.day_home.y) ** 2 < (40 * TILE) ** 2:
+                    n.home = pygame.Vector2(best)
+                    n.target = pygame.Vector2(best)
+                    n.pause = 0.0
+            else:
+                n.home = pygame.Vector2(n.day_home)
+                n.target = pygame.Vector2(n.day_home)
+                n.pause = 0.0
+
+    def _rdv_scared(self, e, alive):
+        """The Light of RDV ring: a non-boss monster this close to its wearer loses its nerve -
+        it won't come closer or attack, it backs off out of the light."""
+        for p in alive:
+            ring = getattr(p, "ring", None)
+            if ring is None or getattr(ring, "aura", "") != "rdv":
+                continue
+            d = e.pos - p.pos
+            if d.length_squared() <= RDV_FEAR_RADIUS ** 2:
+                away = d.normalize() if d.length_squared() > 1 else pygame.Vector2(1, 0)
+                step = away * e.speed * 0.9 * (1 / 30)
+                nxt = e.pos + step
+                if not self.enemy_view.is_solid(nxt.x, nxt.y):
+                    e.pos = nxt
+                e.aggro = False
+                e._windup = None
+                e._scared_t = 0.6
+                return True
+        return False
 
     def is_sheltered_tile(self, pos):
         owner = getattr(self, "_interior_owner", None)
@@ -2562,6 +2686,7 @@ class RealmSim:
         standing near wildlife groups / NPC herds, reaching landmarks, islands and
         curated vignette spots. Reward items that didn't fit earlier are handed over
         here once there's backpack room."""
+        self._npc_schedules()
         for n in self.npcs:
             n.update(dt, self.is_solid)
         self._near_cd -= dt

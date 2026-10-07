@@ -1059,6 +1059,17 @@ def draw_day_night_clock(surf, light_level, blood_moon=False, clock=None):
             ang = i * math.pi / 4
             pygame.draw.line(panel, (255, 220, 100), (nx + math.cos(ang) * 10, y0 + h // 2 + math.sin(ang) * 10),
                              (nx + math.cos(ang) * 13, y0 + h // 2 + math.sin(ang) * 13), 2)
+    mp = clock.get("moon_phase")
+    if mp is not None:  # the moon phase, top-right of the bar (lit part grows to a full moon at 4)
+        mx, my, mr = rect.w - 18, y0 - 12, 6
+        pygame.draw.circle(panel, (40, 44, 60), (mx, my), mr)
+        lit = 1.0 - abs(4 - mp) / 4.0
+        if lit > 0.02:
+            col = (235, 70, 70) if blood else (232, 236, 250)
+            pygame.draw.circle(panel, col, (mx, my), mr)
+            if lit < 0.98:
+                off = int(round(2 * mr * lit)) * (1 if mp < 4 else -1)
+                pygame.draw.circle(panel, (40, 44, 60), (mx - off, my), mr)
     if clock["until"] == "night":
         label = f"NIGHT FALLS IN {_fmt_left(clock['left'])}"
         warn = clock["left"] <= 30
@@ -1231,6 +1242,43 @@ def draw_night_emissives(surf, cam, enemies, light_level):
                     pygame.draw.circle(spr, tuple(int(c * f * dark) for c in col), (7, 7), r)
                 _EYE_GLOW[key] = spr
             surf.blit(spr, (int(ex) - 7, int(y) - 14), special_flags=pygame.BLEND_ADD)
+
+
+_SUN_GLOW = {}
+
+
+def draw_sky_grade(surf, clock, light_level):
+    """Realism pass - the parts of the time of day the night light map doesn't cover:
+    the golden-hour colour while it's still fully light, the low sun's warm glow on the
+    side it's setting (west = left at dusk) or rising (east = right at dawn)."""
+    if not clock:
+        return
+    tint = clock.get("tint") or (1.0, 1.0, 1.0)
+    if light_level >= 0.98 and any(abs(c - 1.0) > 0.01 for c in tint):
+        surf.fill(tuple(int(255 * c) for c in tint), special_flags=pygame.BLEND_MULT)
+    sun = clock.get("sun", 0.0)
+    side = clock.get("sun_side")
+    if sun > 0.02 and side:
+        size = surf.get_size()
+        key = (size, side)
+        g = _SUN_GLOW.get(key)
+        if g is None:
+            gw, gh = 32, 20
+            small = pygame.Surface((gw, gh))
+            for x in range(gw):
+                f = (1 - x / (gw - 1)) if side == "west" else (x / (gw - 1))
+                small.fill((int(120 * f ** 2.2), int(60 * f ** 2.2), int(10 * f ** 2.2)), (x, 0, 1, gh))
+            g = _SUN_GLOW[key] = pygame.transform.smoothscale(small, size)
+        g.set_alpha(int(255 * sun))
+        surf.blit(g, (0, 0), special_flags=pygame.BLEND_ADD)
+        g.set_alpha(255)
+
+
+def draw_dawn_mist(surf, clock, cam=None):
+    """Low mist for a minute around sunrise."""
+    m = (clock or {}).get("mist", 0.0)
+    if m > 0.02:
+        draw_night_fog(surf, 0.45 * m, cam) if cam is not None else draw_night_fog(surf, 0.45 * m)
 
 
 def draw_sheltered_badge(surf):

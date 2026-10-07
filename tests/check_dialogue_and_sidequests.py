@@ -56,7 +56,7 @@ def _player(name="Tester", pid=None, cls="wizard"):
 def check_content_counts():
     people = [k for k, d in npcs.NPCS.items() if d["kind"] == "person"]
     creatures = [k for k, d in npcs.NPCS.items() if d["kind"] == "creature"]
-    assert len(people) == 13 and len(creatures) == 4, (len(people), len(creatures))  # +Hammerstein, +the Ghost Merchant
+    assert len(people) == 14 and len(creatures) == 4, (len(people), len(creatures))  # +Hammerstein, +the Ghost Merchant, +the Lamplighter
     assert len(QUESTS) == 37, len(QUESTS)  # 30 + the 7 Heroic trials
     for qid, q in QUESTS.items():
         assert q["target"]["kind"] in ("mob", "npc", "area", "boss"), qid

@@ -2060,6 +2060,15 @@ class Enemy:
         r = img.get_rect(center=(cx + anim_dx, cy + anim_dy))
         if self.kind == "fireflies":
             return  # the swarm IS its light: ui.draw_night_emissives draws the glowing, trailing flies
+        if getattr(self, "_asleep", False):
+            # a day animal asleep for the night: lying still, a drifting "z z"
+            surf.blit(img, r)
+            ph = (pygame.time.get_ticks() / 1000.0 + self.pos.x * 0.01) % 2.0
+            for k, sz in ((0, 4), (1, 6)):
+                zx, zy = r.right - 4 + k * 6, r.top - 2 - k * 7 - int(ph * 4)
+                col = (200, 210, 240)
+                pygame.draw.lines(surf, col, False, [(zx, zy), (zx + sz, zy), (zx, zy + sz), (zx + sz, zy + sz)], 1)
+            return
         if getattr(self, "_disguised", False):
             # a Night Mimic: drawn as an ordinary brown loot bag until it bites
             bag = sprites.bag_sprite(True, (120, 84, 48))
@@ -2160,7 +2169,8 @@ class Enemy:
                     pretelegraph=self._pretelegraph, scale=self.scale,
                     wk=self._windup_kind if (self._pretelegraph or self._dash is not None) else None,
                     wf=round(self._windup_frac, 2), ds=self._dash is not None, sh=self._shell_t > 0,
-                    hero=getattr(self, "_heroic", False), dz=getattr(self, "_disguised", False))
+                    hero=getattr(self, "_heroic", False), dz=getattr(self, "_disguised", False),
+                    zz=getattr(self, "_asleep", False))
 
 
 def _mk_bullet(pos, direction, speed, dmg, color, owner="enemy", pierce=0, radius=5, lifetime=2.4,

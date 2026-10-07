@@ -43,14 +43,27 @@ _frame = {}               # size -> reusable light-map surface
 stats = {"poly_builds": 0, "masked_builds": 0}
 
 
+GRADE = {"tint": (1.0, 1.0, 1.0), "moon": 0.0}  # set each frame from RealmSim.clock_info (set_grade)
+
+
+def set_grade(clock):
+    """Golden / blue hour tint and the moon's night light (realism pass) for this frame."""
+    clock = clock or {}
+    GRADE["tint"] = tuple(clock.get("tint", (1.0, 1.0, 1.0)))
+    GRADE["moon"] = float(clock.get("moon", 0.0))
+
+
 def ambient_color(light_level, luminosity, blood):
     """The light-map fill: what an unlit spot looks like (multiplied over the scene)."""
     from game.ui import night_darkness_alpha
     dark = 1.0 - light_level
     a = 255 - night_darkness_alpha(luminosity) * dark
+    if not blood:  # a full moon lights the night noticeably, a new moon leaves it pitch dark
+        a = a + GRADE["moon"] * 255 * dark
     tint = BLOOD_TINT if blood else MOON_TINT
-    # at dusk / dawn the ambient warms back toward white
-    return tuple(max(0, min(255, int(a * (t + (1 - t) * (1 - dark))))) for t in tint)
+    grade = GRADE["tint"]
+    # at dusk / dawn the ambient warms back toward white; golden / blue hour colour on top
+    return tuple(max(0, min(255, int(a * (t + (1 - t) * (1 - dark)) * g))) for t, g in zip(tint, grade))
 
 
 def _gradient(r, color, step):

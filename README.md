@@ -131,8 +131,8 @@ The in-game **O** menu shows the same list (`game/ui.py` `HELP_LINES`).
 | Click + drag | Move items between backpack, equip slots, ground bags and vault chests; drop off the dock onto the ground; drag onto the Pet tab / pet panel to feed the pet |
 | Shift + click | Quick-move: deposit into an open vault chest / Bazaar chest, or offer in an open trade |
 | Right-click | Drop the hovered backpack item, else open the nearest ground bag; in co-op, right-click a player (or their name in chat) for Whisper / Trade / Inspect / Teleport / Friend / Crew invite |
-| Tab | Switch the right dock between Inventory and Pet |
-| F | Context action: talk to an NPC or animal nearby, open a vault chest, fish at water, wish at the Nexus fountain, talk to Father Given |
+| Tab | Cycle the right dock's tabs: Items -> Bag 2 -> Shards -> Pet (or click a tab; drag an item onto a tab to switch) |
+| F | Context action: open / close a door next to you, talk to an NPC or animal nearby, open a vault chest, fish at water, wish at the Nexus fountain, talk to Father Given |
 | J | Expand / collapse the small HUD quest log (click it to open the full Quest Log) |
 | Enter | Open chat (with history) / step through the portal you're standing on / open a vault chest |
 | R | Back to the Nexus (Realm) / leave the dungeon |
@@ -341,7 +341,7 @@ islands -> the Mad God:
 - **Bosses**: an every-40-kills Mad God's Avatar, a roaming World Boss every
   15-25 minutes, 10 island mini-bosses. Bosses are drawn and hit at 2x size
   (mini-bosses 1.8x, guardians 1.5x).
-- **Day/night** (4-minute cycle, Moonlit variants, rare Blood Moon),
+- **Day/night** (10-minute cycle with a 4-minute night, safe houses, night mobs and events, Blood Moon - doc 35; Moonlit variants),
   biome **weather** (blizzards shrink vision, sandstorms), **live events**
   rotating every 25 minutes (Double Loot Weekend, Happy Hour +50% XP,
   Blood Moon Week, Two-for-One Tuesday; `RR_EVENT` forces one).
@@ -451,10 +451,16 @@ docs/unity-rebuild/  feature-by-feature docs for rebuilding the game in Unity (0
 `run_all_checks.py` finds every `tests/check_*.py` and runs each as its own
 headless process (`SDL_VIDEODRIVER=dummy`, throwaway settings, no music
 rendering, no event rotation) and prints a PASS/FAIL summary - currently
-**71/71**. The checks are plain asserts that drive the real game objects:
+**77/77**. The checks are plain asserts that drive the real game objects:
 single-player `Game`, the co-op server's action handler and real
 client-server sockets, rendered screenshots, timing budgets (e.g. world
 generation < 3 s) and fixed-seed input fuzzing.
+
+**Dated screenshots:** `python tools/take_snapshots.py "what was done"` saves a
+standard set of gameplay shots (day, golden/blue hour, full/new moon night,
+dawn, dock tabs, the Lamplighter) into `screenshots/<YYYY-MM-DD>/` and adds
+them to that folder's `NOTES.md`. The notes say what each shot shows and
+what work that day covered.
 
 ## Build & release
 
@@ -533,6 +539,25 @@ Built in batches; each has a detailed doc in `docs/unity-rebuild/`.
 - **Big islands + the Mad God's Room** (doc 34).
 - **Sound, music, effects**: 13 new synthesized event sounds, 10 new
   original tracks (7 Heroic dungeons + 3 Mad God's Room forms), new VFX.
+- **Night horror** (doc 35): a 10-minute day with a 4-minute night (3 on a
+  Blood Moon) and a big countdown time bar; real darkness with a light map,
+  wall shadows and a **Luminosity** option (Options > Display, default 50%);
+  safe houses with doors any player opens/closes (F) - mobs can't pass doors
+  or see you inside; aggressive night mobs, night events (The Fog, the
+  Hunter, Lanterns Out, Midnight Market, the Lamplighter), 4 night-only
+  monsters and the Blood Moon with hordes and **The Red Harvester**.
+- **Precise combat**: ~half the fire rate, ~1.8x the damage per hit, a tight
+  aim-assist cone - hits matter, misses cost.
+- **Weapon Shards + Bag 2**: a 12-slot Shards tab (top 4 sockets add effects
+  to your weapon, fuse 3 into the next rarity at the Anvil) and a second
+  12-slot backpack tab.
+- **Night realism**: golden / blue hour, moon phases (full moon = brighter
+  night + Blood Moon more likely), dawn mist, lit windows, day animals asleep,
+  town folk indoors, eyes adapting to the dark, crickets / owls / dawn chorus.
+- **The Light of RDV**: keep Old Wick the Lamplighter alive until dawn and
+  he gives you a ring that widens your light x1.6 and scares monsters off.
+- **Fix**: mobs could spawn right on top of you (tiles passed as pixels) -
+  now never within 380 px of a player.
 - **Fix**: co-op clients lost (or replayed) one-shot events - chat lines,
   sounds, popups - when snapshots arrived faster/slower than frames.
 

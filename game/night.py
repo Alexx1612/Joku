@@ -36,13 +36,18 @@ LIGHT_SAFE_TILES = 4       # a spawn point never lands this close to a light
 SNUFF_RADIUS = 44          # a Lantern-Eater this close to a lamp snuffs it
 WATCHER_SHRIEK_CD = 20.0
 WATCHER_CALL_RADIUS = 650
-EVENTS = ("fog", "hunter", "lanterns_out", "market")
+EVENTS = ("fog", "hunter", "lanterns_out", "market", "lamplighter")
 EVENT_TEXT = {
     "fog": ("The Fog rolls in. You can barely see your own hands. Something else can.", (170, 180, 200)),
     "hunter": ("Something is hunting {name}. It won't stop until dawn - or until it's dead.", (210, 120, 255)),
     "lanterns_out": ("The Lanterns Go Out. Every lamp in the Realm gutters and dies.", (255, 170, 90)),
     "market": ("A bell rings somewhere far off: the Midnight Market is open in {place}.", (140, 230, 210)),
+    "lamplighter": ("Old Wick the Lamplighter is out lighting lamps in {place} - and the dark has noticed. "
+                    "Keep him alive till dawn.", (255, 214, 120)),
 }
+LAMPLIGHTER_HP = 420
+LAMPLIGHTER_WAVE_EVERY = 24.0
+LAMPLIGHTER_HELP_RADIUS = 900.0
 FOG_LIGHT_MULT = 0.6
 BLOOD_HORDE_EVERY = 30.0
 BLOOD_HORDE_SIZE = (6, 10)
@@ -63,6 +68,7 @@ class NightDirector:
         self._was_night = False
         self.market_pos = None
         self._rule_mobs = set()
+        self.ward = None  # the Lamplighter event: {"npc", "hp", "wave_cd", "helpers"}
 
     # ------------------------------------------------------------ queries --
     @property
@@ -101,6 +107,8 @@ class NightDirector:
         exposed = [p for p in alive if not getattr(p, "sheltered", False)]
         self._tick_spawns(dt, exposed)
         self._tick_behaviours(dt, alive)
+        if self.ward is not None:
+            self._tick_lamplighter(dt, alive)
         if sim.blood_moon_active:
             self._tick_blood_moon(dt, exposed, alive)
 
@@ -129,6 +137,9 @@ class NightDirector:
         elif self.event == "market":
             place = self._open_market()
             text = text.format(place=place)
+        elif self.event == "lamplighter":
+            place = self._start_lamplighter()
+            text = text.format(place=place)
         sim.events.append((None, text, col))
         sim.sound_events.append(("sfx", f"night_{self.event}", *self._any_pos(alive)))
         sim.sound_events.append(("sfx", "nightfall", *self._any_pos(alive)))
@@ -142,6 +153,8 @@ class NightDirector:
         if self.event == "market":
             sim.npcs = [n for n in sim.npcs if n.npc_id != "ghost_merchant"]
             self.market_pos = None
+        if self.ward is not None:
+            self._finish_lamplighter(alive)
         self.event = None
         self.hunted_pid = None
         self.snuffed.clear()
@@ -308,6 +321,91 @@ class NightDirector:
         sim.npcs.append(npcs_mod.NPC("ghost_merchant", pos))
         self.market_pos = pos
         return a["name"]
+
+    # ------------------------------------------------------ the Lamplighter --
+    def _start_lamplighter(self):
+        sim = self.sim
+        from game import npcs as npcs_mod
+        if not sim.areas:
+            return "the Realm"
+        a = random.choice(sim.areas)
+        c = pygame.Vector2((a["rect"].centerx + 0.5) * TILE, (a["rect"].centery + 0.5) * TILE)
+        n = npcs_mod.NPC("lamplighter", npcs_mod._walkable_near(sim.realm_map, c, 8))
+        n.hp_frac = 1.0
+        sim.npcs = [q for q in sim.npcs if q.npc_id != "lamplighter"] + [n]
+        self.ward = {"npc": n, "hp": float(LAMPLIGHTER_HP), "wave_cd": 12.0, "helpers": set(), "area": a["name"]}
+        return a["name"]
+
+    def _tick_lamplighter(self, dt, alive):
+        sim, w = self.sim, self.ward
+        n = w["npc"]
+        if w["hp"] <= 0:
+            return
+        for p in alive:
+            if p.pos.distance_to(n.pos) < LAMPLIGHTER_HELP_RADIUS:
+                w["helpers"].add(p.pid)
+        # he relights snuffed lamps as he passes them
+        for t in list(self.snuffed):
+            if pygame.Vector2((t[0] + 0.5) * TILE, (t[1] + 0.5) * TILE).distance_to(n.pos) < 3 * TILE:
+                self.snuffed.discard(t)
+        # the dark sends waves at him
+        w["wave_cd"] -= dt
+        if w["wave_cd"] <= 0:
+            w["wave_cd"] = LAMPLIGHTER_WAVE_EVERY
+            from game.entities import Enemy
+            for i in range(4 if not sim.blood_moon_active else 6):
+                ang = 360.0 * i / 4 + random.uniform(-20, 20)
+                pos = n.pos + pygame.Vector2(1, 0).rotate(ang) * random.uniform(10, 14) * TILE
+                if sim.is_solid(pos.x, pos.y):
+                    continue
+                kind = random.choice(("shade_stalker", "lantern_eater", "shade_stalker"))
+                e = self._make(kind, pos)
+                e.ward_target = True
+                e.aggro = True
+            sim.events.append((None, "Shapes close in on the Lamplighter!", (255, 190, 110)))
+        # mobs that reach him (or hit him) hurt him
+        hurt = 0.0
+        for e in sim.enemies:
+            if e.alive and not e.neutral and e.pos.distance_to(n.pos) < 34:
+                hurt += 14.0 * dt
+        keep = []
+        for b in sim.bullets:
+            if b.owner == "enemy" and b.pos.distance_to(n.pos) < 16:
+                hurt += b.dmg
+                continue
+            keep.append(b)
+        sim.bullets = keep
+        if hurt:
+            w["hp"] -= hurt
+            n.hp_frac = max(0.0, w["hp"] / LAMPLIGHTER_HP)
+        if w["hp"] <= 0:
+            n.hp_frac = 0.0
+            sim.events.append((None, "Old Wick the Lamplighter has fallen. The lamps go dark one by one...",
+                               (230, 120, 110)))
+            sim.npcs = [q for q in sim.npcs if q is not n]
+            sim.vfx_events.append(("lamp_snuff", n.pos.x, n.pos.y, (255, 190, 90)))
+
+    def _finish_lamplighter(self, alive):
+        sim, w = self.sim, self.ward
+        self.ward = None
+        sim.npcs = [q for q in sim.npcs if q.npc_id != "lamplighter"]
+        if w["hp"] <= 0:
+            return
+        from game.items import make_rdv_ring
+        for p in alive:
+            if p.pid not in w["helpers"]:
+                continue
+            ring = make_rdv_ring()
+            if not p.try_pickup(ring):
+                bag2 = getattr(p, "backpack2", None)
+                if bag2 is not None and len(bag2) < getattr(p, "backpack2_size", 12):
+                    bag2.append(ring)
+                elif getattr(p, "sidequests", None) is not None:
+                    p.sidequests.pending_items.append(ring)
+            sim.events.append((p.pid, "Dawn. Old Wick presses a warm ring into your hand: the Light of RDV!",
+                               (255, 224, 140)))
+            sim.vfx_events.append(("divine_drop", p.pos.x, p.pos.y, (255, 224, 140)))
+            sim.sound_events.append(("sfx", "trial_done", p.pos.x, p.pos.y))
 
     # ------------------------------------------------------ the Blood Moon --
     def _tick_blood_moon(self, dt, exposed, alive):

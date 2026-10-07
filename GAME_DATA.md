@@ -180,6 +180,56 @@ Divine items:
 | second_wind | the Divine armor's Second Wind |
 | trial_done | a Heroic trial is turned in |
 
+### Night horror (`game/realm_sim.py`, `game/night.py`, doc 35)
+
+| | Before | Now |
+|---|---|---|
+| Day length | 240 s | 600 s: day 300, dusk 30, night 240 (Blood Moon 180), dawn 30 |
+| Night darkness | ~59% max | light map; `luminosity` setting (default 0.5, night only) |
+| Player light radius | 130 px | 175 px (x1.6 with the Light of RDV; 62% -> 100% over ~25 s as your eyes adapt) |
+| Blood Moon chance | per night | 0.12 per nightfall, x2 on a full moon |
+| Player fire rate | DEX only | x0.55 (`PLAYER_FIRE_RATE_MULT`) |
+| Player hit damage | x1 | x1.8 (`PLAYER_DAMAGE_MULT`) |
+| Aim-assist cone | 16 deg | 7 deg |
+| Min spawn distance from a player | none (bug: tiles used as pixels) | 380 px |
+
+Night rules (all hostile mobs; restored at dawn):
+
+| | Aggro | Aggro in the dark | Leash | Speed | Damage | Cooldowns |
+|---|---|---|---|---|---|---|
+| Night | x1.6 | x2.0 | x1.5 | x1.15 | x1.2 | x0.85 |
+| Blood Moon | x2.2 | x2.6 | x2.0 | x1.25 | x1.35 | x0.75 |
+
+Night events (one per normal night):
+
+| Event | Effect |
+|---|---|
+| The Fog | light x0.6, more Shade Stalkers |
+| Something Is Hunting You | a buffed Shade Stalker hunts one player |
+| The Lanterns Go Out | every lamp dark |
+| Midnight Market | Ghost Merchant: 3 gear items -> 1 a tier higher |
+| The Lamplighter | protect Old Wick (420 HP) from waves every 24 s; alive at dawn -> every helper gets the Light of RDV |
+
+Night-only mobs: Lantern-Eater (snuffs lamps), Shade Stalker (invisible outside light), Night Mimic (a loot bag
+until close), Hollow Watcher (shrieks, summons), The Red Harvester (Blood Moon boss, at half-night). Blood Moon
+hordes: 6-10 moonlit mobs every 30 s, 11-14 tiles out. Surviving: +400 XP.
+
+**The Light of RDV** (`items.make_rdv_ring`): UT ring, WIS +6, VIT +4, DEX +3. Light radius x1.6, and non-boss
+monsters within 240 px drop aggro and back off.
+
+**Weapon Shards** (`game/runes.py`): 12 slots, 4 active. Effects: bleed, burn, vulnerable, frostbite, chain, keen,
+leech, splinter, seeker, impact, executioner, echo. Rarity x1.0 / 1.4 / 1.9 / 2.6 (weights 60/28/10/2); duplicate
+effect +15% each. Drop: elite 4%, boss 25%; x2.5 at night, x4 under a Blood Moon. 3 of a rarity fuse into 1 of the
+next at the Anvil. **Bag 2**: 12 more backpack slots.
+
+Moon phases: 8 nights, 0 = new (darkest), 4 = full (+0.16 ambient light).
+
+New music: `realm_night` "Witching Hour" (C# harmonic minor, 70), `realm_blood_moon` "Red Harvest" (phrygian, 148).
+
+New sounds: door_open, door_close, crickets, owl, howl, dawn_chorus, heartbeat, nightfall, dawn, blood_moon_rise,
+night_fog, night_hunter, night_lanterns_out, night_market, night_lamplighter, night_blood_moon, mimic_snap,
+watcher_shriek, lantern_snuff, harvester_roar.
+
 ## Ends of V0.2 (release tag `v0.2`)
 
 ### Sound effects (`game/audio.py`)

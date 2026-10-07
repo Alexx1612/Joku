@@ -1343,6 +1343,20 @@ class Game:
                 vfx.dispatch([("forge_sparks", at.x, at.y, (255, 190, 90))])
         conv.sfx = []
 
+    def _vision_mult(self, clock, lights_world, night):
+        """How far your light reaches: The Fog's multiplier x your eyes adapting to the dark
+        x the Light of RDV ring."""
+        from game import eyes, items as _items
+        if not hasattr(self, "_eyes"):
+            self._eyes = eyes.EyeAdaptation()
+        p = self.player
+        bright = any((lx - p.pos.x) ** 2 + (ly - p.pos.y) ** 2 < (lr * 0.45) ** 2
+                     for (lx, ly, lr, _c) in lights_world if lr >= 110)
+        mult = clock.get("light_mult", 1.0) * self._eyes.update(1 / 60, night, bright)
+        if p.ring is not None and getattr(p.ring, "aura", "") == "rdv":
+            mult *= _items.RDV_VISION
+        return mult
+
     def _set_night_view(self, sim):
         """What the local player can see tonight (entities.NIGHT_VIEW): a Shade Stalker is
         only drawn in full inside the player's light or another light source."""
@@ -1350,7 +1364,8 @@ class Game:
         night = sim.light_level < 0.5 and not sim.is_bonus_room
         info = sim.clock_info() if night else {}
         _ent.NIGHT_VIEW.update(night=night, player=(self.player.pos.x, self.player.pos.y),
-                               radius=ui.PLAYER_LIGHT_RADIUS * info.get("light_mult", 1.0),
+                               radius=ui.PLAYER_LIGHT_RADIUS * info.get("light_mult", 1.0)
+                               * (1.6 if getattr(self.player.ring, "aura", "") == "rdv" else 1.0),
                                lights=[(x, y, r) for (x, y, r, _c) in sim.light_sources_near(self.player.pos)]
                                if night else ())
 
@@ -2077,19 +2092,29 @@ class Game:
             for (lx, ly, lr, lc) in lights_world:
                 sx, sy = self.cam((lx, ly))
                 lights.append((sx, sy, lr, lc))
+        from game import lighting as _lighting
+        _lighting.set_grade(clock)
+        vision = self._vision_mult(clock, lights_world, sim.is_night)
+        audio.night_ambience(1 / 60, clock)
         fog = clock.get("event") == "fog" and sim.light_level < 0.5
         if fog:
             ui.draw_night_fog(s, 1.0 - sim.light_level, self.cam)  # lit by the lights below
+        else:
+            ui.draw_dawn_mist(s, clock, self.cam)
         if sim.light_level < 0.98:
             vfx.night_ambience(self.player.pos, world.TILE_TO_BIOME_NAME.get(
                 sim.realm_map.tile_at(self.player.pos.x, self.player.pos.y)), sim.is_night, sim.blood_moon_active)
         ui.draw_day_night_overlay(
             s, sim.light_level, sim.blood_moon_active, torch_positions,
             luminosity=settings.get("luminosity"), player_screen=self.cam(self.player.pos),
-            lights=lights, light_mult=clock.get("light_mult", 1.0),
+            lights=lights, light_mult=vision,
             occlusion=dict(grid=sim.realm_map.grid, solid=world.SOLID, cam=self.cam, tile=C.TILE,
                            player_world=(self.player.pos.x, self.player.pos.y), lights_world=lights_world,
                            version=getattr(sim, "doors_version", 0)) if not sim.is_bonus_room else None)
+        if not sim.is_bonus_room:
+            ui.draw_sky_grade(s, clock, sim.light_level)
+        for n in sim.npcs:
+            n.draw_ward_bar(s, self.cam)
         if fog:
             ui.draw_fog_veil(s, 1.0 - sim.light_level, self.cam)
         ui.draw_light_glows(s, lights, sim.light_level)
