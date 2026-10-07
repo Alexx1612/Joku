@@ -760,10 +760,14 @@ def _roll_loot_once(cls_name: str, enemy_rank: str, difficulty: float = 0.5, sou
     if source:
         drops.extend(_source_extras(cls_name, enemy_rank, source))
     from game import runes
-    rune = runes.maybe_drop(enemy_rank)  # Weapon Shards: elites ~4%, bosses ~25%
+    # Weapon Shards: elites ~4%, bosses ~25% - night mobs x2.5, the Blood Moon x4
+    rune = runes.maybe_drop(enemy_rank, RUNE_SOURCE_MULT.get(source, 1.0))
     if rune is not None:
         drops.append(("purple", rune))
     return drops
+
+
+RUNE_SOURCE_MULT = {"night": 2.5, "blood_moon": 4.0}
 
 
 def _random_tiered(cls_name, lo, hi) -> Item:
