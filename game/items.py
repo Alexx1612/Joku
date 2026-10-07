@@ -1140,6 +1140,31 @@ def make_rdv_ring() -> Item:
                             "The things in the dark hate that.")
 
 
+# ------------------------------------------------------------ night finds --
+# night realism pass 2 (game/night_sky.py): herbs that only bloom at night, and fallen stars.
+# They're temp potions; their stat_bonus keys are special (see Player.use_potion):
+# "heal" = % of max HP healed at once, "glow" = % more light radius, "luck" = extra loot rolls.
+HERB_BUFF_SECS = {"glow": 120.0, "luck": 240.0, "vit": 60.0}
+
+
+def make_moonpetal() -> Item:
+    return Item("Moonpetal", SLOT_TEMP_POTION, 0, "herb_moonpetal", stat_bonus={"heal": 25, "glow": 30},
+                description="A pale flower that only opens under the moon. Eat it and the dark seems "
+                            "a little thinner for a while.")
+
+
+def make_ghostbloom() -> Item:
+    return Item("Ghostbloom", SLOT_TEMP_POTION, 0, "herb_ghostbloom", stat_bonus={"heal": 50, "vit": 8},
+                description="A see-through swamp flower that glows faintly green. Bitter, but it knits "
+                            "wounds shut.")
+
+
+def make_star_fragment() -> Item:
+    return Item("Star Fragment", SLOT_TEMP_POTION, 0, "star_fragment", stat_bonus={"luck": 1},
+                description="Still warm. Make a wish: for a few minutes, monsters drop extra loot "
+                            "half the time.")
+
+
 # ------------------------------------------------------------ forge materials --
 SLOT_MATERIAL = "material"
 

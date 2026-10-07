@@ -224,11 +224,31 @@ next at the Anvil. **Bag 2**: 12 more backpack slots.
 
 Moon phases: 8 nights, 0 = new (darkest), 4 = full (+0.16 ambient light).
 
+Night weather (`game/night_sky.py`), rolled each normal night:
+
+| Weather | Weight | Ambient | Light radius | Extra |
+|---|---|---|---|---|
+| clear | 45 | x1.0 | x1.0 | shooting stars: 40% / 16 s, 30% of them fall |
+| cloudy | 25 | x0.72 | x1.0 | moon hidden |
+| rain | 18 | x0.62 | x0.85 | rain everywhere it can rain |
+| storm | 12 | x0.55 | x0.8 | lightning every 6-16 s |
+
+Night finds:
+
+| Item | Where | Effect |
+|---|---|---|
+| Moonpetal | night herb (F), forest / highlands | heal 25%, +30% light for 120 s |
+| Ghostbloom | night herb (F), swamp / jungle | heal 50%, +8 VIT for 60 s |
+| Star Fragment | a fallen shooting star | 50% chance of an extra loot roll per kill for 240 s |
+
+Owls: night-only neutral wildlife, 2 per player, fly off within 130 px.
+
 New music: `realm_night` "Witching Hour" (C# harmonic minor, 70), `realm_blood_moon` "Red Harvest" (phrygian, 148).
 
 New sounds: door_open, door_close, crickets, owl, howl, dawn_chorus, heartbeat, nightfall, dawn, blood_moon_rise,
 night_fog, night_hunter, night_lanterns_out, night_market, night_lamplighter, night_blood_moon, mimic_snap,
-watcher_shriek, lantern_snuff, harvester_roar.
+watcher_shriek, lantern_snuff, harvester_roar, thunder, rain_start, rain_patter, shooting_star, owl_flap,
+herb_pick.
 
 ## Ends of V0.2 (release tag `v0.2`)
 

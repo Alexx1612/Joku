@@ -129,6 +129,29 @@ What it adds:
 - **Floor:** no hostile spawn lands within `MIN_SPAWN_DIST_FROM_PLAYER` = 380 px of any player.
 - **Blood Moon:** hordes spawn in a ring 11-14 tiles out.
 
+## 11. Night realism pass 2: the sky and what lives under it (`game/night_sky.py`, `game/sky_fx.py`)
+- **Golden-hour sweep:** the warm glow covers the whole screen, with a warm rim at every edge. Its bright heart sweeps from the west edge to the east edge of the play area over the golden hour, at dusk and again at dawn (`sky_grade()["sun_x"]`, `ui.draw_sky_grade`).
+- **Night weather:** each normal night rolls one of four kinds (`NIGHT_WEATHER`):
+
+  | Weather | Chance | Ambient light | Moon | Light radius |
+  |---|---|---|---|---|
+  | clear | 45 | x1.0 | normal | x1.0 |
+  | cloudy | 25 | x0.72 | hidden | x1.0 |
+  | rain | 18 | x0.62 | hidden | x0.85 |
+  | storm | 12 | x0.55 | hidden | x0.8 |
+
+  It's announced at nightfall and clears at dawn. Rainy and stormy nights rain everywhere except snow, sand and ash biomes (`SkyFX.rain_kind`), with a rain patter sound.
+- **Lightning:** storms strike every 6-16 s within 12 tiles of a player. The darkness lifts (`SkyFX.light_boost`) with a second flicker, a jagged bolt is drawn, and a cold wash and thunder play. Co-op uses the `bolt` sequence in `clock_info`.
+- **Shooting stars:** on clear, non-Blood-Moon nights there's a 40% chance every 16 s. 30% of those fall: a glowing Star Fragment lands 14-28 tiles away, and each player gets "...falls to the ground - north-east of you!". The fragment glows as a light source until picked up.
+  - **Using it:** a 50% chance of an extra loot roll on every kill for 4 minutes (`STAR_LUCK_CHANCE`).
+- **Night-blooming herbs:** Moonpetal (forest, highlands) and Ghostbloom (swamp, jungle). They're night-only glowing plants, 3 near each player. F picks one (`NightSky.gather_herb`; co-op uses the server `fish` action). You can't talk to them.
+  - **Moonpetal:** heals 25% and gives +30% light for 2 minutes.
+  - **Ghostbloom:** heals 50% and gives +8 VIT for 1 minute.
+- **Owls:** night-only, 2 near each player, perched in forest, highlands, tundra, jungle and swamp. Their amber eyes glow in the dark and they hoot now and then. If you come within 130 px they flap off and vanish.
+- **Frost sparkle:** on snow and ice at night, frost glints twinkle in the moonlight around you (drawn above the darkness).
+- **New sounds:** thunder, rain_start, rain_patter, shooting_star, owl_flap, herb_pick. **New VFX:** lightning, star_land, herb_pick.
+- **Fix:** the top countdown hides while a zone title card is showing. The two used to overlap.
+
 ## Tests
 - `check_night_horror`
 - `check_night_lightmap`
@@ -136,13 +159,8 @@ What it adds:
 - `check_combat_precision`
 - `check_weapon_shards`
 - `check_dock_tabs`
+- `check_night_sky`: golden sweep, weather, lightning, shooting stars and fragments, luck, herbs, owls, frost, sounds
 - `check_night_realism`: grade, moon, windows, sleeping animals, NPC schedules, eyes, ambience, RDV, the Lamplighter, the spawn floor
 
 ## Not done (ideas for later)
-- Night-blooming herbs to gather
-- Cloudy nights that are darker, with rain that dims lights
-- Frost sparkle and breath fog in the tundra at night
-- A "Night Owl" class perk
-- Owls as real neutral night wildlife
-- Shooting stars as a rare lucky event
-- Storm nights with lightning flashes that briefly light everything
+All six earlier ideas are now built (section 11).

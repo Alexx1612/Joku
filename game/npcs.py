@@ -338,6 +338,8 @@ NPCS = {
 # "animal speak" - talking to ambient wildlife with F. Kept short: a greeting and
 # one chat line each (finite, like every NPC conversation).
 WILDLIFE_TALK = {
+    "owl": ("*The owl swivels its head all the way round, then back.* \"Who. Who are YOU. Who.\"",
+            "Just a traveller.", "\"Hoo-hum. Travellers. Always walking about in the dark like they own it.\""),
     "deer": ("*The deer stares at you.* \"Are you a very tall, very loud tree?\"",
              "Just passing through.", "\"Pass quietly. We're counting the grass.\""),
     "forest_hare": ("*The hare's nose twitches at an alarming speed.* \"Did you bring carrots? Say yes.\"",
@@ -636,6 +638,8 @@ def nearest_wildlife(enemies, pos, radius=TALK_RADIUS):
     best, bd = None, radius
     for e in enemies:
         if not (e.alive and e.neutral and e.unshootable):
+            continue
+        if e.kind in ("moonpetal", "ghostbloom"):  # night herbs are picked (F), not talked to
             continue
         d = e.pos.distance_to(pos)
         if d <= bd:

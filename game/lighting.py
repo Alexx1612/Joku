@@ -51,6 +51,7 @@ def set_grade(clock):
     clock = clock or {}
     GRADE["tint"] = tuple(clock.get("tint", (1.0, 1.0, 1.0)))
     GRADE["moon"] = float(clock.get("moon", 0.0))
+    GRADE["sky_dark"] = float(clock.get("sky_dark", 1.0))  # cloudy / rainy / stormy nights are darker
 
 
 def ambient_color(light_level, luminosity, blood):
@@ -60,6 +61,7 @@ def ambient_color(light_level, luminosity, blood):
     a = 255 - night_darkness_alpha(luminosity) * dark
     if not blood:  # a full moon lights the night noticeably, a new moon leaves it pitch dark
         a = a + GRADE["moon"] * 255 * dark
+        a = a * (1 - (1 - GRADE.get("sky_dark", 1.0)) * dark)  # clouds
     tint = BLOOD_TINT if blood else MOON_TINT
     grade = GRADE["tint"]
     # at dusk / dawn the ambient warms back toward white; golden / blue hour colour on top

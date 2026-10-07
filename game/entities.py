@@ -425,8 +425,14 @@ class Player:
                 self.backpack.pop(index)
                 return True
             if it.slot == SLOT_TEMP_POTION:
+                from game.items import HERB_BUFF_SECS
                 for k, v in it.stat_bonus.items():
-                    self.temp_buffs[k] = (v, TEMP_POTION_DURATION)
+                    if k == "heal":  # night herbs: % of max HP at once
+                        self.hp = min(self.hp_max, self.hp + self.hp_max * v / 100.0)
+                    else:
+                        secs = HERB_BUFF_SECS.get(k, TEMP_POTION_DURATION) if it.shape.startswith(
+                            ("herb_", "star_")) else TEMP_POTION_DURATION
+                        self.temp_buffs[k] = (v, secs)
                 self.backpack.pop(index)
                 return True
             if it.slot == SLOT_EGG:
@@ -992,6 +998,13 @@ ENEMY_KINDS = {
     # a living light in the dark forest, swamp and jungle
     "fireflies": dict(kind="fireflies", rank="trash", hp=10, speed=26, pattern="aimed", dmg=(0, 0),
                       radius=10, aggro_range=0, leash_range=0, neutral=True, unshootable=True, night_only=True),
+    # night realism pass 2 (game/night_sky.py): night-blooming herbs (gathered with F) and owls
+    "moonpetal": dict(kind="moonpetal", rank="trash", hp=10, speed=0, pattern="aimed", dmg=(0, 0), radius=10,
+                      aggro_range=0, leash_range=0, neutral=True, unshootable=True, night_only=True, herb=True),
+    "ghostbloom": dict(kind="ghostbloom", rank="trash", hp=10, speed=0, pattern="aimed", dmg=(0, 0), radius=10,
+                       aggro_range=0, leash_range=0, neutral=True, unshootable=True, night_only=True, herb=True),
+    "owl": dict(kind="owl", rank="trash", hp=12, speed=0, pattern="aimed", dmg=(0, 0), radius=9,
+                aggro_range=0, leash_range=0, neutral=True, unshootable=True, night_only=True),
     "songbird": dict(kind="songbird", rank="trash", hp=15, speed=130, pattern="aimed", dmg=(0, 0),
                       radius=8, aggro_range=0, leash_range=0, neutral=True, unshootable=True),
     "deer": dict(kind="deer", rank="trash", hp=30, speed=110, pattern="aimed", dmg=(0, 0),
@@ -1205,6 +1218,7 @@ NIGHT_MOB_KINDS = ("lantern_eater", "shade_stalker", "night_mimic", "hollow_watc
 GLOWING_KINDS = {
     "lantern_eater": (46, (255, 196, 90)),  # just its lure - the rest of the night mobs stay dark
     "fireflies": (95, (210, 255, 120)), "cave_moth": (70, (200, 180, 255)),
+    "moonpetal": (64, (170, 200, 255)), "ghostbloom": (64, (140, 255, 190)),
     "fire_beetle": (60, (255, 150, 60)), "mushroom_folk": (85, (120, 220, 255)),
     "cinder_wisp": (75, (255, 140, 50)), "frost_sprite": (60, (160, 225, 255)),
     "ember_wisp": (60, (255, 160, 70)), "tide_wisp": (55, (120, 200, 255)),

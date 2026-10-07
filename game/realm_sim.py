@@ -130,6 +130,7 @@ DIURNAL_WILDLIFE = ("songbird", "deer", "forest_hare", "elk", "mountain_goat", "
                     "desert_lizard", "marsh_heron", "ice_penguin")
 # the Light of RDV ring: monsters near its wearer lose their nerve and back off
 RDV_FEAR_RADIUS = 240.0
+STAR_LUCK_CHANCE = 0.5  # a used Star Fragment: this chance of an extra loot roll per kill until it wears off
 BLOOD_MOON_CHANCE = 0.12  # rolled once each time night falls
 MOONLIT_CHANCE = 0.10     # each night spawn has this chance to be a tougher "Moonlit" variant
 
@@ -664,6 +665,8 @@ class RealmSim:
         self._ember_cd = self.EMBER_TICK
         self._beach_spawn = None if bonus else self._find_beach_spawn()
         self.night = None if bonus else night_mod.NightDirector(self)  # night-horror director (game/night.py)
+        from game import night_sky as _night_sky
+        self.sky = None if bonus else _night_sky.NightSky(self)  # weather, shooting stars, herbs, owls
         self.lairs = [] if bonus else self._generate_lairs()
         self._hidden_room = None
         self._phase2_pocket = None
@@ -1399,9 +1402,13 @@ class RealmSim:
 
         golden = max(tri(t, DUSK_START - 75, DUSK_START + 5, NIGHT_START), tri(t, NIGHT_END, DAWN_END - 5, DAWN_END + 75))
         blue = max(tri(t, DUSK_START + 5, NIGHT_START + 5, NIGHT_START + 45), tri(t, NIGHT_END - 45, NIGHT_END - 5, DAWN_END - 5))
+        sun_x = 0.5
         if golden > 0:
             tint = tuple(1 + (g - 1) * golden for g in GOLDEN_TINT)
-            sun, sun_side = golden, ("west" if t < DAY_LENGTH / 2 else "east")
+            dusk = t < (NIGHT_START + NIGHT_END) / 2  # (dusk runs past the 300 s mark)
+            sun, sun_side = golden, ("west" if dusk else "east")
+            a, b = (DUSK_START - 75, NIGHT_START) if dusk else (NIGHT_END, DAWN_END + 75)
+            sun_x = max(0.0, min(1.0, (t - a) / (b - a)))  # 0 = the west edge .. 1 = the east edge
         if blue > golden:
             tint = tuple(1 + (b - 1) * blue for b in BLUE_TINT)
         if NIGHT_END <= t < DAWN_END + 70:
@@ -1409,6 +1416,7 @@ class RealmSim:
         phase = self.moon_phase()
         moon = MOON_LIGHT * math.cos((phase - 4) / len(MOON_PHASES) * math.tau)
         return {"tint": [round(c, 3) for c in tint], "sun": round(sun, 3), "sun_side": sun_side,
+                "sun_x": round(sun_x, 3),
                 "mist": round(max(0.0, mist), 3), "moon": round(moon, 3), "moon_phase": phase}
 
     def house_light_points(self):
@@ -1451,6 +1459,11 @@ class RealmSim:
             info["house_lights"] = [[round(c[0]), round(c[1])] for c in self.house_light_points()]
         if self.night is not None:
             info.update(self.night.info())
+        if getattr(self, "sky", None) is not None:
+            info.update(self.sky.info())
+            info["light_mult"] = round(info.get("light_mult", 1.0) * self.sky.light_mult(), 3)
+            if self.sky.weather != "clear":
+                info["moon"] = min(info.get("moon", 0.0), -0.04)  # the clouds hide the moon
         return info
 
     def _update_day_night(self, dt):
@@ -1661,6 +1674,8 @@ class RealmSim:
         self._tick_enemy_zones(dt, alive)
         self._update_shelter(dt, alive)
         self._tick_night_creatures(dt, alive)
+        if getattr(self, "sky", None) is not None:
+            self.sky.tick(dt, alive)
         if self.night is not None:
             self.night.tick(dt, alive)
         self._gate_islands(dt, alive)
@@ -2072,6 +2087,8 @@ class RealmSim:
             g = GLOWING_KINDS.get(e.kind)
             if g and e.alive and e.pos.distance_squared_to(pos) <= reach2:
                 out.append((e.pos.x, e.pos.y, g[0], g[1]))
+        if getattr(self, "sky", None) is not None:  # fallen star fragments glow on the ground
+            out += [l for l in self.sky.lights() if (l[0] - pos.x) ** 2 + (l[1] - pos.y) ** 2 <= reach2]
         return out
 
     # ---------------------------------------------------------- safe houses --
@@ -2821,7 +2838,9 @@ class RealmSim:
             pid = p.pid if p is not None else None
             rolled_items = []
             src = getattr(enemy, "loot_source", None) or self.loot_source
-            for roll_i in range(loot_rolls):
+            lucky = 1 if (p is not None and "luck" in getattr(p, "temp_buffs", {})
+                          and random.random() < STAR_LUCK_CHANCE) else 0
+            for roll_i in range(loot_rolls + lucky):
                 # the source's extras (mythic tier / ingots / Divine) ride the FIRST roll only
                 for bag_color, item in roll_loot(p.cls_name if p else cls_for_loot,
                                                  getattr(enemy, "loot_rank_override", None) or enemy.rank,

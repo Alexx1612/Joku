@@ -675,8 +675,10 @@ def _tooltip(surf, pos, item):
     if item.min_dmg or item.max_dmg:
         lines.append(f"Damage: {item.min_dmg}-{item.max_dmg}")
         stat_line_count += 1
+    _special = {"heal": "{v}% HP healed", "glow": "+{v}% light radius (2 min)",
+                "luck": "Extra loot chance (4 min)"}
     for k, v in item.stat_bonus.items():
-        lines.append(f"+{v} {k.upper()}")
+        lines.append(_special[k].format(v=v) if k in _special else f"+{v} {k.upper()}")
         stat_line_count += 1
     if item.effect:
         from game.items import ability_power
@@ -1225,13 +1227,28 @@ def draw_night_emissives(surf, cam, enemies, light_level):
             continue
         if e.kind == "fireflies":  # (handled above)
             continue
+        if d.get("herb"):  # a night herb: the whole flower glows through the dark
+            hk = ("herb", e.kind, bucket)
+            hs = _EYE_GLOW.get(hk)
+            if hs is None:
+                hs = _spr.enemy_sprite(e.kind).copy()
+                f = 0.55 * bucket / 10.0
+                hs.fill((int(255 * f), int(255 * f), int(255 * f), 255), special_flags=pygame.BLEND_RGBA_MULT)
+                _EYE_GLOW[hk] = hs
+            x, y = cam(e.pos)
+            pulse = 0.75 + 0.25 * math.sin(t * 1.3 + e.pos.x * 0.02)
+            if pulse > 0.8:
+                surf.blit(hs, hs.get_rect(center=(int(x), int(y))), special_flags=pygame.BLEND_ADD)
+            continue
         col = {"hollow_watcher": (255, 60, 60), "red_harvester": (255, 50, 40),
-               "lantern_eater": (255, 210, 120)}.get(e.kind, (230, 230, 255))
+               "lantern_eater": (255, 210, 120), "owl": (255, 190, 60)}.get(e.kind, (230, 230, 255))
         x, y = cam(e.pos)
         blink = (math.sin(t * 1.7 + e.pos.x * 0.03) > -0.92)  # an occasional blink
         if not blink:
             continue
-        gap = 4 if e.kind != "red_harvester" else 7
+        gap = {"red_harvester": 7, "owl": 7}.get(e.kind, 4)
+        if e.kind == "owl":
+            y -= 6
         for ex in (x - gap, x + gap):
             key = (col, int(dark * 10))
             spr = _EYE_GLOW.get(key)
@@ -1257,21 +1274,41 @@ def draw_sky_grade(surf, clock, light_level):
     if light_level >= 0.98 and any(abs(c - 1.0) > 0.01 for c in tint):
         surf.fill(tuple(int(255 * c) for c in tint), special_flags=pygame.BLEND_MULT)
     sun = clock.get("sun", 0.0)
-    side = clock.get("sun_side")
-    if sun > 0.02 and side:
-        size = surf.get_size()
-        key = (size, side)
-        g = _SUN_GLOW.get(key)
+    if sun > 0.02 and clock.get("sun_side"):
+        # the low sun's glow wraps the WHOLE screen (warm at every edge, a soft vignette of light)
+        # and its bright heart sweeps from the west edge to the east edge over the golden hour -
+        # at dusk and again at dawn
+        w, h = surf.get_size()
+        g = _SUN_GLOW.get(("glow", w, h))
         if g is None:
-            gw, gh = 32, 20
+            gw, gh = 64, 40  # small radial field: hotspot in the middle, warm all the way out
             small = pygame.Surface((gw, gh))
-            for x in range(gw):
-                f = (1 - x / (gw - 1)) if side == "west" else (x / (gw - 1))
-                small.fill((int(120 * f ** 2.2), int(60 * f ** 2.2), int(10 * f ** 2.2)), (x, 0, 1, gh))
-            g = _SUN_GLOW[key] = pygame.transform.smoothscale(small, size)
+            for y in range(gh):
+                for x in range(gw):
+                    d = (((x - gw / 2) / (gw / 2)) ** 2 + ((y - gh / 2) / (gh / 2)) ** 2) ** 0.5
+                    f = max(0.0, 1.0 - d / 1.45)
+                    f = 0.18 + 0.82 * f ** 1.8  # never zero: the edges stay warm too
+                    small.set_at((x, y), (int(84 * f), int(44 * f), int(10 * f)))
+            g = _SUN_GLOW[("glow", w, h)] = pygame.transform.smoothscale(small, (w * 2, h * 2))
+        edge = _SUN_GLOW.get(("edge", w, h))
+        if edge is None:  # a warm rim all around the screen (the sky's light pooling at the edges)
+            ew, eh = 32, 20
+            small = pygame.Surface((ew, eh))
+            for y in range(eh):
+                for x in range(ew):
+                    e = max(abs(x - (ew - 1) / 2) / ((ew - 1) / 2), abs(y - (eh - 1) / 2) / ((eh - 1) / 2))
+                    f = max(0.0, (e - 0.55) / 0.45) ** 1.6
+                    small.set_at((x, y), (int(72 * f), int(38 * f), int(12 * f)))
+            edge = _SUN_GLOW[("edge", w, h)] = pygame.transform.smoothscale(small, (w, h))
+        sx = clock.get("sun_x", 0.0 if clock.get("sun_side") == "west" else 1.0)
+        play_w = min(w, _panel_block_x0())  # the sweep crosses the play area, not the dock
+        hx, hy = int(sx * play_w), int(h * 0.42)
         g.set_alpha(int(255 * sun))
-        surf.blit(g, (0, 0), special_flags=pygame.BLEND_ADD)
+        surf.blit(g, (hx - w, hy - h), special_flags=pygame.BLEND_ADD)
         g.set_alpha(255)
+        edge.set_alpha(int(255 * sun))
+        surf.blit(edge, (0, 0), special_flags=pygame.BLEND_ADD)
+        edge.set_alpha(255)
 
 
 def draw_dawn_mist(surf, clock, cam=None):

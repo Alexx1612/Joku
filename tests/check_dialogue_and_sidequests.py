@@ -67,7 +67,7 @@ def check_content_counts():
     # every neutral wildlife kind can be talked to, and has a sprite
     from game import sprites
     for kind, d in ENEMY_KINDS.items():
-        if d.get("neutral") and d.get("unshootable"):
+        if d.get("neutral") and d.get("unshootable") and not d.get("herb"):  # herbs are picked, not chatted to
             assert kind in npcs.WILDLIFE_TALK, kind
             assert sprites.enemy_sprite(kind) is not None
     print("check_content_counts: PASSED")

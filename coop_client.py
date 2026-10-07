@@ -430,6 +430,8 @@ class CoopClient:
         self.clock_info = None  # RealmSim.clock_info() from the server (the time bar)
         self.blood_moon = False
         self.weather_fx = weather.WeatherFX()
+        from game import sky_fx as _sky_fx
+        self.sky_fx = _sky_fx.SkyFX()  # lightning, shooting stars, frost glints, rainy nights
         self.realm_ambience = vfx.AmbientEvents([])  # open-Realm ambient flavor, client-side/cosmetic
         # like weather_fx - dungeon ambient instead comes from the server's RealmSim via sim.vfx_events
         self._dust_cd = 0.0
@@ -1596,7 +1598,9 @@ class CoopClient:
 
         if self.zone in ("realm", "bonus") and self.tilemap and self.you:
             tile_here = self.tilemap.tile_at(self.you.pos.x, self.you.pos.y)
-            self.weather_fx.update(dt, world.weather_for_tile(tile_here))
+            _clock = (self.clock_info or {}) if self.zone == "realm" else {}
+            self.sky_fx.update(dt, _clock)
+            self.weather_fx.update(dt, self.sky_fx.rain_kind(_clock, world.weather_for_tile(tile_here)))
             self._dust_cd = max(0.0, self._dust_cd - dt)
             if (self._dust_cd <= 0 and self._prev_you_pos is not None
                     and self.you.pos.distance_to(self._prev_you_pos) > 2):
@@ -2251,6 +2255,8 @@ class CoopClient:
         vision = clock.get("light_mult", 1.0) * self._eyes.update(1 / 60, bool(clock.get("night")), bright)
         if self.you.ring is not None and getattr(self.you.ring, "aura", "") == "rdv":
             vision *= _items.RDV_VISION
+        if "glow" in getattr(self.you, "temp_buffs", {}):  # a Moonpetal
+            vision *= 1 + self.you.temp_buffs["glow"][0] / 100.0
         audio.night_ambience(1 / 60, clock)
         fog = clock.get("event") == "fog" and self.light_level < 0.5
         if fog:
@@ -2261,7 +2267,7 @@ class CoopClient:
             vfx.night_ambience(self.you.pos, world.TILE_TO_BIOME_NAME.get(
                 self.tilemap.tile_at(self.you.pos.x, self.you.pos.y)), bool(clock.get("night")), self.blood_moon)
         ui.draw_day_night_overlay(
-            s, self.light_level, self.blood_moon, torch_positions,
+            s, self.sky_fx.light_boost(self.light_level), self.blood_moon, torch_positions,
             luminosity=settings.get("luminosity"), player_screen=self.cam(self.you.pos),
             lights=lights, light_mult=vision,
             occlusion=dict(grid=self.tilemap.grid, solid=world.SOLID, cam=self.cam, tile=C.TILE,
@@ -2272,6 +2278,12 @@ class CoopClient:
             ui.draw_sky_grade(s, clock, self.light_level)
         for n in self.npcs:
             n.draw_ward_bar(s, self.cam)
+        if self.zone == "realm" and self.tilemap is not None:
+            if self.light_level < 0.7 and world.TILE_TO_BIOME_NAME.get(
+                    self.tilemap.tile_at(self.you.pos.x, self.you.pos.y)) in ("tundra", "ice"):
+                self.sky_fx.draw_frost_sparkle(s, self.cam, (self.you.pos.x, self.you.pos.y),
+                                               self.tilemap.tile_at, (world.SNOW, world.ICE), self.light_level)
+            self.sky_fx.draw(s, self.cam)
         if fog:
             ui.draw_fog_veil(s, 1.0 - self.light_level, self.cam)
         ui.draw_light_glows(s, lights, self.light_level)
@@ -2291,7 +2303,8 @@ class CoopClient:
         ui.draw_dock_frame(s, self.you)
         if self.zone != "bonus":
             ui.draw_day_night_clock(s, self.light_level, self.blood_moon, clock=self.clock_info)
-            ui.draw_night_countdown(s, self.clock_info)
+            if not self.zone_tracker.visible():  # (a zone title card owns the top of the screen)
+                ui.draw_night_countdown(s, self.clock_info)
         else:
             ui.draw_dungeon_header(s)
         self._draw_speech_bubbles(s)

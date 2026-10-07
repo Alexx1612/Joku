@@ -680,6 +680,17 @@ EVENT_SOUND = {
     "night_market": [(0.0, 880, 880, 0.9, "sine", 0.07, "exp_decay", 3), (0.0, 1320, 1320, 0.7, "sine", 0.03, "exp_decay", 4),
                      (0.35, 784, 784, 0.9, "sine", 0.06, "exp_decay", 3)],
     "night_blood_moon": [(0.0, 98, 92, 0.8, "square", 0.08, "exp_decay", 3)],
+    # night realism pass 2: weather, shooting stars, herbs, owls
+    "thunder": [(0.0, 0, 0, 0.12, "noise", 0.22, "exp_decay", 30), (0.08, 70, 40, 1.4, "noise", 0.18, "exp_decay", 2),
+                (0.3, 55, 35, 1.6, "sine", 0.12, "exp_decay", 2)],
+    "rain_start": [(0.0, 0, 0, 1.2, "noise", 0.05, "linear", 0)],
+    "rain_patter": [(0.0, 0, 0, 0.9, "noise", 0.025, "linear", 0)],
+    "shooting_star": [(0.0, 2400, 900, 0.7, "sine", 0.05, "exp_decay", 4), (0.05, 3600, 1800, 0.5, "sine", 0.025,
+                                                                             "exp_decay", 5)],
+    "owl_flap": [(0.0, 0, 0, 0.07, "noise", 0.06, "exp_decay", 30), (0.12, 0, 0, 0.07, "noise", 0.05, "exp_decay", 30),
+                 (0.24, 0, 0, 0.07, "noise", 0.04, "exp_decay", 30)],
+    "herb_pick": [(0.0, 1320, 1320, 0.25, "sine", 0.05, "exp_decay", 8), (0.08, 1760, 1760, 0.3, "sine", 0.04,
+                                                                         "exp_decay", 8)],
     # the Lamplighter: a match strike, then a warm lantern swell
     "night_lamplighter": [(0.0, 0, 0, 0.06, "noise", 0.12, "exp_decay", 40), (0.05, 0, 0, 0.3, "noise", 0.05, "exp_decay", 8),
                           (0.2, 392, 392, 0.9, "triangle", 0.06, "exp_decay", 3), (0.35, 587, 587, 0.8, "triangle", 0.04, "exp_decay", 3)],
@@ -732,6 +743,11 @@ def night_ambience(dt, clock):
     if _AMB["owl"] <= 0:
         _AMB["owl"] = _r.uniform(14, 30)
         play_event("owl")
+    if clock.get("sky") in ("rain", "storm"):
+        _AMB["rain"] = _AMB.get("rain", 0.0) - dt
+        if _AMB["rain"] <= 0:
+            _AMB["rain"] = 0.85
+            play_event("rain_patter")
     if clock.get("blood") and _AMB["howl"] <= 0:
         _AMB["howl"] = _r.uniform(12, 22)
         play_event("howl")

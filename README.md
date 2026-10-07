@@ -132,7 +132,7 @@ The in-game **O** menu shows the same list (`game/ui.py` `HELP_LINES`).
 | Shift + click | Quick-move: deposit into an open vault chest / Bazaar chest, or offer in an open trade |
 | Right-click | Drop the hovered backpack item, else open the nearest ground bag; in co-op, right-click a player (or their name in chat) for Whisper / Trade / Inspect / Teleport / Friend / Crew invite |
 | Tab | Cycle the right dock's tabs: Items -> Bag 2 -> Shards -> Pet (or click a tab; drag an item onto a tab to switch) |
-| F | Context action: open / close a door next to you, talk to an NPC or animal nearby, open a vault chest, fish at water, wish at the Nexus fountain, talk to Father Given |
+| F | Context action: pick a night herb, open / close a door next to you, talk to an NPC or animal nearby, open a vault chest, fish at water, wish at the Nexus fountain, talk to Father Given |
 | J | Expand / collapse the small HUD quest log (click it to open the full Quest Log) |
 | Enter | Open chat (with history) / step through the portal you're standing on / open a vault chest |
 | R | Back to the Nexus (Realm) / leave the dungeon |
@@ -554,6 +554,11 @@ Built in batches; each has a detailed doc in `docs/unity-rebuild/`.
 - **Night realism**: golden / blue hour, moon phases (full moon = brighter
   night + Blood Moon more likely), dawn mist, lit windows, day animals asleep,
   town folk indoors, eyes adapting to the dark, crickets / owls / dawn chorus.
+- **Night sky**: the golden-hour sun sweeps west to east across the screen;
+  nights can be cloudy, rainy or stormy (lightning lights everything up);
+  shooting stars, and the odd fallen **Star Fragment** (extra loot); glowing
+  **Moonpetal / Ghostbloom** herbs to pick at night (F); owls; frost glinting
+  on the snow.
 - **The Light of RDV**: keep Old Wick the Lamplighter alive until dawn and
   he gives you a ring that widens your light x1.6 and scares monsters off.
 - **Fix**: mobs could spawn right on top of you (tiles passed as pixels) -

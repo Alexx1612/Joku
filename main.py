@@ -179,6 +179,8 @@ class Game:
         self.vault_chest_open = None  # index of the vault-room chest whose bag-style window is open
         self.open_bag_id = None  # id of the ground Bag currently shown in the drag-and-drop window
         self.weather_fx = weather.WeatherFX()
+        from game import sky_fx as _sky_fx
+        self.sky_fx = _sky_fx.SkyFX()  # lightning, shooting stars, frost glints, rainy nights
         self.realm_ambience = vfx.AmbientEvents([])  # open-Realm ambient flavor - kinds swapped
         # per-call based on the player's current biome (see _update_sim); bonus dungeons get
         # their own theme-fixed AmbientEvents instance inside RealmSim itself
@@ -1261,6 +1263,10 @@ class Game:
         """F: one key, several meanings depending on where you're standing - fish
         near water in the Realm/Bonus room, make a wish at the Nexus fountain, or
         talk to Father Given (story hints / the Forge)."""
+        if self.state == STATE_REALM and self.realm_sim is not None and getattr(self.realm_sim, "sky", None) \
+                and self.realm_sim.sky.gather_herb(self.player):
+            audio.play_pickup()
+            return
         if self._try_talk():
             return
         if self.state == STATE_NEXUS:
@@ -1353,6 +1359,8 @@ class Game:
         bright = any((lx - p.pos.x) ** 2 + (ly - p.pos.y) ** 2 < (lr * 0.45) ** 2
                      for (lx, ly, lr, _c) in lights_world if lr >= 110)
         mult = clock.get("light_mult", 1.0) * self._eyes.update(1 / 60, night, bright)
+        if "glow" in p.temp_buffs:  # a Moonpetal: +30% light for 2 minutes
+            mult *= 1 + p.temp_buffs["glow"][0] / 100.0
         if p.ring is not None and getattr(p.ring, "aura", "") == "rdv":
             mult *= _items.RDV_VISION
         return mult
@@ -1752,7 +1760,9 @@ class Game:
         tile_here = sim.realm_map.tile_at(p.pos.x, p.pos.y)
         weather_kind = world.weather_for_tile(tile_here)
         mm.reveal(p.pos, radius=weather.reveal_radius_for(weather_kind, minimap.REVEAL_RADIUS_TILES))
-        self.weather_fx.update(dt, weather_kind)
+        _clock = sim.clock_info() if not sim.is_bonus_room else {}
+        self.sky_fx.update(dt, _clock)
+        self.weather_fx.update(dt, self.sky_fx.rain_kind(_clock, weather_kind))
         self._dust_cd = max(0.0, self._dust_cd - dt)
         if self._dust_cd <= 0 and p.pos.distance_to(prev_pos) > 2:
             self._dust_cd = 0.15
@@ -2105,7 +2115,7 @@ class Game:
             vfx.night_ambience(self.player.pos, world.TILE_TO_BIOME_NAME.get(
                 sim.realm_map.tile_at(self.player.pos.x, self.player.pos.y)), sim.is_night, sim.blood_moon_active)
         ui.draw_day_night_overlay(
-            s, sim.light_level, sim.blood_moon_active, torch_positions,
+            s, self.sky_fx.light_boost(sim.light_level), sim.blood_moon_active, torch_positions,
             luminosity=settings.get("luminosity"), player_screen=self.cam(self.player.pos),
             lights=lights, light_mult=vision,
             occlusion=dict(grid=sim.realm_map.grid, solid=world.SOLID, cam=self.cam, tile=C.TILE,
@@ -2115,6 +2125,12 @@ class Game:
             ui.draw_sky_grade(s, clock, sim.light_level)
         for n in sim.npcs:
             n.draw_ward_bar(s, self.cam)
+        if not sim.is_bonus_room:
+            if sim.light_level < 0.7 and world.TILE_TO_BIOME_NAME.get(
+                    sim.realm_map.tile_at(self.player.pos.x, self.player.pos.y)) in ("tundra", "ice"):
+                self.sky_fx.draw_frost_sparkle(s, self.cam, (self.player.pos.x, self.player.pos.y),
+                                               sim.realm_map.tile_at, (world.SNOW, world.ICE), sim.light_level)
+            self.sky_fx.draw(s, self.cam)
         if fog:
             ui.draw_fog_veil(s, 1.0 - sim.light_level, self.cam)
         ui.draw_light_glows(s, lights, sim.light_level)
@@ -2137,7 +2153,8 @@ class Game:
         if not sim.is_bonus_room:
             clock = sim.clock_info()
             ui.draw_day_night_clock(s, sim.light_level, sim.blood_moon_active, clock=clock)
-            ui.draw_night_countdown(s, clock)
+            if not self.zone_tracker.visible():  # (a zone title card owns the top of the screen)
+                ui.draw_night_countdown(s, clock)
         elif extra_hint:
             ui.draw_dungeon_header(s, extra_hint)
         ui.draw_hud(s, name, sim.kill_count, sim.boss is not None)

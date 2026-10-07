@@ -1747,6 +1747,64 @@ _FIREFLIES = [
 ]
 _FIREFLIES_PAL = {"y": (150, 200, 70), "Y": (235, 255, 140), "w": (120, 140, 120)}
 
+# night realism pass 2: a tawny owl (ear tufts, big amber eyes, barred chest) and two
+# night-blooming herbs - Moonpetal (pale blue star flower) and Ghostbloom (see-through green bell)
+_OWL = [
+    "  k        k  ",
+    "  kb      bk  ",
+    "  bbbbbbbbbb  ",
+    " bbffffffffbb ",
+    " bfWWfbbfWWfb ",
+    " bfWEfbbfEWfb ",
+    " bbffffnnffbb ",
+    "bbbbbbnnbbbbbb",
+    "bwbcwcbbcwcbwb",
+    "bwbccwccwccbwb",
+    "bwbcwccccwcbwb",
+    " bbccwccwccbb ",
+    "  bbccccccbb  ",
+    "   bbbbbbbb   ",
+    "    yy  yy    ",
+    "   ttttttttt  ",
+]
+_OWL_PAL = {"k": (60, 42, 26), "b": (120, 84, 48), "f": (196, 160, 112), "W": (250, 196, 60),
+            "E": (20, 14, 8), "n": (230, 170, 60), "w": (90, 62, 36), "c": (214, 190, 150),
+            "y": (210, 160, 60), "t": (82, 58, 34)}
+_MOONPETAL = [
+    "      p       ",
+    "     pPp      ",
+    "  p  pPp  p   ",
+    "  PppPWPppP   ",
+    "   pPWWWPp    ",
+    "  ppPWYWPpp   ",
+    "   pPWWWPp    ",
+    "  P ppPpp P   ",
+    "     pPp      ",
+    "      g       ",
+    "   l  g  l    ",
+    "    l g l     ",
+    "     lgl      ",
+    "      g       ",
+]
+_MOONPETAL_PAL = {"p": (150, 175, 235), "P": (200, 220, 255), "W": (245, 250, 255), "Y": (255, 240, 170),
+                  "g": (70, 120, 80), "l": (90, 150, 95)}
+_GHOSTBLOOM = [
+    "     gGg      ",
+    "    gGWGg     ",
+    "   gGWWWGg    ",
+    "   gGWWWGg    ",
+    "   gGGWGGg    ",
+    "    g d g     ",
+    "     d d      ",
+    "      s       ",
+    "   L  s  L    ",
+    "   LL s LL    ",
+    "    LLsLL     ",
+    "      s       ",
+]
+_GHOSTBLOOM_PAL = {"g": (90, 200, 150), "G": (150, 255, 200), "W": (225, 255, 240), "d": (200, 255, 225),
+                   "s": (60, 110, 80), "L": (70, 130, 90)}
+
 # magma golem: rock head with gold eye slits, huge shoulders, glowing fists
 _CINDER_COLOSSUS_NEW = _mirror([
     "       tttt",
@@ -2100,6 +2158,7 @@ ENEMY_GRIDS.update({
     "mad_god": (_MAD_GOD_FIGURE, _MAD_GOD_PAL), "mad_god_phase2": (_MAD_GOD_FIGURE, _MAD_GOD_PHASE2_PAL),
     "mad_god_unhinged": (_MAD_GOD_UNHINGED, _MAD_GOD_UNHINGED_PAL), "mad_god_livid": (_MAD_GOD_LIVID, _MAD_GOD_LIVID_PAL),
     "fireflies": (_FIREFLIES, _FIREFLIES_PAL),
+    "owl": (_OWL, _OWL_PAL), "moonpetal": (_MOONPETAL, _MOONPETAL_PAL), "ghostbloom": (_GHOSTBLOOM, _GHOSTBLOOM_PAL),
     "lantern_eater": (_LANTERN_EATER, _LANTERN_EATER_PAL), "shade_stalker": (_SHADE_STALKER, _SHADE_STALKER_PAL),
     "night_mimic": (_NIGHT_MIMIC, _NIGHT_MIMIC_PAL), "hollow_watcher": (_HOLLOW_WATCHER, _HOLLOW_WATCHER_PAL),
     "red_harvester": (_RED_HARVESTER, _RED_HARVESTER_PAL),
@@ -2948,6 +3007,13 @@ def item_icon(tier_color, shape="sword") -> pygame.Surface:
         _draw_rune_icon(surf, shape[5:], tier_color)
         _cache[key] = surf
         return surf
+    if shape in _NIGHT_FIND_ICONS:  # night herbs + the Star Fragment: their own small grids
+        grid, pal = _NIGHT_FIND_ICONS[shape]
+        art = _upscale(_autline_and_render(grid, pal, PX), UPSCALE_PASSES, final_size=_fit(
+            (len(grid[0]), len(grid)), 24))
+        surf.blit(art, art.get_rect(center=(14, 14)))
+        _cache[key] = surf
+        return surf
     art = _load_art(f"decorations/items/icon_{shape}.png", 24)
     if art is not None:
         surf.blit(art, (2, 2))
@@ -3040,3 +3106,25 @@ def item_icon(tier_color, shape="sword") -> pygame.Surface:
         pygame.draw.circle(surf, (230, 170, 40), (14, 18), 1)
     _cache[key] = surf
     return surf
+
+
+# night realism pass 2: inventory icons for the night finds (the herbs reuse their world grids)
+_STAR_FRAGMENT = [
+    "     y      ",
+    "     Y      ",
+    "    yWy     ",
+    "y  yWWWy  y ",
+    " YyWWWWWyY  ",
+    "  yWWSWWy   ",
+    " YyWWWWWyY  ",
+    "y  yWWWy  y ",
+    "    yWy     ",
+    "     Y      ",
+    "     y      ",
+]
+_STAR_FRAGMENT_PAL = {"y": (150, 170, 240), "Y": (200, 215, 255), "W": (240, 245, 255), "S": (255, 250, 200)}
+_NIGHT_FIND_ICONS = {
+    "herb_moonpetal": (_MOONPETAL, _MOONPETAL_PAL),
+    "herb_ghostbloom": (_GHOSTBLOOM, _GHOSTBLOOM_PAL),
+    "star_fragment": (_STAR_FRAGMENT, _STAR_FRAGMENT_PAL),
+}

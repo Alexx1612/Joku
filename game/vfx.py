@@ -584,6 +584,15 @@ def dispatch(vfx_events):
         elif kind == "mimic_reveal":
             spawn_burst(pos, (255, 215, 90), count=26, speed=(80, 220), life=(0.3, 0.6), radius=(2, 3))
             spawn_ring(pos, color, max_radius=70, life=0.4)
+        elif kind == "lightning":
+            spawn_burst(pos, color, count=26, speed=(80, 260), life=(0.2, 0.5), radius=(2, 4))
+            spawn_ring(pos, color, max_radius=70, life=0.35)
+        elif kind == "star_land":
+            spawn_burst(pos, color, count=40, speed=(60, 240), life=(0.4, 0.9), radius=(2, 5))
+            spawn_ring(pos, color, max_radius=110, life=0.6)
+            spawn_ring(pos, (255, 255, 255), max_radius=60, life=0.4)
+        elif kind == "herb_pick":
+            spawn_burst(pos, color, count=14, speed=(30, 110), life=(0.4, 0.8), radius=(1, 3))
         elif kind == "lamp_snuff":
             # a Lantern-Eater puts a lamp out: a flash, a shower of sparks, then a curl of smoke
             spawn_ring(pos, (255, 220, 150), max_radius=34, life=0.25)

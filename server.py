@@ -932,7 +932,9 @@ def _apply_action(state, s, action):
             _send_dialogue(s)
     elif kind == "fish" and s.zone in (ZONE_REALM, ZONE_BONUS):
         sim = state.realm_sim if s.zone == ZONE_REALM else state.bonus_sims.get(s.bonus_sim_id)
-        if _try_talk(state, s):
+        if sim is not None and getattr(sim, "sky", None) is not None and sim.sky.gather_herb(p):
+            pass
+        elif _try_talk(state, s):
             pass
         elif sim is not None and sim.toggle_door_near(p):
             pass
