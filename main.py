@@ -2070,19 +2070,36 @@ class Game:
         torch_positions = [self.cam(pos) for pos in
                            world.nearby_torch_world_positions(sim.realm_map, self.player.pos.x, self.player.pos.y)]
         lights = []
+        lights_world = []
         clock = sim.clock_info() if not sim.is_bonus_room else {}
         if sim.light_level < 0.98:
-            for (lx, ly, lr, lc) in sim.light_sources_near(self.player.pos):
+            lights_world = sim.light_sources_near(self.player.pos)
+            for (lx, ly, lr, lc) in lights_world:
                 sx, sy = self.cam((lx, ly))
                 lights.append((sx, sy, lr, lc))
-        if clock.get("event") == "fog" and sim.light_level < 0.5:
-            ui.draw_night_fog(s, 1.0 - sim.light_level)
-        ui.draw_day_night_overlay(s, sim.light_level, sim.blood_moon_active, torch_positions,
-                                  luminosity=settings.get("luminosity"), player_screen=self.cam(self.player.pos),
-                                  lights=lights, light_mult=clock.get("light_mult", 1.0))
+        fog = clock.get("event") == "fog" and sim.light_level < 0.5
+        if fog:
+            ui.draw_night_fog(s, 1.0 - sim.light_level, self.cam)  # lit by the lights below
+        if sim.light_level < 0.98:
+            vfx.night_ambience(self.player.pos, world.TILE_TO_BIOME_NAME.get(
+                sim.realm_map.tile_at(self.player.pos.x, self.player.pos.y)), sim.is_night, sim.blood_moon_active)
+        ui.draw_day_night_overlay(
+            s, sim.light_level, sim.blood_moon_active, torch_positions,
+            luminosity=settings.get("luminosity"), player_screen=self.cam(self.player.pos),
+            lights=lights, light_mult=clock.get("light_mult", 1.0),
+            occlusion=dict(grid=sim.realm_map.grid, solid=world.SOLID, cam=self.cam, tile=C.TILE,
+                           player_world=(self.player.pos.x, self.player.pos.y), lights_world=lights_world,
+                           version=getattr(sim, "doors_version", 0)) if not sim.is_bonus_room else None)
+        if fog:
+            ui.draw_fog_veil(s, 1.0 - sim.light_level, self.cam)
         ui.draw_light_glows(s, lights, sim.light_level)
         ui.draw_night_emissives(s, self.cam, sim.enemies, sim.light_level)
         if sim.is_night:
+            stalker = any(e.alive and e.kind == "shade_stalker" and e.pos.distance_to(self.player.pos) < 330
+                          for e in sim.enemies)
+            if stalker:
+                ui.draw_light_shimmer(s, self.cam(self.player.pos),
+                                      int(ui.PLAYER_LIGHT_RADIUS * clock.get("light_mult", 1.0)))
             ui.draw_blood_pulse(s, self._night_pulse(sim.blood_moon_active))
         if getattr(self.player, "sheltered", False):
             ui.draw_sheltered_badge(s)

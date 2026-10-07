@@ -585,8 +585,12 @@ def dispatch(vfx_events):
             spawn_burst(pos, (255, 215, 90), count=26, speed=(80, 220), life=(0.3, 0.6), radius=(2, 3))
             spawn_ring(pos, color, max_radius=70, life=0.4)
         elif kind == "lamp_snuff":
-            spawn_rise(pos, (90, 90, 100), count=14, life=(0.6, 1.1), speed=(20, 50), radius=(2, 4), spread=8)
-            spawn_burst(pos, color, count=10, speed=(40, 120), life=(0.2, 0.4), radius=(1, 2))
+            # a Lantern-Eater puts a lamp out: a flash, a shower of sparks, then a curl of smoke
+            spawn_ring(pos, (255, 220, 150), max_radius=34, life=0.25)
+            spawn_burst(pos, (255, 200, 110), count=22, speed=(60, 200), life=(0.25, 0.6), radius=(1, 2),
+                        angle_range=(math.pi * 1.05, math.pi * 1.95))
+            spawn_burst(pos, (255, 140, 60), count=10, speed=(20, 70), life=(0.4, 0.8), radius=(1, 2))
+            spawn_rise(pos, (70, 70, 80), count=18, life=(0.9, 1.6), speed=(14, 34), radius=(2, 5), spread=5)
         elif kind == "horde_ring":
             spawn_ring(pos, color, max_radius=380, life=0.9)
             spawn_ring(pos, (120, 10, 20), max_radius=300, life=0.7)
@@ -955,3 +959,40 @@ def draw_enemy_zones(surf, cam, zones):
                 side = u.rotate(90) * 5
                 pygame.draw.polygon(layer, (*color, edge_a), [p1 + u * 9, p1 + side, p1 - side])  # arrowhead
             surf.blit(layer, (cx - rr - 12, cy - rr - 12))
+
+
+# ------------------------------------------------------------ night ambience --
+_night_amb = {"breath": 0.0, "rain": 0.0, "t": None}
+
+
+def night_ambience(player_pos, biome, night, blood):
+    """Client-side night atmosphere, called once per drawn frame: your breath mists in the
+    cold (tundra / ice) at night, and a Blood Moon rains blood around you."""
+    import time as _time
+    now = _time.perf_counter()
+    last = _night_amb["t"]
+    _night_amb["t"] = now
+    dt = 0.0 if last is None else min(0.1, now - last)
+    if not night or _particle_scale <= 0:
+        return
+    pos = pygame.Vector2(player_pos)
+    if biome in ("tundra", "ice"):
+        _night_amb["breath"] -= dt
+        if _night_amb["breath"] <= 0:
+            _night_amb["breath"] = random.uniform(1.4, 2.2)
+            for _ in range(_scaled(6)):
+                lf = random.uniform(0.7, 1.2)
+                _particles.append({"pos": pos + pygame.Vector2(random.uniform(-3, 3), -14), "life": lf, "max_life": lf,
+                                   "vel": pygame.Vector2(random.uniform(-8, 8), -random.uniform(8, 18)),
+                                   "color": (215, 225, 240), "radius": random.uniform(2, 4)})
+    if blood:
+        _night_amb["rain"] += dt * 55
+        while _night_amb["rain"] >= 1:
+            _night_amb["rain"] -= 1
+            if _particle_scale < 1.0 and random.random() > _particle_scale:
+                continue
+            start = pos + pygame.Vector2(random.uniform(-700, 700), random.uniform(-460, 260))
+            lf = random.uniform(0.35, 0.6)
+            _particles.append({"pos": start, "life": lf, "max_life": lf,
+                               "vel": pygame.Vector2(random.uniform(-30, -10), random.uniform(420, 520)),
+                               "color": (150, 10, 20), "radius": random.uniform(1, 2)})
