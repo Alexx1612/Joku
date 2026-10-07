@@ -2345,6 +2345,8 @@ class RealmSim:
             e._danger_done = True
             if e.neutral or not e.alive:
                 continue
+            if getattr(e, "story_guardian", None) is not None:
+                continue  # landmark guardians are tuned to the story's acts (story.act_scale), not the map
             f = self.danger_at(e.pos)
             if f is None:
                 continue

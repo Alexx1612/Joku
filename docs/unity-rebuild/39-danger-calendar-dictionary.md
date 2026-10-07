@@ -17,6 +17,7 @@ and portals they drop, monsters inside the center drop much more dangerous dunge
   - If the night rules already captured the mob's `_day_stats`, those are scaled too, so dawn restores the
     danger-scaled stats.
   - Neutral wildlife is untouched.
+  - The story's landmark guardians are untouched too: they're tuned to the acts (`story.act_scale`).
 
 | From coast (0) to centre (1) | Multiplier |
 |---|---|
