@@ -1357,6 +1357,8 @@ class Game:
         if sim.open_island_chest(self.player):
             audio.play_pickup()
             return
+        if sim.start_mining(self.player):  # a gem vein (game/gems.py)
+            return
         # the feed message comes from sim.events via _update_sim's generic consumption
         # loop, same as loot/ability - fish_action()'s return value is just for the sound
         item, _msg = sim.fish_action(self.player)
@@ -1406,6 +1408,10 @@ class Game:
                 npc = next((n for n in getattr(self, "nexus_npcs", ()) if n.npc_id == conv.npc_id), None)
                 at = npc.pos if npc is not None else self.player.pos
                 vfx.dispatch([("forge_sparks", at.x, at.y, (255, 190, 90))])
+            elif key in ("gem_set", "gem_combine", "gem_pry"):  # stonework: sparks in the stone's colour
+                npc = next((n for n in getattr(self, "nexus_npcs", ()) if n.npc_id == conv.npc_id), None)
+                at = npc.pos if npc is not None else self.player.pos
+                vfx.dispatch([("gem_forge", at.x + 30, at.y + 4, getattr(conv, "gem_flash", None) or (230, 230, 240))])
         conv.sfx = []
 
     def _vision_mult(self, clock, lights_world, night):
@@ -2126,6 +2132,14 @@ class Game:
         ui.draw_island_chests(s, self.cam, [(ch["pos"], ch["skin"], self.player.pid in ch["opened"])
                                             for ch in sim.island_chests
                                             if ch["pos"].distance_to(self.player.pos) < 1400])
+        if getattr(sim, "gem_veins", None):
+            from game import gem_art
+            mf = sim.mining_frac(self.player.pid)
+            mv = sim._mining.get(self.player.pid)
+            gem_art.draw_veins(s, self.cam, [(v["pos"], v["kinds"], v["charges"]) for v in sim.gem_veins
+                                             if v["pos"].distance_to(self.player.pos) < 1400],
+                               mining=(mv["vein"]["pos"], mf) if mv else None,
+                               prompt_at=(lambda v: v["pos"] if v else None)(sim.gem_vein_near(self.player.pos)))
         for n in sim.npcs:
             n.draw(s, self.cam)
         for ob in sim.obstacles:

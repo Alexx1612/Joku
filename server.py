@@ -945,6 +945,8 @@ def _apply_action(state, s, action):
             pass
         elif sim is not None and sim.open_island_chest(p):
             pass
+        elif sim is not None and sim.start_mining(p):  # a gem vein (game/gems.py)
+            pass
         elif sim is not None:
             sim.fish_action(p)  # feed messages ride the normal sim.events -> snapshot feed pipeline
     elif kind == "wish" and s.zone == ZONE_NEXUS and _try_talk(state, s):
@@ -1123,6 +1125,9 @@ def _snapshot_core(state, s):
         "npcs": [n.net_state() for n in _nearby(sim.npcs, p_pos)],
         "island_chests": [{"x": ch["pos"].x, "y": ch["pos"].y, "skin": ch["skin"], "opened": s.pid in ch["opened"]}
                           for ch in sim.island_chests if ch["pos"].distance_to(p_pos) <= INTEREST_RADIUS],
+        "gem_veins": [{"x": v["pos"].x, "y": v["pos"].y, "kinds": v["kinds"], "charges": v["charges"]}
+                      for v in getattr(sim, "gem_veins", ()) if v["pos"].distance_to(p_pos) <= INTEREST_RADIUS],
+        "mining": sim.mining_frac(s.pid) if hasattr(sim, "mining_frac") else None,
         "portals": [pt.net_state() for pt in sim.portals],
         "obstacles": [ob.net_state() for ob in sim.obstacles],
         "portal_prompt": s.portal_prompt is not None,

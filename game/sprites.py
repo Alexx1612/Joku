@@ -2987,6 +2987,16 @@ def _draw_rune_icon(surf, effect, rim):
     pygame.draw.rect(surf, rim, (0, 0, 28, 28), width=2, border_radius=4)
 
 
+def icon_of(item) -> pygame.Surface:
+    """An item's inventory icon - a weapon with stones forged into it (game/gems.py)
+    also shows its socket pips and glows in its first stone's colour."""
+    base = item_icon(item.color, item.shape)
+    if getattr(item, "gems", None) and item.slot == "weapon":
+        from game import gem_art
+        return gem_art.weapon_icon(base, item)
+    return base
+
+
 def item_icon(tier_color, shape="sword") -> pygame.Surface:
     key = ("item", tier_color, shape)
     if key in _cache:
@@ -3012,6 +3022,13 @@ def item_icon(tier_color, shape="sword") -> pygame.Surface:
         art = _upscale(_autline_and_render(grid, pal, PX), UPSCALE_PASSES, final_size=_fit(
             (len(grid[0]), len(grid)), 24))
         surf.blit(art, art.get_rect(center=(14, 14)))
+        _cache[key] = surf
+        return surf
+    if shape.startswith("gem_"):  # Gemstones: "gem_<kind>_<grade>" (game/gems.py, game/gem_art.py)
+        from game import gem_art
+        _k, kind, grade = shape.split("_", 2)
+        gem_art.draw_gem_icon(surf, kind, grade)
+        pygame.draw.rect(surf, tier_color, (0, 0, 28, 28), width=2, border_radius=4)
         _cache[key] = surf
         return surf
     art = _load_art(f"decorations/items/icon_{shape}.png", 24)

@@ -113,6 +113,7 @@ def active_effects(rune_slots):
 
 def effect_color(effects):
     """The bullet tint for a set of effects (the strongest one's colour)."""
+    effects = {k: v for k, v in (effects or {}).items() if k in EFFECTS}  # skip stone-only keys (gems.py)
     if not effects:
         return None
     eff = max(effects, key=lambda k: effects[k])

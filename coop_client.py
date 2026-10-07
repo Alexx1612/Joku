@@ -97,6 +97,7 @@ class GhostBullet:
         self.color, self.radius = tuple(d["color"]), d["radius"]
         self.shape = d.get("shape", "bolt")
         self.vel = pygame.Vector2(d.get("vel", (0, 0)))
+        self.gem = d.get("gem")  # a gemmed weapon's shot: element trail (Bullet.draw)
 
 
 class GhostBag:
@@ -1817,6 +1818,11 @@ class CoopClient:
                 audio.play_event(key)
                 if key == "forge_success":
                     vfx.dispatch([("forge_sparks", self.you.pos.x, self.you.pos.y - 20, (255, 190, 90))])
+                elif key in ("gem_set", "gem_combine", "gem_pry"):  # stonework sparks
+                    from game import gems as _gems
+                    lead = _gems.lead_kind(self.you.weapon) if self.you is not None else None
+                    col = _gems.color_of(lead) if lead and key == "gem_set" else (230, 230, 240)
+                    vfx.dispatch([("gem_forge", self.you.pos.x, self.you.pos.y - 20, col)])
             if self.dialogue_view is not None:
                 self._cancel_drag()
         self.sidequest_log = snap.get("sidequests") or []
@@ -1824,6 +1830,9 @@ class CoopClient:
         self.npcs = [NPC.from_net_state(d) for d in snap.get("npcs", [])]
         self.island_chests = [(pygame.Vector2(d["x"], d["y"]), d.get("skin", 0), d.get("opened", False))
                               for d in snap.get("island_chests", [])]
+        self.gem_veins = [(pygame.Vector2(d["x"], d["y"]), d.get("kinds") or ["ruby"], d.get("charges", 0))
+                          for d in snap.get("gem_veins", [])]
+        self.mining_frac = snap.get("mining")
         bot_data = snap.get("bot")
         self.nexus_bot = GhostBot(bot_data) if bot_data else None
         if self.nexus_bot is not None and self.nexus_bot.speech and self.nexus_bot.speech != self._last_bot_speech:
@@ -2259,6 +2268,13 @@ class CoopClient:
             pt.draw(s, self.cam)
         ui.draw_portal_labels(s, self.cam, self.portals)
         ui.draw_island_chests(s, self.cam, self.island_chests)
+        if getattr(self, "gem_veins", None):
+            from game import gem_art, gems as _gems_mod
+            mf = getattr(self, "mining_frac", None)
+            near = min(self.gem_veins, key=lambda v: v[0].distance_squared_to(self.you.pos)) if mf is not None else None
+            close = [v for v in self.gem_veins if v[2] > 0 and v[0].distance_to(self.you.pos) <= _gems_mod.VEIN_RADIUS]
+            gem_art.draw_veins(s, self.cam, self.gem_veins, mining=(near[0], mf) if near is not None else None,
+                               prompt_at=close[0][0] if close else None)
         for n in self.npcs:
             n.draw(s, self.cam)
         for ob in self.obstacles:

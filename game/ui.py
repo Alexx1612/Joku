@@ -532,7 +532,7 @@ def draw_inventory(surf, player, mouse_pos, dragging_from=None, highlighted=(), 
         show = it and dragging_from != ("equip", slot_type)
         _slot_frame(surf, rect, filled=bool(show), hovered=rect.collidepoint(mouse_pos), border=False)
         if show:
-            icon = sprites.item_icon(it.color, it.shape)
+            icon = sprites.icon_of(it)
             surf.blit(pygame.transform.smoothscale(icon, (SLOT_SIZE - 6, SLOT_SIZE - 6)), (rect.x + 3, rect.y + 3))
             _tier_badge(surf, rect, it)
             if rect.collidepoint(mouse_pos):
@@ -551,7 +551,7 @@ def draw_inventory(surf, player, mouse_pos, dragging_from=None, highlighted=(), 
         _slot_frame(surf, rect, filled=show, hovered=rect.collidepoint(mouse_pos), border=False)
         if show:
             it = player.backpack[i]
-            icon = sprites.item_icon(it.color, it.shape)
+            icon = sprites.icon_of(it)
             surf.blit(pygame.transform.smoothscale(icon, (SLOT_SIZE - 6, SLOT_SIZE - 6)), (rect.x + 3, rect.y + 3))
             num = _FONT_S.render(str(i + 1), True, (140, 140, 150))
             surf.blit(num, (rect.x + 2, rect.y + 2))
@@ -582,7 +582,7 @@ def _draw_container(surf, player, mode, mouse_pos, dragging_from):
         if active:
             pygame.draw.rect(surf, (255, 200, 90), rect, width=2, border_radius=3)
         if show:
-            icon = sprites.item_icon(it.color, it.shape)
+            icon = sprites.icon_of(it)
             surf.blit(pygame.transform.smoothscale(icon, (SLOT_SIZE - 6, SLOT_SIZE - 6)), (rect.x + 3, rect.y + 3))
             _tier_badge(surf, rect, it)
             if rect.collidepoint(mouse_pos):
@@ -606,7 +606,7 @@ def _draw_container(surf, player, mode, mouse_pos, dragging_from):
 
 def draw_dragged_item(surf, item, mouse_pos):
     """The floating icon that follows the cursor while dragging an item."""
-    icon = pygame.transform.smoothscale(sprites.item_icon(item.color, item.shape), (SLOT_SIZE - 6, SLOT_SIZE - 6))
+    icon = pygame.transform.smoothscale(sprites.icon_of(item), (SLOT_SIZE - 6, SLOT_SIZE - 6))
     holder = icon.copy()
     holder.set_alpha(230)
     surf.blit(holder, (mouse_pos[0] - (SLOT_SIZE - 6) // 2, mouse_pos[1] - (SLOT_SIZE - 6) // 2))
@@ -687,6 +687,11 @@ def _tooltip(surf, pos, item):
     if item.proc:
         lines.append(item.proc)
         stat_line_count += 1
+    if item.slot == "weapon":
+        from game import gems as _gems  # sockets and the stones forged into them
+        gl = _gems.describe_weapon(item)
+        lines.extend(gl)
+        stat_line_count += len(gl)
     if item.pet_state:
         from game.items import PET_KINDS, PET_RARITY_MAX_LEVEL, pet_bond_level, pet_is_maxed
         rarity = PET_KINDS.get(item.pet_kind, {}).get("rarity", "common")
@@ -1844,7 +1849,7 @@ def draw_bag_window(surf, bag_screen_pos, items, mouse_pos, dragging_from=None):
         _slot_frame(surf, rect, filled=show, hovered=rect.collidepoint(mouse_pos), border=False)
         if show:
             it = items[i]
-            icon = sprites.item_icon(it.color, it.shape)
+            icon = sprites.icon_of(it)
             surf.blit(pygame.transform.smoothscale(icon, (SLOT_SIZE - 6, SLOT_SIZE - 6)), (rect.x + 3, rect.y + 3))
             _tier_badge(surf, rect, it)
             if rect.collidepoint(mouse_pos):
@@ -2170,7 +2175,7 @@ def draw_trade_panel(surf, trade, you_name="You", mouse_pos=(-1, -1)):
             _slot_frame(panel, slot_rect, filled=i < len(items), border=False)
             if i < len(items):
                 it = Item.from_json(items[i])
-                icon = pygame.transform.smoothscale(sprites.item_icon(it.color, it.shape),
+                icon = pygame.transform.smoothscale(sprites.icon_of(it),
                                                      (TRADE_SLOT_SIZE - 6, TRADE_SLOT_SIZE - 6))
                 panel.blit(icon, (rx + 3, ry + 3))
                 _tier_badge(panel, pygame.Rect(rx, ry, TRADE_SLOT_SIZE, TRADE_SLOT_SIZE), it)
@@ -2267,7 +2272,7 @@ def draw_inspect_panel(surf, peer, mouse_pos=(-1, -1)):
         it = getattr(peer, slot_type, None)
         _slot_frame(surf, rect, filled=it is not None, hovered=rect.collidepoint(mouse_pos))
         if it is not None:
-            icon = sprites.item_icon(it.color, it.shape)
+            icon = sprites.icon_of(it)
             surf.blit(pygame.transform.smoothscale(icon, (SLOT_SIZE - 6, SLOT_SIZE - 6)), (rect.x + 3, rect.y + 3))
             _tier_badge(surf, rect, it)
             if rect.collidepoint(mouse_pos):
@@ -2741,7 +2746,7 @@ def draw_vault_chest_window(surf, chest_screen_pos, chest_idx, vault_items, mous
         show = it is not None and dragging_from != ("vault", lo + i)
         _slot_frame(surf, rect, filled=show, hovered=rect.collidepoint(mouse_pos), border=False)
         if show:
-            icon = sprites.item_icon(it.color, it.shape)
+            icon = sprites.icon_of(it)
             surf.blit(pygame.transform.smoothscale(icon, (SLOT_SIZE - 6, SLOT_SIZE - 6)), (rect.x + 3, rect.y + 3))
             _tier_badge(surf, rect, it)
             if rect.collidepoint(mouse_pos):
@@ -2785,7 +2790,7 @@ def draw_vault_screen(surf, player, vault_items, vault_capacity, mouse_pos, sele
         _slot_frame(surf, rect, filled=i < len(player.backpack), hovered=rect.collidepoint(mouse_pos), border=False)
         if i < len(player.backpack) and dragging_from != ("backpack", i):
             it = player.backpack[i]
-            icon = sprites.item_icon(it.color, it.shape)
+            icon = sprites.icon_of(it)
             surf.blit(pygame.transform.smoothscale(icon, (SLOT_SIZE - 6, SLOT_SIZE - 6)), (rect.x + 3, rect.y + 3))
             _tier_badge(surf, rect, it)
             if rect.collidepoint(mouse_pos):
@@ -2813,7 +2818,7 @@ def draw_vault_screen(surf, player, vault_items, vault_capacity, mouse_pos, sele
         it = vault_items[idx] if idx < len(vault_items) else None
         _slot_frame(surf, rect, filled=it is not None, hovered=rect.collidepoint(mouse_pos), border=False)
         if it is not None and dragging_from != ("vault", idx):
-            icon = sprites.item_icon(it.color, it.shape)
+            icon = sprites.icon_of(it)
             surf.blit(pygame.transform.smoothscale(icon, (SLOT_SIZE - 6, SLOT_SIZE - 6)), (rect.x + 3, rect.y + 3))
             _tier_badge(surf, rect, it)
             if rect.collidepoint(mouse_pos):
