@@ -92,6 +92,7 @@ class Game:
         audio.play_theme()
         self.fullscreen = False
         self.help_open = False
+        self.calendar_open = False  # K: the in-game calendar (game/calendar_ui.py)
         self.menu_selected = 0
         self.quit_confirm_open = False  # Esc with nothing else open asks before quitting
         self.panel_drag = PanelDrag()  # mouse-draggable chat log / quest log
@@ -651,6 +652,8 @@ class Game:
                     action()
                 elif event.key == pygame.K_j and self.player is not None:
                     self.quest_log_expanded = not self.quest_log_expanded
+                elif event.key == pygame.K_k and self.player is not None:
+                    self.calendar_open = not self.calendar_open
                 elif event.key == pygame.K_i and self.state in (STATE_REALM, STATE_BONUS):
                     self._set_auto_fire(not self.auto_fire_enabled)
                     self.push_feed(f"Auto-fire {'ON' if self.auto_fire_enabled else 'OFF'}",
@@ -677,6 +680,8 @@ class Game:
                 elif event.key == pygame.K_ESCAPE:
                     if self._map_open():
                         self._current_minimap().full_map_open = False
+                    elif self.calendar_open:
+                        self.calendar_open = False
                     elif self.help_open:
                         self.help_open = False
                     elif self.echo_shop_open:
@@ -1661,7 +1666,7 @@ class Game:
                 theme_label = DUNGEON_THEMES.get(theme_name, DUNGEON_THEMES["generic"])["label"]
                 # rolled NOW (not on arrival) so the difficulty can be shown as a
                 # label on the portal itself before anyone steps through it
-                diff_name = shard_difficulty(theme_name)
+                diff_name = shard_difficulty(theme_name, getattr(p, "last_shard_danger", 0))
                 self.realm_sim.portals.append(Portal(p.pos, theme=theme_name, kind="dungeon_shard",
                                                       difficulty=diff_name))
                 self.push_feed(f"A {diff_name} portal to the {theme_label} tears open!", (190, 120, 230))
@@ -1973,6 +1978,9 @@ class Game:
                                  f"Earned {d.get('earned_echoes', 0)} Echoes. "
                                  f"Permadeath - press Enter or click below to try again.", (220, 60, 60))
             ui.draw_death_screen_button(s, pygame.mouse.get_pos())
+        if self.calendar_open:
+            from game import calendar_ui
+            calendar_ui.draw(s, self.realm_sim.clock_info() if self.realm_sim is not None else None)
         if self.help_open:
             items = self._menu_items()
             self.menu_selected %= len(items)

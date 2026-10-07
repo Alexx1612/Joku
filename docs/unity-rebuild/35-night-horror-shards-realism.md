@@ -130,7 +130,7 @@ What it adds:
 - **Blood Moon:** hordes spawn in a ring 11-14 tiles out.
 
 ## 11. Night realism pass 2: the sky and what lives under it (`game/night_sky.py`, `game/sky_fx.py`)
-- **Golden-hour sweep:** the warm glow covers the whole screen, with a warm rim at every edge. Its bright heart sweeps from the west edge to the east edge of the play area over the golden hour, at dusk and again at dawn (`sky_grade()["sun_x"]`, `ui.draw_sky_grade`).
+- **Golden-hour light:** superseded by doc 39 §3. It is now a soft vertical band of warm light that travels left to right over dusk and right to left over dawn. The screen-wide glow was too strong.
 - **Night weather:** each normal night rolls one of four kinds (`NIGHT_WEATHER`):
 
   | Weather | Chance | Ambient light | Moon | Light radius |

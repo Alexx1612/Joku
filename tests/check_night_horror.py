@@ -231,6 +231,7 @@ def _night_sim(event=None, blood=False, seed=21):
         night_mod.EVENTS = (event,)
     old_chance, sim._nights_since_blood_moon = rs.BLOOD_MOON_CHANCE, 0
     rs.BLOOD_MOON_CHANCE = 1.0 if blood else 0.0  # nightfall rolls the Blood Moon
+    sim.tonight = None
     try:
         for _ in range(4):
             sim.begin_tick()

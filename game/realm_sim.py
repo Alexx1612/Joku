@@ -119,12 +119,15 @@ NIGHTFALL_T, DAYBREAK_T = 315.0, 555.0      # is_night flips here (the middle of
 BLOOD_MOON_NIGHT_SPEED = 1.4                # a Blood Moon night runs faster: 3 minutes instead of 4
 # realism pass: colour grading of the light (golden hour before sunset / after sunrise, blue hour
 # just after sunset / before sunrise), an 8-night moon cycle, dawn mist
-GOLDEN_TINT = (1.0, 0.80, 0.58)
-BLUE_TINT = (0.70, 0.80, 1.0)
+GOLDEN_TINT = (1.0, 0.92, 0.80)  # (toned down: the user found the full-screen grade too strong)
+BLUE_TINT = (0.86, 0.91, 1.0)
 MOON_PHASES = ("New Moon", "Waxing Crescent", "First Quarter", "Waxing Gibbous", "Full Moon",
                "Waning Gibbous", "Last Quarter", "Waning Crescent")
 MOON_LIGHT = 0.16           # how much brighter a full-moon night is (and darker a new moon)
 FULL_MOON_BLOOD_MULT = 2.0  # a Blood Moon is twice as likely under a full moon
+FORECAST_NIGHTS = 7  # the in-game calendar shows this many nights ahead (see RealmSim.forecast_view)
+NIGHT_EVENT_LABELS = {"fog": "The Fog", "hunter": "Something Is Hunting", "lanterns_out": "The Lanterns Go Out",
+                      "market": "Midnight Market", "lamplighter": "The Lamplighter", "blood_moon": "BLOOD MOON"}
 # day animals sleep at night (nocturnal ones and the fireflies come out instead)
 DIURNAL_WILDLIFE = ("songbird", "deer", "forest_hare", "elk", "mountain_goat", "flamingo", "tortoise",
                     "desert_lizard", "marsh_heron", "ice_penguin")
@@ -439,15 +442,27 @@ def heroic_label(base_key):
     return DUNGEON_THEMES[HEROIC_PREFIX + base_key]["label"]
 
 
-def shard_difficulty(theme_name):
+def shard_difficulty(theme_name, danger_tier=0):
     """The difficulty a shard's portal opens at, rolled when the shard is USED (so it can
-    be shown on the portal): Heroic Shards are always "Heroic", the rest roll Easy/Medium/Hard."""
+    be shown on the portal): Heroic Shards are always "Heroic", the rest roll Easy/Medium/Hard -
+    weighted by the danger tier of the land the shard dropped in (game/danger.py): shards from
+    the shores open mostly Easy dungeons, shards from the centre mostly Hard ones."""
     if theme_name.startswith(HEROIC_PREFIX):
         return "Heroic"
     if theme_name == MAD_GOD_ROOM:
         return "Godly"
-    rollable = [d for d in BONUS_DIFFICULTIES if d["weight"] > 0]
-    return random.choices(rollable, weights=[d["weight"] for d in rollable])[0]["name"]
+    from game import danger
+    weights = danger.SHARD_DIFFICULTY_WEIGHTS.get(danger_tier, danger.SHARD_DIFFICULTY_WEIGHTS[0])
+    return random.choices(["Easy", "Medium", "Hard"], weights=weights)[0]
+
+
+def _danger_mults(enemy):
+    """The danger multipliers (game/danger.py) a mob was spawned with - neutral outside the continent."""
+    f = getattr(enemy, "danger", None)
+    if f is None:
+        return {"xp": 1.0, "loot_extra": 0.0, "portal": MOB_PORTAL_CHANCE}
+    from game import danger
+    return danger.mults(f)
 
 
 # ------------------------------------------------------ secret dungeon quest --
@@ -983,7 +998,8 @@ class RealmSim:
             dist_frac = min(1.0, pos.distance_to(center) / max_r_world)
             difficulty_scale = 1.0 + (1.0 - dist_frac) * 1.2
             lairs.append({"pos": pos, "kinds": kinds, "weights": weights, "cap": LAIR_CAP,
-                          "difficulty_scale": difficulty_scale, "respawn_cd": 0.0})
+                          "difficulty_scale": difficulty_scale, "hp_scale": 1.0,  # (danger.py scales them)
+                          "respawn_cd": 0.0})
         return lairs
 
     def _stamp_biome_buildings(self):
@@ -1353,7 +1369,7 @@ class RealmSim:
                 if pos is None:
                     continue
                 kind = random.choices(lair["kinds"], weights=lair["weights"])[0]
-                enemy = Enemy(kind, pos, level_scale=lair["difficulty_scale"] * self.story_scale,
+                enemy = Enemy(kind, pos, level_scale=lair.get("hp_scale", lair["difficulty_scale"]) * self.story_scale,
                               home_pos=lair["pos"])
                 enemy.lair_idx = idx
                 self.enemies.append(enemy)
@@ -1388,6 +1404,82 @@ class RealmSim:
     def is_night(self):
         return not self.is_bonus_room and self.light_level < 0.5
 
+    # ----------------------------------------------------------- calendar --
+    # The coming nights are decided in advance: each one's dice (Blood Moon, weather, night
+    # event) are drawn ahead of time and resolved with the rules in force when it falls - so the
+    # calendar (forecast_view) shows exactly what's coming, and live events (Blood Moon Week) or
+    # the pity counter still count. Admin commands can change tonight directly.
+    def _ensure_forecast(self):
+        if not hasattr(self, "forecast"):
+            self.forecast = []
+        while len(self.forecast) < FORECAST_NIGHTS:
+            self.forecast.append({"u_blood": random.random(), "u_weather": random.random(),
+                                  "u_event": random.random()})
+
+    def reroll_forecast(self):
+        """Fresh dice for every coming night (tests that patch the tables, admin /forecast reroll)."""
+        self.forecast = []
+        self._ensure_forecast()
+
+    def _blood_chance(self, phase, since, when):
+        mult = (live_events.multiplier_at("blood_moon_chance", when) if when is not None
+                else live_events.get_multiplier("blood_moon_chance"))
+        base = BLOOD_MOON_CHANCE * mult
+        if phase == 4:
+            base *= FULL_MOON_BLOOD_MULT  # blood moons favour the full moon
+        return min(0.5, base + since * 0.03)
+
+    def _resolve_night(self, entry, phase, since, when):
+        from game import night as _night_mod, night_sky as _ns
+        blood = entry["u_blood"] < self._blood_chance(phase, since, when)
+        if blood:
+            return {"blood": True, "weather": "clear", "event": "blood_moon", "phase": phase}
+        kinds, weights = zip(*_ns.NIGHT_WEATHER)
+        acc, pick, target = 0.0, kinds[-1], entry["u_weather"] * sum(weights)
+        for k, w in zip(kinds, weights):
+            acc += w
+            if target < acc:
+                pick = k
+                break
+        events = _night_mod.EVENTS
+        return {"blood": False, "weather": pick, "phase": phase,
+                "event": events[min(len(events) - 1, int(entry["u_event"] * len(events)))]}
+
+    def _seconds_to_nightfall(self):
+        t = self.day_time
+        if t < NIGHTFALL_T:
+            return NIGHTFALL_T - t
+        if t < DAYBREAK_T:  # tonight is under way: to daybreak, then the whole next day
+            c = self.clock_info_basic()
+            return c["left"] + (DAY_LENGTH - DAYBREAK_T) + NIGHTFALL_T
+        return DAY_LENGTH - t + NIGHTFALL_T
+
+    def forecast_view(self, now=None):
+        """The calendar: [{"n", "eta" (s until it falls), "phase", "moon", "blood", "weather",
+        "event", "label"}] for the next FORECAST_NIGHTS nights."""
+        import time as _time
+        if self.is_bonus_room:
+            return []
+        self._ensure_forecast()
+        now = _time.time() if now is None else now
+        night_len_saved = (NIGHT_END - NIGHT_START) * (1 - 1 / BLOOD_MOON_NIGHT_SPEED)
+        eta = self._seconds_to_nightfall()
+        n0 = getattr(self, "night_count", 0)
+        since = self._nights_since_blood_moon
+        if self.is_night and not self.blood_moon_active:
+            since += 1  # tonight isn't a Blood Moon: by tomorrow's nightfall the counter has gone up
+        out = []
+        for i, entry in enumerate(self.forecast):
+            n = n0 + 1 + i
+            phase = n % len(MOON_PHASES)
+            r = self._resolve_night(entry, phase, since, now + eta)
+            out.append({"n": n, "eta": round(eta, 1), "phase": phase, "moon": MOON_PHASES[phase],
+                        "blood": r["blood"], "weather": r["weather"], "event": r["event"],
+                        "label": NIGHT_EVENT_LABELS.get(r["event"], r["event"])})
+            since = 0 if r["blood"] else since + 1
+            eta += DAY_LENGTH - (night_len_saved if r["blood"] else 0.0)
+        return out
+
     def moon_phase(self):
         """0 = new moon .. 4 = full moon .. 7 (an 8-night cycle, one step per night)."""
         return getattr(self, "night_count", 0) % len(MOON_PHASES)
@@ -1411,7 +1503,10 @@ class RealmSim:
             dusk = t < (NIGHT_START + NIGHT_END) / 2  # (dusk runs past the 300 s mark)
             sun, sun_side = golden, ("west" if dusk else "east")
             a, b = (DUSK_START - 75, NIGHT_START) if dusk else (NIGHT_END, DAWN_END + 75)
-            sun_x = max(0.0, min(1.0, (t - a) / (b - a)))  # 0 = the west edge .. 1 = the east edge
+            f = max(0.0, min(1.0, (t - a) / (b - a)))
+            # where the light band is: 0 = the west (left) edge .. 1 = the east (right) edge.
+            # Dusk's light travels left -> right, dawn's (the sun comes up in the east) right -> left
+            sun_x = f if dusk else 1.0 - f
         if blue > golden:
             tint = tuple(1 + (b - 1) * blue for b in BLUE_TINT)
         if NIGHT_END <= t < DAWN_END + 70:
@@ -1441,7 +1536,11 @@ class RealmSim:
             return "day"
         return day_phase_at(self.day_time)
 
-    def clock_info(self):
+    def clock_info_basic(self):
+        """Just the countdown part of clock_info (no sky / forecast)."""
+        return self.clock_info(basic=True)
+
+    def clock_info(self, basic=False):
         """Everything the time bar needs (also sent to co-op clients): where we are in
         the cycle, the phase, and real seconds until night falls / day breaks."""
         t = self.day_time
@@ -1457,7 +1556,18 @@ class RealmSim:
             until = "night"
         info = {"frac": round(t / DAY_LENGTH, 4), "phase": self.phase(), "left": round(left, 1),
                 "until": until, "blood": bool(self.blood_moon_active), "night": self.is_night}
+        if basic:
+            return info
         info.update(self.sky_grade())
+        info["night_no"] = getattr(self, "night_count", 0)
+        if not self.is_bonus_room:
+            # the calendar (refreshed once a second - it rides in every co-op snapshot)
+            key = (int(self.day_time), info["night_no"], info["blood"], live_events.current_event())
+            if getattr(self, "_fc_key", None) != key:
+                self._fc_key = key
+                self._fc_cache = [[f["n"], f["eta"], f["phase"], int(f["blood"]), f["weather"], f["event"]]
+                                  for f in self.forecast_view()]
+            info["forecast"] = self._fc_cache
         if (self.is_night or self.phase() == "dusk") and not (self.night is not None and self.night.lanterns_out):
             info["house_lights"] = [[round(c[0]), round(c[1])] for c in self.house_light_points()]
         if self.night is not None:
@@ -1483,11 +1593,12 @@ class RealmSim:
             # single night - the longer it's been since the last Blood Moon, the
             # more likely the next one is (capped), so it's a real, structured
             # cadence instead of pure chance every time
-            base_chance = BLOOD_MOON_CHANCE * live_events.get_multiplier("blood_moon_chance")
-            if self.moon_phase() == 4:
-                base_chance *= FULL_MOON_BLOOD_MULT  # blood moons favour the full moon
-            effective_chance = min(0.5, base_chance + self._nights_since_blood_moon * 0.03)
-            self.blood_moon_active = random.random() < effective_chance
+            self._ensure_forecast()
+            entry = self.forecast.pop(0)
+            tonight = self._resolve_night(entry, self.moon_phase(), self._nights_since_blood_moon, None)
+            self.tonight = tonight  # the night director / night sky read the event and the weather
+            self.blood_moon_active = tonight["blood"]
+            self._ensure_forecast()
             if self.blood_moon_active:
                 self._nights_since_blood_moon = 0
             # the announcement itself comes from the night director (game/night.py)
@@ -1680,6 +1791,7 @@ class RealmSim:
         self._tick_night_creatures(dt, alive)
         if getattr(self, "sky", None) is not None:
             self.sky.tick(dt, alive)
+        self._apply_danger()
         if self.night is not None:
             self.night.tick(dt, alive)
         self._gate_islands(dt, alive)
@@ -1881,7 +1993,7 @@ class RealmSim:
             return
         kind = random.choices(lair["kinds"], weights=lair["weights"])[0]
         avg_level = sum(p.level for p in alive) / len(alive)
-        scale = (1.0 + (avg_level - 1) * 0.08) * lair["difficulty_scale"] * self.story_scale
+        scale = (1.0 + (avg_level - 1) * 0.08) * lair.get("hp_scale", lair["difficulty_scale"]) * self.story_scale
         moonlit = self.is_night and random.random() < MOONLIT_CHANCE
         if moonlit:
             scale *= 2.0 if self.blood_moon_active else 1.6
@@ -2212,6 +2324,44 @@ class RealmSim:
                 n.home = pygame.Vector2(n.day_home)
                 n.target = pygame.Vector2(n.day_home)
                 n.pause = 0.0
+
+    def danger_at(self, pos):
+        """0.0 (coast) .. 1.0 (centre of the continent), None in dungeons / the ocean / islands."""
+        if self.is_bonus_room:
+            return None
+        from game import danger
+        return danger.danger_frac(pos[0], pos[1], self.realm_map.w, self.realm_map.h)
+
+    def _apply_danger(self):
+        """Once per hostile, where it first appears: scale it by how close to the centre of the
+        continent it is (game/danger.py) - more HP / damage / speed / attack rate / aggro near the
+        centre, gentler at the coast. Night mobs too."""
+        if self.is_bonus_room:
+            return
+        from game import danger
+        for e in self.enemies:
+            if getattr(e, "_danger_done", False):
+                continue
+            e._danger_done = True
+            if e.neutral or not e.alive:
+                continue
+            f = self.danger_at(e.pos)
+            if f is None:
+                continue
+            m = danger.mults(f)
+            e.danger = f
+            full = e.hp >= e.hp_max
+            e.hp_max = max(1, int(round(e.hp_max * m["hp"])))
+            e.hp = e.hp_max if full else min(e.hp, e.hp_max)
+            e.dmg = (max(1, int(round(e.dmg[0] * m["dmg"]))), max(1, int(round(e.dmg[1] * m["dmg"]))))
+            e.speed *= m["speed"]
+            e.fire_rate_mult *= m["cd"]
+            e.aggro_range *= m["aggro"]
+            base = getattr(e, "_day_stats", None)
+            if base is not None:  # the night rules already captured its day stats: scale those too
+                e._day_stats = (base[0] * m["aggro"], base[1], base[2] * m["speed"],
+                                (max(1, int(round(base[3][0] * m["dmg"]))), max(1, int(round(base[3][1] * m["dmg"])))),
+                                base[4] * m["cd"])
 
     def _rdv_scared(self, e, alive):
         """The Light of RDV ring: a non-boss monster this close to its wearer loses its nerve -
@@ -2957,7 +3107,8 @@ class RealmSim:
         credited = self._credited_players(enemy, killer)
         for p in credited:
             p.kills += 1
-            xp_gained = int(round(RANK_XP[enemy.rank] * live_events.get_multiplier("xp")))  # Happy Hour etc.
+            xp_gained = int(round(RANK_XP[enemy.rank] * live_events.get_multiplier("xp")  # Happy Hour etc.
+                                  * _danger_mults(enemy)["xp"]))
             p.gain_xp(xp_gained)
             # Echo passive accrual (Batch 14): bank 1 real echo to the ACCOUNT
             # immediately for every ECHO_XP_PER_ECHO of cumulative lifetime XP
@@ -2998,6 +3149,8 @@ class RealmSim:
             src = getattr(enemy, "loot_source", None) or self.loot_source
             lucky = 1 if (p is not None and "luck" in getattr(p, "temp_buffs", {})
                           and random.random() < STAR_LUCK_CHANCE) else 0
+            if getattr(enemy, "danger", None) is not None and random.random() < _danger_mults(enemy)["loot_extra"]:
+                lucky += 1  # the heart of the Realm pays better
             for roll_i in range(loot_rolls + lucky):
                 # the source's extras (mythic tier / ingots / Divine) ride the FIRST roll only
                 for bag_color, item in roll_loot(p.cls_name if p else cls_for_loot,
@@ -3014,11 +3167,21 @@ class RealmSim:
                         self.events.append((pid, f"{item.display_name} dropped!", item.color))
                         self.vfx_events.append(("mythic_drop", enemy.pos.x, enemy.pos.y, item.color))
                         self.sound_events.append(("sfx", "mythic_drop", enemy.pos.x, enemy.pos.y))
-            if not self.is_bonus_room and enemy.rank == "elite" and (story_shard or random.random() < MOB_PORTAL_CHANCE):
+            portal_chance = (_danger_mults(enemy)["portal"] if getattr(enemy, "danger", None) is not None
+                             else MOB_PORTAL_CHANCE)
+            if not self.is_bonus_room and enemy.rank == "elite" and (story_shard or random.random() < portal_chance):
+                from game import danger as _danger
+                d_tier = _danger.tier(getattr(enemy, "danger", None))
                 theme_name = THEME_FOR_KIND.get(enemy.kind, "generic")
+                heroic_name = HEROIC_PREFIX + theme_name
+                if (d_tier == 5 and p is not None and p.level >= _danger.HEROIC_MIN_LEVEL
+                        and heroic_name in DUNGEON_THEMES and random.random() < _danger.HEROIC_SHARD_CHANCE_T5):
+                    theme_name = heroic_name  # the very heart of the Realm: a HEROIC shard
                 dropped_shard_label = DUNGEON_THEMES[theme_name]["label"]
-                rolled_items.append(("brown", make_dungeon_shard(theme_name, dropped_shard_label)))
-                self.events.append((pid, f"A Dungeon Shard ({dropped_shard_label}) dropped!", (190, 120, 230)))
+                rolled_items.append(("brown", make_dungeon_shard(theme_name, dropped_shard_label, danger=d_tier)))
+                tier_txt = f" - {_danger.TIERS[d_tier][0]} lands" if d_tier else ""
+                self.events.append((pid, f"A Dungeon Shard ({dropped_shard_label}{tier_txt}) dropped!",
+                                    (190, 120, 230)))
             if p is not None and getattr(p, "sidequests", None) is not None:
                 if enemy is self.boss and self.is_bonus_room:
                     rolled_items.extend(self._boss_key_drops(p))

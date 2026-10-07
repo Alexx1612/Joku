@@ -81,6 +81,9 @@ class Item:
     gem_grade: str = ""
     # weapons only: the stones forged into it at the Anvil, [[kind, grade], ...] (game/gems.py)
     gems: list = field(default_factory=list)
+    # Dungeon Shards only: the danger tier (1 coast .. 5 centre, game/danger.py) of the land it dropped
+    # in - it weights the portal's difficulty (0 = unknown / old saves)
+    danger: int = 0
 
     @property
     def band(self) -> str:
@@ -115,7 +118,8 @@ class Item:
                     socketed_proc=self.socketed_proc, pet_state=self.pet_state,
                     quest_key=self.quest_key, divine=self.divine, divine_proc=self.divine_proc,
                     rune_effect=self.rune_effect, rune_rarity=self.rune_rarity, aura=self.aura,
-                    gem_kind=self.gem_kind, gem_grade=self.gem_grade, gems=[list(g) for g in self.gems])
+                    gem_kind=self.gem_kind, gem_grade=self.gem_grade, gems=[list(g) for g in self.gems],
+                    danger=self.danger)
 
     @staticmethod
     def from_json(d):
@@ -965,18 +969,25 @@ def _random_temp_potion() -> Item:
     return make_temp_potion(random.choice(STAT_KEYS))
 
 
-def make_dungeon_shard(theme_name: str, theme_label: str) -> Item:
+def make_dungeon_shard(theme_name: str, theme_label: str, danger: int = 0) -> Item:
     """An elite kill's mob-portal chance (see realm_sim.MOB_PORTAL_CHANCE) now
     drops this into the loot bag instead of instantly opening a portal at the
     kill spot - RotMG-authentic "mobs drop dungeons" as a real carried item,
     used later from the backpack (like a potion/egg) to open a themed portal
     wherever the player happens to be standing."""
     if theme_name.startswith("heroic_"):
-        return Item(f"{theme_label} Shard", SLOT_SHARD, 0, "shard", shard_theme=theme_name,
+        return Item(f"{theme_label} Shard", SLOT_SHARD, 0, "shard", shard_theme=theme_name, danger=danger,
                     description=f"A blood-red fragment of the {theme_label}. Use it in the Realm to open the "
                                 f"Heroic version (level 16+). Much harder. Much better loot.")
-    return Item(f"{theme_label} Shard", SLOT_SHARD, 0, "shard", shard_theme=theme_name,
-                description=f"A fragment of the {theme_label}. Use it to tear open a portal there.")
+    from game import danger as _danger
+    where = ""
+    if danger in _danger.TIERS:
+        where = (f" It hums with the {_danger.TIERS[danger][0]} lands it came from: "
+                 + ("expect an easy dungeon." if danger <= 1 else "probably an easy one." if danger == 2 else
+                    "could go either way." if danger == 3 else "expect a hard one." if danger == 4 else
+                    "almost certainly a HARD one."))
+    return Item(f"{theme_label} Shard", SLOT_SHARD, 0, "shard", shard_theme=theme_name, danger=danger,
+                description=f"A fragment of the {theme_label}. Use it to tear open a portal there.{where}")
 
 
 BAG_COLOR_FOR = BAG_COLORS

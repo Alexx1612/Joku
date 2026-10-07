@@ -229,9 +229,39 @@ def draw_corner(surf, tilemap, mm, player_pos, peers=(), portals=(), enemies=(),
         pygame.draw.rect(surf, gold, (rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2), width=1, border_radius=3)
         label = font_s.render("+" if delta > 0 else "-", True, (230, 220, 195))
         surf.blit(label, (rect.centerx - label.get_width() // 2, rect.centery - label.get_height() // 2))
-    hint = font_s.render(f"M: full map ({mm.corner_zoom:.1f}x)", True, (170, 170, 185))
     ox, oy = corner_origin()
-    surf.blit(hint, (ox + W // 2 - hint.get_width() // 2, oy + H + 6 + (ZOOM_BTN_SIZE - hint.get_height()) // 2))
+    row_y = oy + H + 6
+    dl = _danger_label(tilemap, player_pos)
+    if dl is not None:
+        # danger by distance from the continent's centre (game/danger.py): "Wild" + 5 pips
+        name, col, tier = dl
+        hint = font_s.render(f"M: map {mm.corner_zoom:.1f}x", True, (150, 150, 165))
+        lab = font_s.render(name, True, col)
+        pip, gap = 7, 2
+        total = lab.get_width() + 6 + 5 * (pip + gap) + 10 + hint.get_width()
+        x0 = ox + W // 2 - total // 2
+        cy = row_y + ZOOM_BTN_SIZE // 2
+        surf.blit(lab, (x0, cy - lab.get_height() // 2))
+        px = x0 + lab.get_width() + 6
+        for i in range(5):
+            r = pygame.Rect(px + i * (pip + gap), cy - pip // 2, pip, pip)
+            if i < tier:
+                pygame.draw.rect(surf, col, r)
+            pygame.draw.rect(surf, (20, 18, 16), r, 1)
+        surf.blit(hint, (px + 5 * (pip + gap) + 10, cy - hint.get_height() // 2))
+    else:
+        hint = font_s.render(f"M: full map ({mm.corner_zoom:.1f}x)", True, (170, 170, 185))
+        surf.blit(hint, (ox + W // 2 - hint.get_width() // 2, row_y + (ZOOM_BTN_SIZE - hint.get_height()) // 2))
+
+
+REALM_MIN_TILES = 1000  # only the open Realm's map is this big (the Nexus / dungeons are far smaller)
+
+
+def _danger_label(tilemap, player_pos):
+    if tilemap is None or getattr(tilemap, "w", 0) < REALM_MIN_TILES:
+        return None
+    from game import danger
+    return danger.label(danger.danger_frac(player_pos.x, player_pos.y, tilemap.w, tilemap.h))
 
 
 def draw_full_map(surf, tilemap, mm, player_pos, peers=(), portals=(), zone_name="", enemies=(), quest_marks=()):
@@ -272,6 +302,28 @@ def draw_full_map(surf, tilemap, mm, player_pos, peers=(), portals=(), zone_name
     for epos, color, is_boss in _visible_enemy_blips(enemies, mm.explored):
         _world_dot(surf, ox, oy, px_per_tile, epos.x, epos.y, color, 6 if is_boss else 3,
                     outline=(255, 255, 255) if is_boss else (0, 0, 0))
+    if getattr(tilemap, "w", 0) >= REALM_MIN_TILES:
+        # the danger tiers (game/danger.py): faint rings around the continent's centre, labelled
+        from game import danger
+        cxs, cys = ox + tilemap.w / 2 * px_per_tile, oy + tilemap.h / 2 * px_per_tile
+        r_tiles = danger.continent_radius_px() / C.TILE
+        lab_font = pygame.font.SysFont("consolas", 12)
+        for k, fr in enumerate(danger.ring_fracs()):
+            tier = danger.tier(fr + 1e-6)  # the band just inside this ring (+eps: 1-4/5 = 0.1999..)
+            rr = int(r_tiles * (1.0 - fr) * px_per_tile)
+            name, col = danger.TIERS[tier]
+            dim = tuple(int(c * 0.6) for c in col)  # drawn straight onto the map (clipped), no big alpha layer
+            pygame.draw.circle(surf, dim, (int(cxs), int(cys)), rr, 2)
+            t = lab_font.render(name, True, col)
+            for (ux, uy) in ((0, -1), (0, 1), (-1, 0), (1, 0)):  # labelled at all four compass points
+                lx, ly = int(cxs + ux * (rr - 8)), int(cys + uy * (rr - 8))
+                surf.blit(t, (lx - t.get_width() // 2 - ux * (t.get_width() // 2), ly - t.get_height() // 2))
+            if k == len(danger.ring_fracs()) - 1:  # the outermost band (the coast) is Calm
+                cname, ccol = danger.TIERS[1]
+                ct = lab_font.render(cname, True, ccol)
+                for (ux, uy) in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+                    lx, ly = int(cxs + ux * (rr + 10)), int(cys + uy * (rr + 10))
+                    surf.blit(ct, (lx - ct.get_width() // 2 + ux * (ct.get_width() // 2), ly - ct.get_height() // 2))
     _world_dot(surf, ox, oy, px_per_tile, player_pos.x, player_pos.y, (255, 230, 90), 5, outline=(0, 0, 0))
     surf.set_clip(old_clip)
     if quest_marks:

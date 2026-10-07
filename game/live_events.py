@@ -68,6 +68,25 @@ def get_multiplier(key: str) -> float:
     return EVENTS[ev].get(key, 1.0)
 
 
+def multiplier_at(key, when):
+    """Like get_multiplier, but for the event that will be active at time.time() value `when`."""
+    ev = current_event(when)
+    return 1.0 if ev is None else EVENTS[ev].get(key, 1.0)
+
+
+def upcoming(n=4, now=None):
+    """The next n schedule slots (including the current one): [(event_key or None, start, end)]
+    as time.time() values. A forced event (RR_EVENT) is one open-ended slot; rotation off = []."""
+    t = time.time() if now is None else now
+    if _forced is not None:
+        return [(ACTIVE_EVENT, t, None)]
+    if not _rotation:
+        return []
+    slot = int(t // EVENT_WINDOW)
+    return [(SCHEDULE[(slot + i) % len(SCHEDULE)], (slot + i) * EVENT_WINDOW, (slot + i + 1) * EVENT_WINDOW)
+            for i in range(n)]
+
+
 def label_for(event_key):
     return EVENTS[event_key]["label"] if event_key in EVENTS else None
 

@@ -125,7 +125,8 @@ class NightSky:
             self.weather = "clear"  # the Blood Moon owns the sky
             return
         kinds, weights = zip(*NIGHT_WEATHER)
-        self.weather = random.choices(kinds, weights)[0]
+        planned = (getattr(sim, "tonight", None) or {}).get("weather")  # from the calendar
+        self.weather = planned if planned in kinds else random.choices(kinds, weights)[0]
         if self.weather in WEATHER_TEXT:
             text, col = WEATHER_TEXT[self.weather]
             sim.events.append((None, text, col))

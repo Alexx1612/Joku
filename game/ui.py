@@ -1270,50 +1270,38 @@ _SUN_GLOW = {}
 
 
 def draw_sky_grade(surf, clock, light_level):
-    """Realism pass - the parts of the time of day the night light map doesn't cover:
-    the golden-hour colour while it's still fully light, the low sun's warm glow on the
-    side it's setting (west = left at dusk) or rising (east = right at dawn)."""
+    """Realism pass - the low sun at dusk and dawn: a soft vertical BAND of warm light (not a
+    screen-wide tint, not a bright blob) that travels across the play area - left to right
+    over dusk's golden hour, right to left over dawn's - like low sunlight raking across the
+    ground. The darkness itself picks up the mild golden / blue-hour colour via lighting."""
     if not clock:
         return
-    tint = clock.get("tint") or (1.0, 1.0, 1.0)
-    if light_level >= 0.98 and any(abs(c - 1.0) > 0.01 for c in tint):
-        surf.fill(tuple(int(255 * c) for c in tint), special_flags=pygame.BLEND_MULT)
     sun = clock.get("sun", 0.0)
-    if sun > 0.02 and clock.get("sun_side"):
-        # the low sun's glow wraps the WHOLE screen (warm at every edge, a soft vignette of light)
-        # and its bright heart sweeps from the west edge to the east edge over the golden hour -
-        # at dusk and again at dawn
-        w, h = surf.get_size()
-        g = _SUN_GLOW.get(("glow", w, h))
-        if g is None:
-            gw, gh = 64, 40  # small radial field: hotspot in the middle, warm all the way out
-            small = pygame.Surface((gw, gh))
-            for y in range(gh):
-                for x in range(gw):
-                    d = (((x - gw / 2) / (gw / 2)) ** 2 + ((y - gh / 2) / (gh / 2)) ** 2) ** 0.5
-                    f = max(0.0, 1.0 - d / 1.45)
-                    f = 0.18 + 0.82 * f ** 1.8  # never zero: the edges stay warm too
-                    small.set_at((x, y), (int(84 * f), int(44 * f), int(10 * f)))
-            g = _SUN_GLOW[("glow", w, h)] = pygame.transform.smoothscale(small, (w * 2, h * 2))
-        edge = _SUN_GLOW.get(("edge", w, h))
-        if edge is None:  # a warm rim all around the screen (the sky's light pooling at the edges)
-            ew, eh = 32, 20
-            small = pygame.Surface((ew, eh))
-            for y in range(eh):
-                for x in range(ew):
-                    e = max(abs(x - (ew - 1) / 2) / ((ew - 1) / 2), abs(y - (eh - 1) / 2) / ((eh - 1) / 2))
-                    f = max(0.0, (e - 0.55) / 0.45) ** 1.6
-                    small.set_at((x, y), (int(72 * f), int(38 * f), int(12 * f)))
-            edge = _SUN_GLOW[("edge", w, h)] = pygame.transform.smoothscale(small, (w, h))
-        sx = clock.get("sun_x", 0.0 if clock.get("sun_side") == "west" else 1.0)
-        play_w = min(w, _panel_block_x0())  # the sweep crosses the play area, not the dock
-        hx, hy = int(sx * play_w), int(h * 0.42)
-        g.set_alpha(int(255 * sun))
-        surf.blit(g, (hx - w, hy - h), special_flags=pygame.BLEND_ADD)
-        g.set_alpha(255)
-        edge.set_alpha(int(255 * sun))
-        surf.blit(edge, (0, 0), special_flags=pygame.BLEND_ADD)
-        edge.set_alpha(255)
+    if sun <= 0.02 or not clock.get("sun_side"):
+        return
+    w, h = surf.get_size()
+    play_w = min(w, _panel_block_x0())  # the band crosses the play area, not the dock
+    bw = max(8, int(play_w * SUN_BAND_WIDTH))
+    g = _SUN_GLOW.get(("band", bw, h))
+    if g is None:
+        n = 64
+        small = pygame.Surface((n, 8))
+        for x in range(n):
+            u = (x - (n - 1) / 2) / ((n - 1) / 2)          # -1 .. 1 across the band
+            f = math.exp(-3.2 * u * u) - math.exp(-3.2)     # soft-edged, exactly 0 at its sides
+            f = max(0.0, f / (1 - math.exp(-3.2)))
+            small.fill(tuple(int(c * f) for c in SUN_BAND_COLOR), (x, 0, 1, 8))
+        g = _SUN_GLOW[("band", bw, h)] = pygame.transform.smoothscale(small, (bw, h))
+    sx = clock.get("sun_x", 0.0)
+    cx = int(sx * play_w)
+    g.set_alpha(int(255 * sun))
+    surf.blit(g, (cx - bw // 2, 0), area=pygame.Rect(0, 0, max(0, min(bw, play_w - (cx - bw // 2))), h),
+              special_flags=pygame.BLEND_ADD)
+    g.set_alpha(255)
+
+
+SUN_BAND_WIDTH = 0.45          # x the play-area width (the band's soft edges fade to nothing)
+SUN_BAND_COLOR = (44, 24, 6)   # gentle warmth added at the band's centre (BLEND_ADD)
 
 
 def draw_dawn_mist(surf, clock, cam=None):
@@ -1442,6 +1430,7 @@ HELP_LINES = [
     ("Dock tabs (Items/Bag 2/Shards/Pet)", "Tab"),
     ("Talk / door / herb / mine / fish", "F"),
     ("Quest log / track marker", "J / T"),
+    ("Calendar (nights, events)", "K"),
     ("Chat / enter portal", "Enter"),
     ("Nexus / leave dungeon", "R"),
     ("Rotate camera", "Q / E"),

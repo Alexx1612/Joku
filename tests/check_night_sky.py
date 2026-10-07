@@ -45,6 +45,7 @@ def _nightfall(weather, p):
     NS.NIGHT_WEATHER = ((weather, 1),)
     old_bm = rs.BLOOD_MOON_CHANCE
     rs.BLOOD_MOON_CHANCE = 0.0
+    SIM.tonight = None
     try:
         SIM.blood_moon_active = False
         SIM._nights_since_blood_moon = 0
@@ -60,7 +61,7 @@ def _nightfall(weather, p):
     assert SIM.is_night and SIM.sky.weather == weather, (SIM.sky.weather, SIM.is_night)
 
 
-def check_golden_hour_sweeps_west_to_east():
+def check_golden_hour_light_band_travels():
     xs = []
     for t in (rs.DUSK_START - 70, rs.DUSK_START - 20, rs.NIGHT_START - 5):
         SIM.day_time = t
@@ -70,20 +71,22 @@ def check_golden_hour_sweeps_west_to_east():
     for t in (rs.NIGHT_END + 5, rs.DAWN_END + 20, rs.DAWN_END + 70):
         SIM.day_time = t
         dawn.append(SIM.sky_grade()["sun_x"])
-    assert dawn[0] < dawn[1] < dawn[2], dawn
-    # the glow covers the whole screen (every edge gets warmer), brightest near the sun
+    assert dawn[0] > dawn[1] > dawn[2], dawn  # dawn's light travels right -> left
+    # a LOCAL glow around the sun (not screen-wide), brightest at the sun
     SIM.day_time = rs.DUSK_START - 20
     clock = SIM.clock_info()
-    base = pygame.Surface((800, 500))
+    base = pygame.Surface((1366, 820))
     base.fill((60, 60, 60))
     glow = base.copy()
     ui.draw_sky_grade(glow, clock, 1.0)
-    for pt in ((5, 5), (795, 5), (5, 495), (795, 495), (400, 250)):
-        assert glow.get_at(pt)[0] > base.get_at(pt)[0], pt
-    hot = int(clock["sun_x"] * 800)
-    far = hot + 300 if hot < 400 else hot - 300  # away from the sun, but inside the warm rim
-    assert glow.get_at((hot, 210))[0] > glow.get_at((far, 210))[0], "the hotspot follows the sun"
-    print(f"check_golden_hour_sweeps_west_to_east: PASSED (dusk {xs}, dawn {dawn})")
+    play_w = ui._panel_block_x0()
+    hot = int(clock["sun_x"] * play_w)
+    assert glow.get_at((hot, 328))[0] > base.get_at((hot, 328))[0], "warm at the sun"
+    far = 5 if hot > play_w // 2 else play_w - 5
+    assert glow.get_at((far, 400))[:3] == base.get_at((far, 400))[:3], "a band, not screen-wide"
+    assert glow.get_at((hot, 5))[0] > 60 and glow.get_at((hot, 815))[0] > 60, "full-height band"
+    assert glow.get_at((hot, 328))[0] - 60 <= 50, "and gentle"
+    print(f"check_golden_hour_light_band_travels: PASSED (dusk {xs}, dawn {dawn})")
 
 
 def check_night_weather():
@@ -268,7 +271,7 @@ def check_coop_clock_carries_the_sky():
 
 
 if __name__ == "__main__":
-    check_golden_hour_sweeps_west_to_east()
+    check_golden_hour_light_band_travels()
     check_night_weather()
     check_storm_lightning_flash()
     check_shooting_stars_and_fragments()

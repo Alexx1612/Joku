@@ -384,6 +384,7 @@ class CoopClient:
         settings.load()  # before the first theme plays, so saved volumes apply from the start
         audio.play_theme()
         self.fullscreen = False
+        self.calendar_open = False  # K: the in-game calendar (game/calendar_ui.py)
         self.help_open = False
         self.menu_selected = 0
         self.quit_confirm_open = False  # Esc with nothing else open asks before quitting
@@ -784,6 +785,8 @@ class CoopClient:
                 elif event.key == pygame.K_ESCAPE:
                     if self._map_open():
                         self._current_minimap().full_map_open = False
+                    elif getattr(self, "calendar_open", False):
+                        self.calendar_open = False
                     elif self.context_menu is not None:
                         self.context_menu = None
                     elif self.inspect_pid is not None:
@@ -1546,6 +1549,8 @@ class CoopClient:
             self._context_action()
         elif key == pygame.K_j:
             self.quest_log_expanded = not self.quest_log_expanded
+        elif key == pygame.K_k:
+            self.calendar_open = not self.calendar_open
         elif key == pygame.K_i and self.zone in ("realm", "bonus"):
             self._set_auto_fire(not self.auto_fire_enabled)
             self.feed.insert(0, [f"Auto-fire {'ON' if self.auto_fire_enabled else 'OFF'}",
@@ -2045,6 +2050,9 @@ class CoopClient:
             ui.draw_center_text(s, "CONNECTION ERROR", self.error_msg + "  (Enter to go back)", (220, 80, 80))
         elif self.state == STATE_PLAY:
             self._draw_play(s)
+        if getattr(self, "calendar_open", False) and self.state == STATE_PLAY:
+            from game import calendar_ui
+            calendar_ui.draw(s, self.clock_info)
         if self.help_open:
             items = self._menu_items()
             self.menu_selected %= len(items)

@@ -24,6 +24,8 @@ CATEGORIES = [
     ("areas", "Areas"),
     ("pets", "Pets & mechanics"),
     ("items", "Items & UT"),
+    ("gear", "Gear & Crafting"),
+    ("world", "Night & World"),
     ("story", "Story"),
 ]
 
@@ -128,7 +130,14 @@ def _enemy_entry(kind, d, biomes, extra):
         moves = attack_moves(kind)
         stats.append(("Attacks", len(moves) if moves else d.get("pattern", "?")))
     where_names = [BIOME_LABELS.get(b, b) for b in biomes] + [area_label(a) for a in extra]
-    if neutral:
+    if neutral and d.get("herb"):
+        text = ("A night-blooming herb: it only grows after dark and glows softly. Walk up and press F to "
+                "pick it (see 'Night-blooming herbs' under Night & World). It wilts at dawn.")
+    elif neutral and kind == "owl":
+        text = ("An owl - night only. It perches in the trees of the forest, highlands, tundra, jungle and swamp, "
+                "its amber eyes glowing in the dark, and hoots now and then. Get too close and it flaps away. "
+                "Press F next to it to talk first.")
+    elif neutral:
         text = ("Harmless wildlife - it can't be shot, and it runs from gunfire. Walk up and press F to "
                 "talk to it (some side quests want you to stand near a group of them).")
     else:
@@ -155,8 +164,16 @@ def _enemy_entry(kind, d, biomes, extra):
             text += " The phase-2 room adds its final move."
         if rank == "boss":
             text += " Bosses don't leash - they chase you anywhere."
+    if d.get("night_only") and not neutral:
+        text += ("\n\nNIGHT ONLY: it comes out of the dark after nightfall (never inside a light, never near a "
+                 "sheltered player) and is gone at dawn.")
+    if (not neutral and rank != "boss") or kind == "red_harvester":
+        text += ("\n\nOn the continent it's tougher the closer you are to the centre (x0.6 HP at the coast up to "
+                 "x2.2 at the centre - see 'Danger' under Night & World).")
     if where_names:
         text += "\n\nFound in: " + ", ".join(where_names) + "."
+    elif d.get("night_only"):
+        text += "\n\nFound: anywhere in the Realm at night."
     sprite_kind = kind
     return dict(id=f"enemy:{kind}", cat=cat, title=_pretty(kind),
                 sprite={"src": "enemy", "key": sprite_kind}, stats=stats, text=text,
@@ -420,7 +437,7 @@ def _item_entries():
          "Stat potions permanently raise a stat (up to a cap); temporary potions give a short buff."),
     ]
     for eid, title, text in helps:
-        out.append(dict(id=eid, cat="items", title=title, sprite=None, stats=[], text=text,
+        out.append(dict(id=eid, cat="gear" if eid in ("help:weapon_shards", "help:bag2") else "items", title=title, sprite=None, stats=[], text=text,
                         where={"biomes": [], "areas": []}))
     return out
 
@@ -461,6 +478,8 @@ def entries():
             out.append(_enemy_entry(kind, d, biomes.get(kind, []), extra.get(kind, [])))
         out += _npc_entries() + _area_entries() + _portal_entries() + _pet_entries()
         out += _item_entries() + _story_entries()
+        from game import codex_extra
+        out += codex_extra.gear_entries() + codex_extra.world_entries()
         for e in out:
             e["search"] = " ".join([e["title"], e["id"], e["text"]] +
                                    [f"{k} {v}" for k, v in e["stats"]]).lower()

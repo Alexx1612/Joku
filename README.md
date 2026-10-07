@@ -134,6 +134,8 @@ The in-game **O** menu shows the same list (`game/ui.py` `HELP_LINES`).
 | Tab | Cycle the right dock's tabs: Items -> Bag 2 -> Shards -> Pet (or click a tab; drag an item onto a tab to switch) |
 | F | Context action: pick a night herb, open / close a door next to you, talk to an NPC or animal nearby, open a vault chest, fish at water, wish at the Nexus fountain, talk to Father Given |
 | J | Expand / collapse the small HUD quest log (click it to open the full Quest Log) |
+| T | Track / untrack the selected quest's marker (Quest Log) |
+| K | Calendar: the next 7 nights (moon, weather, events, Blood Moons) and the live-event schedule |
 | T (in the Quest Log) | Show / hide the map marker for the selected quest (or click its Show marker button) |
 | Enter | Open chat (with history) / step through the portal you're standing on / open a vault chest |
 | R | Back to the Nexus (Realm) / leave the dungeon |
@@ -376,13 +378,17 @@ crossfade. Track list in [GAME_DATA.md](GAME_DATA.md). Sound effects are
 synthesized at runtime; `tools/export_audio.py` exports them as `.wav`.
 
 ### UI and options
-- A framed right dock: day/night clock with zone name and kills, a wide
-  radar minimap, player panel, Inventory/Pet tabs, equipment and backpack.
+- A framed right dock: day/night clock (countdown, moon phase) with zone
+  name and kills, a wide radar minimap with the local danger tier under it,
+  player panel, Items / Bag 2 / Shards / Pet tabs, equipment and backpack.
+- The Calendar (K), the Quest Log with markers (J / T), the Dictionary
+  (11 categories, searchable).
 - Draggable chat and HUD quest log (positions saved), a draggable-and-
   resizable game window, FPS counter.
 - **Options (O)**: master / music / SFX volume, mute, fullscreen, FPS cap
   (30 / 60 / 120 / unlimited), show FPS, screen shake, hit-stop, particles
-  (off / low / high), auto-fire, plus Quest Log, Dictionary, reset camera,
+  (off / low / high), auto-fire, Luminosity (night darkness, default 50%),
+  plus Quest Log, Dictionary, reset camera,
   full map, leave. Saved to `settings.json`.
 
 ## Where saves live
@@ -555,7 +561,8 @@ Built in batches; each has a detailed doc in `docs/unity-rebuild/`.
 - **Night realism**: golden / blue hour, moon phases (full moon = brighter
   night + Blood Moon more likely), dawn mist, lit windows, day animals asleep,
   town folk indoors, eyes adapting to the dark, crickets / owls / dawn chorus.
-- **Night sky**: the golden-hour sun sweeps west to east across the screen;
+- **Night sky**: at dusk a soft band of low sunlight travels left to right
+  across the land (right to left at dawn);
   nights can be cloudy, rainy or stormy (lightning lights everything up);
   shooting stars, and the odd fallen **Star Fragment** (extra loot); glowing
   **Moonpetal / Ghostbloom** herbs to pick at night (F); owls; frost glinting
@@ -571,6 +578,22 @@ Built in batches; each has a detailed doc in `docs/unity-rebuild/`.
   venom, homing pierce, lifesteal, crits); 2 alike are Attuned, 3 are
   Resonant (kills explode, shatter, discharge...). Stones drop from elites
   and bosses, or mine glittering gem veins with F.
+- **Danger by distance** (doc 39): the closer to the CENTRE of the
+  continent, the deadlier every monster (night ones too): x0.6 HP / x0.65
+  damage at the coast up to x2.2 HP / x1.5 damage, faster attacks and
+  sharper aggro at the centre - which also pays more XP, extra loot, and
+  Dungeon Shards that open harder dungeons (sometimes Heroic ones). The
+  minimap shows Calm / Mild / Wild / Deadly / Lethal; the full map draws the
+  rings. The big islands keep their own level-20 scaling.
+- **Calendar** (K, doc 39): the next 7 nights - when each falls, moon
+  phase, weather, the night event, every Blood Moon - and the live-event
+  schedule. The forecast is exactly what happens.
+- **Dictionary complete**: two new categories, *Gear & Crafting* (tiers, the
+  Anvil, all 7 Gemstones, Stonework, gem veins, Weapon Shards, Divine items,
+  keys, night finds) and *Night & World* (every night system, weather,
+  stars, herbs, the Calendar, Danger, quest markers, precise combat).
+- **Admin / testing commands** (doc 38): `/help` in chat lists everything -
+  see the "Admin / testing commands" section below.
 - **The Light of RDV**: keep Old Wick the Lamplighter alive until dawn and
   he gives you a ring that widens your light x1.6 and scares monsters off.
 - **Fix**: mobs could spawn right on top of you (tiles passed as pixels) -

@@ -560,6 +560,7 @@ class Player:
             it = self.backpack[index]
             if it.slot == SLOT_SHARD:
                 self.backpack.pop(index)
+                self.last_shard_danger = getattr(it, "danger", 0)  # weights the portal's difficulty
                 return it.shard_theme
         return None
 

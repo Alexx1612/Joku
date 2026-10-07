@@ -279,6 +279,48 @@ night_fog, night_hunter, night_lanterns_out, night_market, night_lamplighter, ni
 watcher_shriek, lantern_snuff, harvester_roar, thunder, rain_start, rain_patter, shooting_star, owl_flap,
 herb_pick.
 
+### Danger by distance (`game/danger.py`, doc 39)
+
+`f` = 1 - distance from the continent's centre / continent radius (1 = centre, 0 = coast; the ocean ring and the
+islands are off this scale). Applied once to every hostile on the continent, night mobs included.
+
+| Tier | f | Name |
+|---|---|---|
+| 1 | 0.0-0.2 | Calm |
+| 2 | 0.2-0.4 | Mild |
+| 3 | 0.4-0.6 | Wild |
+| 4 | 0.6-0.8 | Deadly |
+| 5 | 0.8-1.0 | Lethal |
+
+| Stat | Coast (f=0) | Centre (f=1) | Formula |
+|---|---|---|---|
+| HP | x0.6 | x2.2 | 0.6 + 1.6 f^1.2 |
+| Damage | x0.65 | x1.5 | 0.65 + 0.85 f |
+| Speed | x0.92 | x1.08 | 0.92 + 0.16 f |
+| Attack cooldowns | x1.15 | x0.85 | 1.15 - 0.30 f |
+| Aggro range | x0.9 | x1.25 | 0.9 + 0.35 f |
+| XP | x0.8 | x1.6 | 0.8 + 0.8 f |
+| Extra loot roll | 0% | 54% | max(0, f - 0.4) x 0.9 |
+| Elite Dungeon Shard | 5% | 13% | 0.05 + 0.08 f |
+| Night mob spawn interval | x1.25 | x0.75 | 1.25 - 0.5 f |
+
+Dungeon Shard difficulty by the tier it dropped in (Easy / Medium / Hard weights): unknown 55/32/13, tier 1 85/15/0,
+tier 2 65/30/5, tier 3 40/42/18, tier 4 18/45/37, tier 5 5/35/60. At tier 5 an elite's shard is a Heroic shard 8% of
+the time (killer level 16+).
+
+### Calendar (`RealmSim.forecast_view`, `game/calendar_ui.py`)
+
+7 nights ahead (`FORECAST_NIGHTS`). Each coming night's dice are pre-drawn; at nightfall they're resolved with the
+rules in force (Blood Moon chance 12% + 3%/night since the last, x2 full moon, x live event, max 50%; weather
+45/25/18/12; events fog / hunter / lanterns_out / market / lamplighter). Live-event slots: 25 min each, schedule
+none, Double Loot, none, Happy Hour, none, Blood Moon Week, none, Two-for-One.
+
+### Dawn / dusk light (`ui.draw_sky_grade`)
+
+A vertical band 45% of the play area wide, peak +(44, 24, 6) additive, travelling left -> right over dusk's golden
+hour (225-330 s) and right -> left over dawn's (540-645 s). Tints: golden (1.0, 0.92, 0.80), blue (0.86, 0.91, 1.0),
+applied to the night darkness only.
+
 ## Ends of V0.2 (release tag `v0.2`)
 
 ### Sound effects (`game/audio.py`)

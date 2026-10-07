@@ -594,7 +594,7 @@ def _apply_action(state, s, action):
                     theme_label = DUNGEON_THEMES.get(theme_name, DUNGEON_THEMES["generic"])["label"]
                     # rolled NOW (not on arrival) so the difficulty can be shown as a
                     # label on the portal itself before anyone steps through it
-                    diff_name = shard_difficulty(theme_name)
+                    diff_name = shard_difficulty(theme_name, getattr(p, "last_shard_danger", 0))
                     state.realm_sim.portals.append(Portal(p.pos, theme=theme_name, kind="dungeon_shard",
                                                            difficulty=diff_name))
                     if gates.zone_kind(theme_name) is not None:

@@ -126,7 +126,8 @@ class NightDirector:
                                (235, 60, 60)))
             sim.sound_events.append(("sfx", "blood_moon_rise", *self._any_pos(alive)))
             return
-        self.event = random.choice(EVENTS)
+        planned = (getattr(sim, "tonight", None) or {}).get("event")  # from the calendar (RealmSim.forecast)
+        self.event = planned if planned in EVENTS else random.choice(EVENTS)
         text, col = EVENT_TEXT[self.event]
         place = "the Realm"
         if self.event == "hunter" and alive:
@@ -219,6 +220,9 @@ class NightDirector:
         if self._spawn_cd > 0 or not exposed:
             return
         self._spawn_cd = NIGHT_SPAWN_EVERY * (0.6 if self.sim.blood_moon_active else 1.0)
+        f = self.sim.danger_at(exposed[0].pos) if hasattr(self.sim, "danger_at") else None
+        if f is not None:  # the heart of the Realm is busier after dark (x1.25 slower at the coast .. x0.75)
+            self._spawn_cd *= 1.25 - 0.5 * f
         cap = NIGHT_MOB_CAP * (2 if self.sim.blood_moon_active else 1)
         weights = dict(NIGHT_SPAWN_WEIGHTS)
         if self.event == "fog":
