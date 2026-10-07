@@ -1488,6 +1488,9 @@ class RealmSim:
                 base_chance *= FULL_MOON_BLOOD_MULT  # blood moons favour the full moon
             effective_chance = min(0.5, base_chance + self._nights_since_blood_moon * 0.03)
             self.blood_moon_active = random.random() < effective_chance
+            if getattr(self, "force_blood_moon", None) is not None:  # /bloodmoon (game/admin.py)
+                self.blood_moon_active = bool(self.force_blood_moon)
+                self.force_blood_moon = None
             if self.blood_moon_active:
                 self._nights_since_blood_moon = 0
             # the announcement itself comes from the night director (game/night.py)

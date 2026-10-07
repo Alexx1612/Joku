@@ -103,7 +103,8 @@ One person **hosts** (runs the server); everyone, including the host,
 
 1. **Host: start the server** - `python server.py` (or the Server build).
    Leave it running - it is the shared world. Options: `--host 0.0.0.0`
-   (default, all interfaces), `--port 50777` (default).
+   (default, all interfaces), `--port 50777` (default), `--admin` (lets
+   players use the admin / testing commands below - or set `RR_ADMIN=1`).
 2. **Host: share an address** - same Wi-Fi: the LAN IPv4 (`ipconfig` /
    `ip -4 addr`); over the internet: see "Playing with a friend from
    different homes" above.
@@ -115,6 +116,124 @@ One person **hosts** (runs the server); everyone, including the host,
 `Ctrl+C` stops the server; clients show a "Disconnected" screen. The server
 is authoritative for enemies, damage, loot, XP, trades, quests and saves; it
 ticks at 30 Hz and only sends each client what is within ~1400 px of them.
+
+## Admin / testing commands
+
+Type them in chat (Enter, then `/command`). `/help` lists everything in-game,
+`/help <category>` or `/help 3` shows one group, `/help <command>` the details.
+Single-player: always available. Co-op: the server must be started with
+`--admin` (or `RR_ADMIN=1`); the client-side ones (`/help`, `/reveal`, `/fps`,
+`/hitboxes`, `/pos`) always work. Short results go to the feed; long ones open
+a scrollable panel (wheel / PgUp / PgDn, Esc closes). Full details: doc 38.
+
+Quick examples: `/maxstats`, `/tier 13`, `/give doomstaff`, `/give perfect ruby x3`,
+`/time night`, `/bloodmoon`, `/weather storm`, `/nightevent lamplighter`,
+`/spawn shade_stalker 3 moonlit`, `/killall`, `/tp tavern town`,
+`/dungeon heroic_cave`, `/mgroom`, `/act 5`, `/quest done all`, `/god`, `/noclip`.
+
+<!-- admin-table:start -->
+#### Player
+
+| Command | Also | What it does | In co-op |
+|---|---|---|---|
+| `/buffs [clear]` | - | list (or clear) your timed buffs | server, --admin |
+| `/clearbag [all]` | /clearinv | empty the backpack (and Bag 2 + Shards with 'all') | server, --admin |
+| `/echoes <amount>` | - | add Echoes to your account (the Echo Keeper's currency) | server, --admin |
+| `/god [on\|off]` | /invuln | invulnerable: no damage at all | server, --admin |
+| `/heal` | - | full HP and MP, clears slow/root | server, --admin |
+| `/kill` | /suicide | kill yourself (tests death / permadeath - the character is deleted!) | server, --admin |
+| `/level <1-20>` | /lvl | level up to that level (stats roll as normal) | server, --admin |
+| `/maxstats` | /max | level 20 and every stat at a high cap (HP 770, MP 385) | server, --admin |
+| `/noclip [on\|off]` | /ghost | walk through walls, water and doors | server, --admin |
+| `/potions reset` | - | reset the permanent-potion cap counter | server, --admin |
+| `/speed <0.25-10>` | /fast | walk-speed multiplier (1 = normal) | server, --admin |
+| `/stat <att\|def\|spd\|dex\|vit\|wis\|hp\|mp> <value>` | - | set one base stat | server, --admin |
+| `/xp <amount>` | - | gain XP (levels up as normal) | server, --admin |
+
+#### Items
+
+| Command | Also | What it does | In co-op |
+|---|---|---|---|
+| `/dshard <theme> [count]` | /dungeonshard | give a normal Dungeon Shard (use it in the Realm to open a portal) | server, --admin |
+| `/egg <pet kind\|list>` | - | give a pet egg | server, --admin |
+| `/gem <stone\|all> [grade] [count]` | /gems, /stone | give gemstones (ruby, sapphire, topaz, emerald, amethyst, onyx, diamond; chipped..perfect) | server, --admin |
+| `/give <item name or words> [tier] [count]` | /i, /item | give yourself any item (fuzzy search) | server, --admin |
+| `/heroicshard <theme> [count]` | /hshard | give a Heroic Shard (opens that dungeon's Heroic version) | server, --admin |
+| `/ingots [count]` | /ingot | give Forge Ingots (the Anvil's currency) | server, --admin |
+| `/key [count]` | /mgkey | give the Mad God's Room Key | server, --admin |
+| `/pet <pet kind\|none>` | - | hatch a pet straight away (replaces your current one) | server, --admin |
+| `/shard <effect\|all> [rarity] [count]` | /rune, /shards | give Weapon Shards (bleed, burn, chain, keen, leech, echo...; common..mythic) | server, --admin |
+| `/tier <1-14 \| divine>` | /gear, /kit | equip a full gear set of that tier for your class (old gear goes to your bags) | server, --admin |
+
+#### World & time
+
+| Command | Also | What it does | In co-op |
+|---|---|---|---|
+| `/day` | - | jump to midday | server, --admin |
+| `/goto <nexus\|realm\|vault\|bazaar\|forge>` | /zone | go straight to a zone (no portal needed) | server, --admin |
+| `/island <1-N>` | - | teleport to an island's landmark plaza | server, --admin |
+| `/liveevent <name\|off\|auto\|list>` | /le | force a live event (double loot, Blood Moon week...) | server, --admin |
+| `/night` | - | jump to nightfall (a fresh night: events, weather, Blood Moon roll) | server, --admin |
+| `/reveal` | /map | reveal the whole minimap / full map | your client |
+| `/skip` | - | skip to the start of the next phase (day -> dusk -> night -> dawn -> day) | server, --admin |
+| `/time <day\|goldenhour\|dusk\|night\|midnight\|dawn\|morning\|seconds 0-600>` | /t | set the time of day (night starts at 330 s, dawn at 540 s) | server, --admin |
+| `/tp <x> <y> (tiles) \| /tp <area, island, NPC, biome, boss, spawn, player>` | /teleport | teleport (by tile coordinates or by name) | server, --admin |
+
+#### Night & weather
+
+| Command | Also | What it does | In co-op |
+|---|---|---|---|
+| `/bloodmoon [on\|off]` | /bm | start a Blood Moon night now (off: a normal night instead) | server, --admin |
+| `/lightning` | /bolt | a lightning strike near you (flash + thunder) | server, --admin |
+| `/moon <0-7>` | - | set the moon phase (0 new .. 4 full .. 7) | server, --admin |
+| `/nightevent <fog\|hunter\|lanterns_out\|market\|lamplighter>` | /event, /ne | start a fresh night with that night event | server, --admin |
+| `/star [fall]` | - | a shooting star now ('fall' drops a Star Fragment nearby) | server, --admin |
+| `/weather <clear\|cloudy\|rain\|storm>` | - | tonight's weather (starts a night if it's day) | server, --admin |
+
+#### Mobs
+
+| Command | Also | What it does | In co-op |
+|---|---|---|---|
+| `/boss [kind]` | - | summon a boss next to you (random world boss if no kind) | server, --admin |
+| `/clearmobs [radius tiles]` | /clear | remove every hostile mob (no loot) | server, --admin |
+| `/killall [radius tiles]` | /nuke | kill every hostile mob (with loot and kill credit) | server, --admin |
+| `/spawn <mob kind> [count] [moonlit]` | /summon, /mob | spawn mobs around you (5 tiles out) | server, --admin |
+
+#### Dungeons & story
+
+| Command | Also | What it does | In co-op |
+|---|---|---|---|
+| `/achievement <id\|all\|list>` | /ach | unlock an achievement (and its title) | server, --admin |
+| `/act <0-7>` | /story | jump the story to that act (0 = Prologue; saved on the account) | server, --admin |
+| `/dungeon <theme\|list> [easy\|medium\|hard\|heroic\|godly]` | /dg | enter any dungeon straight away (skips level / gear gates) | server, --admin |
+| `/mgroom` | /madgod | enter the Mad God's Room (3 forms) | server, --admin |
+| `/quest list \| done <id\|all> \| reset \| give <id>` | /q | side quests: list, complete, reset, accept | server, --admin |
+
+#### Debug
+
+| Command | Also | What it does | In co-op |
+|---|---|---|---|
+| `/danger` | - | the danger level where you stand (map centre = deadliest) | server, --admin |
+| `/fps [on\|off]` | - | toggle the FPS counter | your client |
+| `/hitboxes [on\|off]` | /hb | draw the real hit circles of players, mobs and bullets | your client |
+| `/pos` | /where, /coords | your position (tiles and pixels), zone and biome | your client |
+| `/seed [n]` | - | show or set the random seed (reproduce a fight / a drop) | server, --admin |
+| `/stats` | /me, /info | everything about your character (stats, gear, buffs, flags) | server, --admin |
+
+#### Everyday commands
+
+| Command | Also | What it does | In co-op |
+|---|---|---|---|
+| `/accept  /decline` | - | co-op: answer a trade invite | everyone |
+| `/bazaar` | - | from the Nexus: the Bazaar | everyone |
+| `/crew create\|join\|leave <name>` | - | co-op: crews | everyone |
+| `/help [page \| category \| command]` | /?, /commands | list every command (paged by category) | your client |
+| `/msg <name> <text>` | - | co-op: whisper (also /w, /tell) | everyone |
+| `/nexus` | - | go back to the Nexus (also leaves a dungeon) | everyone |
+| `/realm` | - | from the Nexus: into the Realm | everyone |
+| `/trade` | - | co-op: trade with the nearest player | everyone |
+| `/vault` | - | from the Nexus: open your vault | everyone |
+<!-- admin-table:end -->
 
 ## Controls
 

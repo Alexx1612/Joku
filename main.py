@@ -136,6 +136,8 @@ class Game:
         # the weapon's cooldown cleared - see _handle_firing / FIRE_BUFFER_WINDOW
         self.chat_open = False
         self.chat_buffer = ""
+        self.cmd_panel = None  # long /help or admin output: {"title", "lines", "scroll"} (game/admin.py)
+        self.debug_hitboxes = False  # /hitboxes
         self._chat_select_all = False
         self.chat_in = ChatInput()  # the input line's cursor/selection/history
         self.chat_log_sel = LogSelection()  # click-drag line selection in the chat log
@@ -611,6 +613,12 @@ class Game:
                     and event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_ESCAPE)):
                 self.credits_t = None  # skip the end credits
                 continue
+            if self.cmd_panel is not None:
+                used, close = ui.handle_cmd_panel_event(self.cmd_panel, event, self.chat_open)
+                if close:
+                    self.cmd_panel = None
+                if used:
+                    continue
             if self._chat_mouse_event(event):
                 continue
             if event.type == pygame.KEYDOWN:
@@ -1548,7 +1556,21 @@ class Game:
             self.chat_log.append({"name": self.player_name or "You", "text": text, "age": 0.0})
             self.chat_log = self.chat_log[-ui.CHAT_LOG_STORE_CAP:]
 
+    def _show_cmd_result(self, res, title=None):
+        """Admin / help output: a few lines go to the feed, anything longer opens the panel."""
+        from game import admin
+        if admin.wants_panel(res):
+            self.cmd_panel = {"title": getattr(res, "title", title or "Command"), "lines": list(res), "scroll": 0}
+            return
+        for text, color in reversed(list(res)):
+            self.push_feed(text, color)
+
     def _handle_chat_command(self, cmd_text):
+        from game import admin
+        res = admin.run(admin.SPCtx(self), cmd_text)  # /help + every admin / testing command
+        if res is not None:
+            self._show_cmd_result(res, "/" + cmd_text.split()[0])
+            return
         parts = cmd_text.split(maxsplit=1)
         cmd = parts[0].lower() if parts else ""
         if cmd in ("msg", "w", "whisper", "tell"):
@@ -1984,6 +2006,8 @@ class Game:
                                        selected_idx=self.echo_shop_selected, mouse_pos=pygame.mouse.get_pos())
         if self.dialogue is not None:
             ui.draw_dialogue(s, self.dialogue.view(), pygame.mouse.get_pos())
+        if self.cmd_panel is not None:
+            ui.draw_cmd_panel(s, self.cmd_panel)
         if self.journal.is_open():
             self.journal.draw(s, self._journal_ctx(), pygame.mouse.get_pos(), 1 / max(1, self.clock.get_fps() or 60))
         if self.state not in (STATE_DEAD, STATE_INTRO, STATE_NAME_ENTRY, STATE_CLASS_SELECT) and self.player is not None and not self.journal.is_open():  # the Quest Map's title used to sit under it
@@ -2208,6 +2232,8 @@ class Game:
                                                sim.realm_map.tile_at, (world.SNOW, world.ICE), sim.light_level)
             self.sky_fx.draw(s, self.cam)
         self._draw_quest_markers_world(s, qmarks)
+        if self.debug_hitboxes:
+            ui.draw_hitboxes(s, self.cam, [self.player], sim.enemies, sim.bullets)
         if fog:
             ui.draw_fog_veil(s, 1.0 - sim.light_level, self.cam)
         ui.draw_light_glows(s, lights, sim.light_level)

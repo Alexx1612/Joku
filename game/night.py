@@ -127,6 +127,9 @@ class NightDirector:
             sim.sound_events.append(("sfx", "blood_moon_rise", *self._any_pos(alive)))
             return
         self.event = random.choice(EVENTS)
+        if getattr(self, "force_event", None) in EVENTS:  # /nightevent (game/admin.py)
+            self.event = self.force_event
+        self.force_event = None
         text, col = EVENT_TEXT[self.event]
         place = "the Realm"
         if self.event == "hunter" and alive:

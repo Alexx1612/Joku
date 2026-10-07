@@ -161,6 +161,8 @@ class ServerState:
         self.nexus_bot = NexusBot(self.nexus_map.center_world_pos())
         self.nexus_npcs = npcs.spawn_nexus_npcs(self.nexus_map)  # Batch 15 friendly NPCs
         self.autosave_cd = AUTOSAVE_INTERVAL  # see step()'s periodic character-progress save
+        from game import admin as _admin
+        self.admin = _admin.server_admin_default()  # --admin / RR_ADMIN=1: allow admin /commands
 
 
 def _nexus_spawn_pos(state):
@@ -574,9 +576,34 @@ def _maybe_fire(state, sim, s, dt):
         sim.player_fire(s.player, aim.normalize())
 
 
+def _admin_reply(s, res, title):
+    from game import admin as _admin
+    panel = _admin.wants_panel(res)
+    send_msg(s.sock, {"type": "admin_result", "title": getattr(res, "title", title), "panel": panel,
+                      "lines": [[t, list(c)] for t, c in res]})
+
+
+def _run_admin(state, s, text):
+    """An admin /command typed by this player (game/admin.py) - only with --admin."""
+    from game import admin as _admin
+    name = (text or "").split()[0] if (text or "").split() else ""
+    if not state.admin:
+        _admin_reply(s, [("Admin commands are off on this server (start it with --admin).", _admin.WARN)],
+                     "/" + name)
+        return
+    res = _admin.run(_admin.ServerCtx(state, s), text)
+    if res is None:
+        res = [(f"Unknown command: /{name}", _admin.BAD)]
+    print(f"[server] admin {s.player.name}: /{text}")
+    _admin_reply(s, res, "/" + name)
+
+
 def _apply_action(state, s, action):
     kind = action.get("action")
     p = s.player
+    if kind == "admin":
+        _run_admin(state, s, str(action.get("text", ""))[:300])
+        return
     if kind == "equip":
         idx = action.get("idx", -1)
         if 0 <= idx < len(p.backpack):
@@ -1206,7 +1233,7 @@ def handle_client(sock, addr, state):
             player.pos = _nexus_spawn_pos(state)
             session = Session(pid, sock, player)
             state.sessions[pid] = session
-        send_msg(sock, {"type": "welcome", "pid": pid})
+        send_msg(sock, {"type": "welcome", "pid": pid, "admin": bool(state.admin)})
         print(f"[server] {name} ({cls_name}) joined from {addr} as {pid}")
 
         while True:
@@ -1237,8 +1264,12 @@ def handle_client(sock, addr, state):
         print(f"[server] {pid} disconnected")
 
 
-def run_server(host="0.0.0.0", port=C.NET_PORT):
+def run_server(host="0.0.0.0", port=C.NET_PORT, admin=None):
     state = ServerState()
+    if admin is not None:
+        state.admin = state.admin or bool(admin)
+    if state.admin:
+        print("[server] ADMIN COMMANDS ON - every player can use /give, /tp, /spawn... (see /help)")
     stop_event = threading.Event()
     threading.Thread(target=tick_loop, args=(state, stop_event), daemon=True).start()
 
@@ -1262,5 +1293,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Realm Reforged co-op server")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=C.NET_PORT)
+    parser.add_argument("--admin", action="store_true",
+                        help="allow admin / testing chat commands (/give, /xp, /tp, /spawn... - see /help)")
     args = parser.parse_args()
-    run_server(args.host, args.port)
+    run_server(args.host, args.port, admin=args.admin)
