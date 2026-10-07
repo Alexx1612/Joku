@@ -46,7 +46,7 @@ EVENT_TEXT = {
 FOG_LIGHT_MULT = 0.6
 BLOOD_HORDE_EVERY = 30.0
 BLOOD_HORDE_SIZE = (6, 10)
-BLOOD_HORDE_RING = (8, 12)   # tiles from the player
+BLOOD_HORDE_RING = (11, 14)  # tiles from the player - a ring closing in from just off-screen
 BLOOD_SURVIVOR_XP = 400
 
 
@@ -178,7 +178,8 @@ class NightDirector:
     def _spawn_point(self, p, lo=10, hi=20):
         sim = self.sim
         for _ in range(8):
-            pos = sim._find_spawn_pos_near(p.pos, min_tiles=lo, max_tiles=hi)
+            pos = sim._find_spawn_pos_near(p.pos, min_px=lo * TILE, max_px=hi * TILE,
+                                           avoid_players=sim._story_players)
             if pos is None:
                 continue
             if self._in_light(pos) or sim.is_sheltered_tile(pos):

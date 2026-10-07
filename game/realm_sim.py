@@ -189,7 +189,7 @@ LAIR_RESPAWN_INTERVAL = 5.0
 # visibly "wakes up" right at the edge of view.
 ACTIVE_SIM_RADIUS = 1600
 # a fresh respawn (replacing a killed enemy) still won't drop in on top of a player
-MIN_SPAWN_DIST_FROM_PLAYER = 140
+MIN_SPAWN_DIST_FROM_PLAYER = 380  # px - ambient / night / wave spawns never pop up right next to a player
 LAIR_KIND_SETS = [
     (["imp"], [1]), (["bat"], [1]), (["ghost"], [1]), (["skeleton"], [1]),
     (["imp", "bat"], [55, 45]), (["ghost", "skeleton"], [50, 50]),
@@ -1329,8 +1329,8 @@ class RealmSim:
                 # overridden, not just max_tiles: random.uniform(20, 5) doesn't error,
                 # it just silently inverts, which would have let enemies spawn up to
                 # the OLD default 20 tiles away despite a tight max_tiles
-                pos = self._find_spawn_pos_near(lair["pos"], min_tiles=lair.get("spawn_min_tiles", 20),
-                                                 max_tiles=lair.get("spawn_max_tiles", 150))
+                pos = self._find_spawn_pos_near(lair["pos"], min_px=lair.get("spawn_min_tiles", 20),
+                                                 max_px=lair.get("spawn_max_tiles", 150))
                 if pos is None:
                     continue
                 kind = random.choices(lair["kinds"], weights=lair["weights"])[0]
@@ -1339,14 +1339,19 @@ class RealmSim:
                 enemy.lair_idx = idx
                 self.enemies.append(enemy)
 
-    def _find_spawn_pos_near(self, anchor, min_tiles=20, max_tiles=150, avoid_players=()):
-        for _try in range(20):
+    def _find_spawn_pos_near(self, anchor, min_px=20, max_px=150, avoid_players=(), safe_px=None):
+        """A walkable spot min_px..max_px (PIXELS) from anchor, at least safe_px (default
+        MIN_SPAWN_DIST_FROM_PLAYER) from every player in avoid_players. (These used to be
+        called min_tiles/max_tiles while really being pixels - several callers passed tile
+        counts and spawned mobs a few pixels from the player.)"""
+        safe = MIN_SPAWN_DIST_FROM_PLAYER if safe_px is None else safe_px
+        for _try in range(24):
             ang = random.uniform(0, 360)
-            dist = random.uniform(min_tiles, max_tiles)
+            dist = random.uniform(min_px, max_px)
             pos = anchor + pygame.Vector2(1, 0).rotate(ang) * dist
             if self.realm_map.is_solid(pos.x, pos.y) or self.realm_map.tile_at(pos.x, pos.y) == world.WATER:
                 continue
-            if any(pos.distance_to(p.pos) < MIN_SPAWN_DIST_FROM_PLAYER for p in avoid_players):
+            if any(pos.distance_to(p.pos) < safe for p in avoid_players):
                 continue
             return pos
         return None
@@ -1832,7 +1837,8 @@ class RealmSim:
             else:
                 wave = [theme["anchor"]] + [random.choice(theme["guardians"]) for _ in range(ISLAND_WAVE_SIZE - 1)]
             for kind in wave:
-                pos = self._find_spawn_pos_near(isl["pos"], min_tiles=12, max_tiles=60)
+                pos = self._find_spawn_pos_near(isl["pos"], min_px=6 * TILE, max_px=24 * TILE,
+                                                avoid_players=self._story_players)
                 if pos is None:
                     pos = pygame.Vector2(isl["pos"])
                 enemy = Enemy(kind, pos, level_scale=self.story_scale * ISLAND_WAVE_SCALE)
@@ -1897,12 +1903,12 @@ class RealmSim:
         if self.world_boss_cd > 0 or not alive:
             return
         anchor = random.choice(alive).pos
-        pos = self._find_spawn_pos_near(anchor, min_tiles=WORLD_BOSS_SPAWN_MIN_DIST,
-                                         max_tiles=WORLD_BOSS_SPAWN_MAX_DIST, avoid_players=alive)
+        pos = self._find_spawn_pos_near(anchor, min_px=WORLD_BOSS_SPAWN_MIN_DIST,
+                                         max_px=WORLD_BOSS_SPAWN_MAX_DIST, avoid_players=alive)
         if pos is None:
             # near a map edge and the far ring came up empty 20 tries running - settle
             # for a closer-but-still-not-on-top-of-anyone spot rather than skip a whole tick
-            pos = self._find_spawn_pos_near(anchor, min_tiles=300, max_tiles=600, avoid_players=alive)
+            pos = self._find_spawn_pos_near(anchor, min_px=300, max_px=600, avoid_players=alive)
         if pos is None:
             return  # try again next tick
         avg_level = sum(p.level for p in alive) / len(alive)
@@ -1965,7 +1971,8 @@ class RealmSim:
             near = sum(1 for e in self.enemies if e.kind == "fireflies" and e.pos.distance_to(p.pos) < 900)
             if near >= self.FIREFLIES_PER_PLAYER:
                 continue
-            pos = self._find_spawn_pos_near(p.pos, min_tiles=6, max_tiles=22)
+            pos = self._find_spawn_pos_near(p.pos, min_px=6 * TILE, max_px=22 * TILE, avoid_players=alive,
+                                            safe_px=5 * TILE)
             if pos is None or self.realm_map.tile_at(pos.x, pos.y) not in RealmSim.FIREFLY_GROUNDS:
                 continue
             ff = Enemy("fireflies", pos)
@@ -2231,7 +2238,7 @@ class RealmSim:
             if not progress.wants("guardian", lm["biome"]):
                 continue
             kind = story.GUARDIAN_KIND.get(lm["biome"], "goblin")
-            spawn = self._find_spawn_pos_near(lm["pos"], min_tiles=2, max_tiles=5) or pygame.Vector2(lm["pos"])
+            spawn = self._find_spawn_pos_near(lm["pos"], min_px=2, max_px=5) or pygame.Vector2(lm["pos"])
             g = Enemy(kind, spawn, level_scale=LANDMARK_GUARDIAN_HP_SCALE * self.story_scale, home_pos=lm["pos"])
             g.scale = GUARDIAN_SCALE   # drawn bigger too, not just a wider hitbox
             g.radius = int(round(ENEMY_KINDS[kind]["radius"] * GUARDIAN_SCALE))
@@ -2241,7 +2248,7 @@ class RealmSim:
             self.enemies.append(g)
             self._landmark_guardians[idx] = g
             for _ in range(LANDMARK_GUARDIAN_ESCORTS):
-                pos = self._find_spawn_pos_near(lm["pos"], min_tiles=2, max_tiles=6)
+                pos = self._find_spawn_pos_near(lm["pos"], min_px=2, max_px=6)
                 if pos is not None:
                     self.enemies.append(Enemy(kind, pos, level_scale=1.5 * self.story_scale, home_pos=lm["pos"]))
             self.events.append((None, f"The Guardian of {lm['name']} wakes up, and it is NOT a morning person!",
