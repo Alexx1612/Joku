@@ -164,6 +164,7 @@ def check_slam_bursts_follow_their_spokes():
     sim = RealmSim(bonus=True, theme="forge", difficulty_name="Medium", story_act=0)
     base = pygame.Vector2(sim.boss.pos)
     sim.realm_map.has_line_of_sight = lambda *a: True  # a random room wall must not block the forced move
+    sim.obstacles = []  # ...nor a random crate / rubble gate (they block line of sight too)
     checked = 0
     for k in _kinds():
         for m in EA.moves_for(k):
