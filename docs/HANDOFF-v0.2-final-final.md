@@ -72,6 +72,14 @@ It is committed **locally only**: not pushed, and the release has not been rebui
    - **Quest markers:** Show marker / T; pins on the minimap, full map and world, plus edge arrows.
    - **Gem forging:** 7 stones in 5 grades, set into weapons at the Anvil, elemental trails and bursts, gem veins mined with F.
 
+10. **Danger, calendar, admin commands, the complete Dictionary (docs 38, 39)**
+    - **Danger by distance:** mobs and night mobs scale with distance from the continent's centre; the rewards and the difficulty of dropped shards scale with it. The landmark guardians and the islands are exempt.
+    - **Calendar (K):** a 7-night forecast that comes true, plus the live-event schedule.
+    - **Admin commands:** 63 of them, `game/admin.py`. `/help` browses them; co-op needs `--admin`.
+    - **Dawn/dusk light:** reworked into a soft band that travels left to right at dusk and right to left at dawn.
+    - **Dictionary:** the new categories Gear & Crafting and Night & World.
+    - **Pacing re-measured:** median 105.4 min (Act II about twice as long).
+
 ## Checkpoint commits (local, on top of 23123be)
 - `cf3a9ec`: telegraphs, story v2, NetLink fix
 - `50cc80d`: gear, forge, Divine, Heroic, gates
@@ -79,7 +87,7 @@ It is committed **locally only**: not pushed, and the release has not been rebui
 - `2b134b5`: Mad God's Room, effects wiring, docs
 
 ## Conventions (unchanged, keep following)
-- Run `python tests/run_all_checks.py` after every batch. There are now **80 scripts**. `check_areas_trees_bosses` and `check_big_islands` can flake on the random map or timing; re-run them alone.
+- Run `python tests/run_all_checks.py` after every batch. There are now **83 scripts**. `check_areas_trees_bosses` and `check_big_islands` can flake on the random map or timing; re-run them alone.
 - Look at headless screenshots for visual work: set `RR_SHOT_DIR` for the new checks.
 - All art and music must be original.
 - Don't commit, push or release without the user's OK.

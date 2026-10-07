@@ -38,14 +38,20 @@ Act indices are exported as `ACT_PROLOGUE` ... `ACT_FINALE`. Code and tests use 
 
 Measured with `tools/pacing_bot.py` (4 classes x 2 seeds, simulated minutes). It found two real problems, now fixed: Act IV only counted *different* Heroic dungeons, and tempering needed 3 items of one slot.
 
-| Act | Median | Min | Max |
-|---|---|---|---|
-| Prologue | 0.5 | 0.5 | 0.5 |
-| I: The Grand Tour | 9.9 | 8.5 | 10.9 |
-| II: Bouncer Problems | 24.9 | 10.9 | 36.1 |
-| III: Retail Therapy | 29.3 | 18.2 | 74.8 |
-| IV: The Deep End | 17.3 | 4.8 | 27.9 |
-| V: Last Call | 9.6 | 6.4 | 14.9 |
-| Finale | 9.9 | 3.5 | 20.0 |
-| **Total** | **100.8** | 52.8 | 170.0 |
+Re-measured 2026-10-07 after precise combat, the night update and danger by distance (doc 39):
+
+| Act | Median | Min | Max | Before (doc 32 first run) |
+|---|---|---|---|---|
+| Prologue | 0.5 | 0.5 | 0.5 | 0.5 |
+| I: The Grand Tour | 9.7 | 8.7 | 11.4 | 9.9 |
+| II: Bouncer Problems | 50.5 | 23.0 | 64.2 | 24.9 |
+| III: Retail Therapy | 24.6 | 14.3 | 57.3 | 29.3 |
+| IV: The Deep End | 7.9 | 4.4 | 23.5 | 17.3 |
+| V: Last Call | 12.7 | 8.2 | 17.0 | 9.6 |
+| Finale | 5.6 | 2.4 | 20.0 | 9.9 |
+| **Total** | **105.4** | 92.8 | 173.3 | 100.8 (52.8-170.0) |
+
+Act II roughly doubled: its landmark guardians stand in the inner biomes, and the mobs around them are now
+danger-scaled up to x2.2 HP. The bot stalled on the forest / desert guardian in 5 of 8 runs and died up to 34 times
+in a run, so a human will feel the centre. The guardians themselves stay on their act scaling.
 

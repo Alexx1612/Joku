@@ -387,7 +387,7 @@ islands -> the Mad God:
   enemy HP scales x1.1 per completed act (up to x1.6). Old saves from the
   5-act arc are moved onto the new arc automatically. Quest log: **J** (HUD)
   or the full Quest Log. Bot playthroughs (`tools/pacing_bot.py`) take a
-  median ~101 minutes to the end of the Finale.
+  median ~105 minutes to the end of the Finale.
 
 ### NPCs, dialogue and side quests
 - **11 NPCs** - Barkeep Bitterwick (Nexus tavern), Old Mossbeard, Sandy Sal,
@@ -578,7 +578,7 @@ docs/unity-rebuild/  feature-by-feature docs for rebuilding the game in Unity (0
 `run_all_checks.py` finds every `tests/check_*.py` and runs each as its own
 headless process (`SDL_VIDEODRIVER=dummy`, throwaway settings, no music
 rendering, no event rotation) and prints a PASS/FAIL summary - currently
-**77/77**. The checks are plain asserts that drive the real game objects:
+**83/83**. The checks are plain asserts that drive the real game objects:
 single-player `Game`, the co-op server's action handler and real
 client-server sockets, rendered screenshots, timing budgets (e.g. world
 generation < 3 s) and fixed-seed input fuzzing.
@@ -617,8 +617,9 @@ and CoopClient specs); output lands in `dist/`.
   slower" note was Windows 11 power-throttling headless test processes, not
   the game - the timing checks now opt out of it, see `tests/_timing.py`.)
 - Story length is measured by a scripted bot (`tools/pacing_bot.py`, 8 runs):
-  median ~101 simulated minutes to the Finale (range 53-170). A bot plays
-  faster than a person, so expect longer.
+  median ~105 simulated minutes to the Finale (range 93-173; re-measured
+  2026-10-07 with danger by distance, which made Act II about twice as
+  long). A bot plays faster than a person, so expect longer.
 - Some UT/class flavour text is still just flavour (e.g. Paladin's
   "mace hits heal"); only the four UT proc kinds are real mechanics.
 - Balance numbers (drop rates, spawn caps, XP curve) are tuned by feel.
