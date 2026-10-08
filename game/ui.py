@@ -562,6 +562,11 @@ def draw_inventory(surf, player, mouse_pos, dragging_from=None, highlighted=(), 
             pygame.draw.rect(surf, (235, 200, 80), rect, width=2, border_radius=3)
         if socket_pair and i in socket_pair:  # (proc source, target weapon) awaiting ENTER to socket
             pygame.draw.rect(surf, (200, 150, 255), rect.inflate(4, 4), width=3, border_radius=4)
+    sb = sort_button_rect(player) if mode == "inventory" and len(player.backpack) > 1 else None
+    if sb is not None:
+        _bevel_button(surf, sb, (60, 58, 80), hovered=sb.collidepoint(mouse_pos))
+        st = _FONT_S.render("Sort", True, (225, 222, 235))
+        surf.blit(st, (sb.centerx - st.get_width() // 2, sb.centery - st.get_height() // 2))
     if hovered and dragging_from is None:
         _tooltip(surf, mouse_pos, hovered)
 
@@ -700,23 +705,101 @@ def item_stat_lines(item):
     return lines
 
 
-def _tooltip(surf, pos, item):
+# Gear comparison: the clients set this to their own player every frame (main.py / coop_client.py
+# draw()), so EVERY item tooltip - backpack, bags, vault, trade, ground, inspect - can show how the
+# hovered item compares with what's equipped in that slot. None = no comparison (menus, tests).
+COMPARE_PLAYER = None
+GEAR_SLOTS = ("weapon", "armor", "ring", "ability")
+UP_COL, DOWN_COL, SAME_COL = (120, 230, 130), (240, 110, 100), (165, 165, 175)
+
+
+def compare_lines(item, equipped):
+    """[(text, colour)] - how `item` differs from `equipped` (the same slot's item, or None):
+    green ^ better, red v worse. Empty when there's nothing to compare."""
+    if item is None or item.slot not in GEAR_SLOTS:
+        return []
+    if equipped is None:
+        return [("^ Nothing equipped in this slot", UP_COL)]
+    if equipped is item:
+        return [("(equipped)", SAME_COL)]
+    out = []
+
+    def delta(label, new, old, better_high=True, fmt="{:+g}"):
+        d = new - old
+        if abs(d) < 1e-9:
+            return
+        good = (d > 0) == better_high
+        out.append((f"{'^' if good else 'v'} {fmt.format(round(d, 1))} {label}", UP_COL if good else DOWN_COL))
+
+    if item.slot == "weapon":
+        delta("avg damage", (item.min_dmg + item.max_dmg) / 2, (equipped.min_dmg + equipped.max_dmg) / 2)
+        from game import gems as _gems
+        delta("socket(s)", _gems.socket_count(item), _gems.socket_count(equipped))
+        n_new, n_old = len(_gems.stones_in(item)), len(_gems.stones_in(equipped))
+        if n_old and n_new < n_old:
+            out.append((f"v loses {n_old - n_new} set stone{'s' if n_old - n_new > 1 else ''}", DOWN_COL))
+        if (item.proc or "") != (equipped.proc or ""):
+            if item.proc and not equipped.proc:
+                out.append(("^ adds a proc", UP_COL))
+            elif equipped.proc and not item.proc:
+                out.append(("v loses your proc", DOWN_COL))
+    if item.slot == "ability" and (item.effect or equipped.effect):
+        from game.items import ability_power
+        delta("power", ability_power(item), ability_power(equipped))
+        delta("MP cost", item.mp_cost or 0, equipped.mp_cost or 0, better_high=False)
+    keys = [k for k in list(item.stat_bonus) + list(equipped.stat_bonus) if k not in ("heal", "glow", "luck")]
+    for k in dict.fromkeys(keys):
+        delta(k.upper(), item.stat_bonus.get(k, 0), equipped.stat_bonus.get(k, 0))
+    if not out:
+        out.append(("= same stats as equipped", SAME_COL))
+    return out
+
+
+def _tooltip_box(surf, x, y, item, extra=(), head=None):
+    """Draws one tooltip box at (x, y) (already placed) - returns nothing."""
     stats = item_stat_lines(item)
-    lines = [item.display_name] + stats
-    stat_line_count = len(stats)
-    desc_lines = _wrap_text(item.description, _FONT_S, TOOLTIP_WRAP_WIDTH) if item.description else []
-    lines.extend(desc_lines)
-    w = max(max(_FONT_S.size(l)[0] for l in lines) + 16, 120)
-    w = min(w, TOOLTIP_WRAP_WIDTH + 16)
+    lines = [(item.display_name, item.color)] + [(s, (210, 210, 215)) for s in stats]
+    if head:
+        lines.insert(0, (head, (190, 175, 130)))
+    desc = _wrap_text(item.description, _FONT_S, TOOLTIP_WRAP_WIDTH) if item.description else []
+    lines += [(d, (150, 150, 165)) for d in desc]
+    lines += list(extra)
+    w = min(max(max(_FONT_S.size(t)[0] for t, _c in lines) + 16, 120), TOOLTIP_WRAP_WIDTH + 16)
     h = 20 * len(lines) + 10
-    x = min(pos[0] + 12, C.SCREEN_W - w - 4)
-    y = min(pos[1] - h - 8, C.SCREEN_H - h - 4)
     box, _ = _ornate_panel(w, h, border=item.color)
     surf.blit(box, (x, y))
-    for i, line in enumerate(lines):
-        is_desc = i >= 1 + stat_line_count
-        color = item.color if i == 0 else (150, 150, 165) if is_desc else (210, 210, 215)
+    for i, (line, color) in enumerate(lines):
         surf.blit(_FONT_S.render(line, True, color), (x + 8, y + 6 + i * 20))
+
+
+def _tooltip_size(item, extra=(), head=None):
+    stats = item_stat_lines(item)
+    texts = [item.display_name] + stats + ([head] if head else []) + [t for t, _c in extra]
+    texts += _wrap_text(item.description, _FONT_S, TOOLTIP_WRAP_WIDTH) if item.description else []
+    w = min(max(max(_FONT_S.size(t)[0] for t in texts) + 16, 120), TOOLTIP_WRAP_WIDTH + 16)
+    return w, 20 * len(texts) + 10
+
+
+def _tooltip(surf, pos, item):
+    extra = []
+    equipped = None
+    p = COMPARE_PLAYER
+    if p is not None and item.slot in GEAR_SLOTS:
+        equipped = getattr(p, item.slot, None)
+        cmp = compare_lines(item, equipped)
+        if cmp and cmp[0][0] != "(equipped)":
+            extra = [("vs equipped:", (190, 175, 130))] + cmp
+            if equipped is not None:
+                extra.append(("(hold Shift to see it)", (120, 118, 130)))
+    w, h = _tooltip_size(item, extra)
+    x = min(pos[0] + 12, C.SCREEN_W - w - 4)
+    y = max(4, min(pos[1] - h - 8, C.SCREEN_H - h - 4))
+    _tooltip_box(surf, x, y, item, extra)
+    # Shift: the equipped item's own tooltip beside it, for a full side-by-side read
+    if equipped is not None and equipped is not item and pygame.key.get_mods() & pygame.KMOD_SHIFT:
+        w2, h2 = _tooltip_size(equipped, head="EQUIPPED")
+        x2 = x - w2 - 6 if x - w2 - 6 >= 4 else min(x + w + 6, C.SCREEN_W - w2 - 4)
+        _tooltip_box(surf, x2, max(4, min(y, C.SCREEN_H - h2 - 4)), equipped, head="EQUIPPED")
 
 
 def draw_peer_tooltip(surf, pos, peer, crew_name=""):
@@ -1144,8 +1227,19 @@ def draw_light_shimmer(surf, center, radius):
         surf.blit(chunk, (rect.x + dx, rect.y + dy))
 
 
+def heartbeat_shape(phase):
+    """0..1 over one beat (phase 0..1): a sharp "lub", a softer "dub" just after, then quiet -
+    the Blood Moon's red vignette and the world's red tint both throb with this."""
+    lub = math.exp(-((phase - 0.05) / 0.065) ** 2)
+    dub = 0.62 * math.exp(-((phase - 0.27) / 0.075) ** 2)
+    return min(1.0, lub + dub)
+
+
 def draw_blood_pulse(surf, intensity):
     """A red heartbeat vignette (the Blood Moon, or low HP at night)."""
+    from game import access
+    if access.reduced_flashing():
+        intensity *= 0.35  # Options > Accessibility: a calmer heartbeat
     if intensity <= 0.01:
         return
     size = surf.get_size()
@@ -1469,24 +1563,42 @@ def _help_panel_geometry(menu_items=None):
     pad = 16
     rows = _as_rows(menu_items)
     content_y0 = 2 + _FONT_S.get_height() + 8 + 10
-    layout = []
-    ly = content_y0
-    section = None
+    # sections (a header + its rows) never split; when one column would run off the screen
+    # the next sections flow into a second settings column (ui._OPT_COL_STEP to the right)
+    blocks = []
+    section = object()
     for i, row in enumerate(rows):
-        if row.section and row.section != section:
+        if not blocks or (row.section and row.section != section):
             section = row.section
-            layout.append(("header", section, ly))
+            blocks.append([row.section, []])
+        blocks[-1][1].append(i)
+    max_h = max(200, C.SCREEN_H - 20 - content_y0 - 14 - 3 * 16 - pad)
+    layout = []
+    col, ly = 0, content_y0
+    tallest = 0
+    for sec, idxs in blocks:
+        bh = (_OPT_HEADER_H if sec else 0) + len(idxs) * _OPT_ROW_H
+        if ly > content_y0 and ly - content_y0 + bh > max_h and col == 0:
+            col, ly = 1, content_y0
+        if sec:
+            layout.append(("header", sec, ly, col))
             ly += _OPT_HEADER_H
-        layout.append(("row", i, ly))
-        ly += _OPT_ROW_H
-    left_h = ly - content_y0
+        for i in idxs:
+            layout.append(("row", i, ly, col))
+            ly += _OPT_ROW_H
+        tallest = max(tallest, ly - content_y0)
+    left_h = tallest
+    n_cols = (max(c for *_r, c in layout) + 1) if layout else 0
 
     col_w = 0
-    for label, keys in HELP_LINES:
+    from game import binds
+    for label, keys in binds.help_lines():
         col_w = max(col_w, _FONT_S.size(label)[0] + _FONT_S.size(keys)[0] + 28)
     controls_h = 26 + len(HELP_LINES) * 19
 
-    controls_x = pad + (_OPT_LEFT_W + pad * 2 if rows else 0)
+    controls_x = pad + n_cols * _OPT_COL_STEP
+    if controls_x + col_w + pad > C.SCREEN_W - 12:
+        col_w, controls_h = 0, 0  # no room (small / zoomed canvas): Key bindings lists the keys anyway
     w = max(controls_x + col_w + pad, _FONT_S.size(_OPT_TITLE)[0] + 70)
     note_lines = _wrap_lines(_FONT_S, HELP_NOTE, w - pad * 2) or [""]
     h = content_y0 + max(left_h, controls_h) + 14 + len(note_lines) * 16 + pad
@@ -1502,8 +1614,11 @@ def help_close_button_rect(menu_items=None):
     return pygame.Rect(x + w - 26, y + 6, 18, 18)
 
 
-def _row_local_rect(ly):
-    return pygame.Rect(16 - 4, ly - 2, _OPT_LEFT_W + 8, _OPT_ROW_H - 2)
+_OPT_COL_STEP = _OPT_LEFT_W + 32  # a second settings column sits this far right of the first
+
+
+def _row_local_rect(ly, col=0):
+    return pygame.Rect(16 - 4 + col * _OPT_COL_STEP, ly - 2, _OPT_LEFT_W + 8, _OPT_ROW_H - 2)
 
 
 def _slider_local_rect(row_rect):
@@ -1517,9 +1632,9 @@ def help_menu_item_rects(menu_items=None):
         return []
     x, y, w, h, layout, *_ = _help_panel_geometry(rows)
     rects = [None] * len(rows)
-    for kind, ref, ly in layout:
+    for kind, ref, ly, col in layout:
         if kind == "row":
-            rects[ref] = _row_local_rect(ly).move(x, y)
+            rects[ref] = _row_local_rect(ly, col).move(x, y)
     return rects
 
 
@@ -1586,32 +1701,39 @@ def draw_help_overlay(surf, menu_items=None, selected_idx=0, mouse_pos=(-1, -1))
                       (close.x + m, close.y + close.h - m), width=2)
 
     local_mouse = (mouse_pos[0] - x, mouse_pos[1] - y)
-    for kind, ref, ly in layout:
+    for kind, ref, ly, col in layout:
+        cx = pad + col * _OPT_COL_STEP
         if kind == "header":
             head = ref.upper()
-            panel.blit(_FONT_S.render(head, True, CHROME_GOLD), (pad, ly + 5))
-            pygame.draw.line(panel, CHROME_GOLD_DIM, (pad + _FONT_S.size(head)[0] + 8, ly + 13),
-                             (pad + _OPT_LEFT_W, ly + 13), 1)
+            panel.blit(_FONT_S.render(head, True, CHROME_GOLD), (cx, ly + 5))
+            pygame.draw.line(panel, CHROME_GOLD_DIM, (cx + _FONT_S.size(head)[0] + 8, ly + 13),
+                             (cx + _OPT_LEFT_W, ly + 13), 1)
             continue
         row = rows[ref]
-        row_rect = _row_local_rect(ly)
+        row_rect = _row_local_rect(ly, col)
         selected = ref == selected_idx
         hovered = row_rect.collidepoint(local_mouse)
         if selected or hovered:
             fill = (90, 80, 130, 220) if selected else (70, 65, 95, 180)
-            pygame.draw.rect(panel, fill, row_rect, border_radius=4)
+            # blended onto the panel: a plain draw.rect with alpha on this SRCALPHA surface REPLACED
+            # the pixels, so the world showed through the highlighted row
+            hl = pygame.Surface(row_rect.size, pygame.SRCALPHA)
+            pygame.draw.rect(hl, fill, hl.get_rect(), border_radius=4)
+            panel.blit(hl, row_rect.topleft)
         color = (255, 235, 170) if selected else (220, 220, 230) if hovered else (200, 200, 215)
         prefix = "> " if selected else "  "
         label = _FONT_S.render(prefix + row.label, True, color)
-        panel.blit(label, (pad, row_rect.centery - label.get_height() // 2))
+        panel.blit(label, (cx, row_rect.centery - label.get_height() // 2))
         _draw_row_value(panel, row, row_rect, selected)
 
     note_y = h - pad - len(note_lines) * 16
-    if rows:
+    if rows and col_w:
         sep_x = controls_x - pad
         pygame.draw.line(panel, (90, 90, 105), (sep_x, content_y0), (sep_x, note_y - 12), 1)
-    panel.blit(_FONT_M.render("Controls", True, (230, 220, 180)), (controls_x, content_y0))
-    for i, (label, keys) in enumerate(HELP_LINES):
+    from game import binds
+    if col_w:
+        panel.blit(_FONT_M.render("Controls", True, (230, 220, 180)), (controls_x, content_y0))
+    for i, (label, keys) in enumerate(binds.help_lines() if col_w else ()):
         ly = content_y0 + 26 + i * 19
         panel.blit(_FONT_S.render(label, True, (190, 190, 205)), (controls_x, ly))
         keytxt = _FONT_S.render(keys, True, (150, 210, 170))
@@ -1719,7 +1841,11 @@ def draw_echo_shop_overlay(surf, echoes, menu_items=None, selected_idx=0, mouse_
         hovered = row_rect.collidepoint(local_mouse)
         if selected or hovered:
             fill = (90, 80, 130, 220) if selected else (70, 65, 95, 180)
-            pygame.draw.rect(panel, fill, row_rect, border_radius=4)
+            # blended onto the panel: a plain draw.rect with alpha on this SRCALPHA surface REPLACED
+            # the pixels, so the world showed through the highlighted row
+            hl = pygame.Surface(row_rect.size, pygame.SRCALPHA)
+            pygame.draw.rect(hl, fill, hl.get_rect(), border_radius=4)
+            panel.blit(hl, row_rect.topleft)
         color = (255, 235, 170) if selected else (220, 220, 230) if hovered else (200, 200, 215)
         prefix = "> " if selected else "  "
         panel.blit(_FONT_S.render(prefix + label, True, color), (pad, ly))
@@ -1727,16 +1853,20 @@ def draw_echo_shop_overlay(surf, echoes, menu_items=None, selected_idx=0, mouse_
 
 
 def draw_item_feed(surf, messages, y=90):
+    # centred on the PLAY AREA (left of the dock) and wrapped to fit it - centred on the whole
+    # screen, long lines ran under the dock (worse on a zoomed / small canvas)
+    play_w = max(200, dock_frame_rect().x - 8)
     for msg, color, t in messages:
         alpha = min(255, int(255 * min(1.0, t)))
-        txt = _FONT_M.render(msg, True, color)
-        shadow = _FONT_M.render(msg, True, (0, 0, 0))
-        holder = pygame.Surface((txt.get_width() + 2, txt.get_height() + 2), pygame.SRCALPHA)
-        holder.blit(shadow, (1, 2))
-        holder.blit(txt, (0, 0))
-        holder.set_alpha(alpha)
-        surf.blit(holder, (C.SCREEN_W // 2 - txt.get_width() // 2, y))
-        y += 26
+        for line in _wrap_text(msg, _FONT_M, play_w - 24) or [msg]:
+            txt = _FONT_M.render(line, True, color)
+            shadow = _FONT_M.render(line, True, (0, 0, 0))
+            holder = pygame.Surface((txt.get_width() + 2, txt.get_height() + 2), pygame.SRCALPHA)
+            holder.blit(shadow, (1, 2))
+            holder.blit(txt, (0, 0))
+            holder.set_alpha(alpha)
+            surf.blit(holder, (play_w // 2 - txt.get_width() // 2, y))
+            y += 26
 
 
 NEARBY_LOOT_MAX = 5
@@ -2706,6 +2836,20 @@ def vault_chest_close_button_rect(chest_screen_pos):
     return bag_window_close_button_rect(chest_screen_pos)
 
 
+def vault_chest_stash_button_rect(chest_screen_pos):
+    """'Stash mats': every material / gem / shard in the backpack into this chest."""
+    close = bag_window_close_button_rect(chest_screen_pos)
+    return pygame.Rect(close.x - 86, close.y, 80, close.h)
+
+
+def sort_button_rect(player):
+    """The small Sort button just above the backpack grid's right end (Items tab)."""
+    rects = backpack_slot_rects(player)
+    if not rects:
+        return None
+    return pygame.Rect(rects[0].x + (SLOT_SIZE + SLOT_GAP) * 3 + SLOT_SIZE - 44, rects[0].y - 19, 44, 16)
+
+
 def draw_vault_chest_window(surf, chest_screen_pos, chest_idx, vault_items, mouse_pos, dragging_from=None):
     """The one open vault chest as a bag-style window (8 slots, its own skin colour)."""
     from game.items import VAULT_CHEST_SIZE
@@ -2730,6 +2874,10 @@ def draw_vault_chest_window(surf, chest_screen_pos, chest_idx, vault_items, mous
     pygame.draw.line(panel, (255, 235, 235), (close.x + m, close.y + m), (close.right - m, close.bottom - m), 2)
     pygame.draw.line(panel, (255, 235, 235), (close.right - m, close.y + m), (close.x + m, close.bottom - m), 2)
     surf.blit(panel, (x0, y0))
+    sb = vault_chest_stash_button_rect(chest_screen_pos)
+    _bevel_button(surf, sb, (70, 90, 60), hovered=sb.collidepoint(mouse_pos))
+    st = _FONT_S.render("Stash mats", True, (230, 245, 220))
+    surf.blit(st, (sb.centerx - st.get_width() // 2, sb.centery - st.get_height() // 2))
     hovered = None
     for i, rect in enumerate(rects[:VAULT_CHEST_SIZE]):
         it = slots[i]

@@ -207,8 +207,8 @@ def check_menu_mouse_and_geometry():
     assert len(rects) == len(rows) and all(r is not None for r in rects)
     close = ui.help_close_button_rect(rows)
     assert not any(r.colliderect(close) for r in rects)
-    for a, b in zip(rects, rects[1:]):
-        assert a.bottom <= b.top, (a, b)  # rows never overlap
+    for i, a in enumerate(rects):  # rows never overlap (sections may flow into a second column)
+        assert not any(a.colliderect(b) for b in rects[i + 1:]), a
     # panel fits on the default screen
     x, y, w, h, *_ = ui._help_panel_geometry(rows)
     assert x >= 0 and y >= 0 and x + w <= C.SCREEN_W and y + h <= C.SCREEN_H, (x, y, w, h)

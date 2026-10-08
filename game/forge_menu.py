@@ -22,7 +22,8 @@ import pygame
 
 from game import forge, gems
 
-TABS = (("temper", "Temper"), ("reforge", "Reforge (UT)"), ("fuse", "Fuse Shards"), ("stonework", "Stonework"))
+TABS = (("temper", "Temper"), ("reforge", "Reforge (UT)"), ("fuse", "Fuse Shards"), ("stonework", "Stonework"),
+        ("salvage", "Salvage"))
 STONE_GROUPS = (("set", "Set a stone"), ("combine", "Combine stones"), ("pry", "Pry a stone out"))
 CONFIRM_TIER = 12        # eating an item of this tier or better asks twice
 ANIM_TIME = 0.6          # the hammering before the result shows
@@ -43,6 +44,7 @@ def catalog(player):
     out["stonework"].sort(key=lambda r: (order[r["kind"]], not r["ok"]))
     for k in ("temper", "reforge", "fuse"):
         out[k].sort(key=lambda r: not r["ok"])
+    out["salvage"] = forge.salvage_options(player, include_blocked=True)
     return out
 
 
@@ -54,6 +56,11 @@ def needs_confirm(r):
     """Pry (the stone shatters), or eating a T12+ item / 2+ Forge Ingots."""
     if r["kind"] == "pry":
         return True
+    if r["kind"] == "salvage":
+        it = r["use"][0]
+        return it.tier >= forge.SALVAGE_CONFIRM_TIER or bool(gems.stones_in(it))
+    if r["kind"] == "smelt":
+        return False
     if len(r.get("ingots") or []) >= 2:
         return True
     return any(getattr(it, "tier", 0) >= CONFIRM_TIER and getattr(it, "shape", "") != "ingot" for it in _consumed(r))
@@ -81,6 +88,11 @@ def apply(player, r):
     if not r.get("ok"):
         return dict(ok=False, msg=r.get("why") or "You can't forge that yet.", color=FAIL, sfx="forge_fail",
                     result=None, feed=[])
+    if r["kind"] in ("salvage", "smelt"):
+        ok, msg, res = forge.apply_salvage(player, r)
+        col = (200, 200, 190) if ok else FAIL
+        return dict(ok=ok, msg=msg, color=col, sfx="forge_success" if ok and res else ("gem_pry" if ok else "forge_fail"),
+                    result=res, feed=[(msg, col)])
     if r["kind"] in ("set", "combine", "pry"):
         n_before = len(player.backpack)
         ok, msg, col = gems.apply_stonework(player, r)
@@ -125,6 +137,8 @@ def result_preview(player, r):
         return r["result"]
     if r["kind"] == "set":
         return r["gem"]
+    if r["kind"] == "salvage":
+        return r["use"][0]
     if r["kind"] == "pry":
         return gems.make_gem(*r["stone"])
     return None
@@ -294,7 +308,7 @@ class ForgeWindow:
         from game import constants as C
         w, h = min(1060, C.SCREEN_W - 30), min(680, C.SCREEN_H - 30)
         win = pygame.Rect(C.SCREEN_W // 2 - w // 2, C.SCREEN_H // 2 - h // 2, w, h)
-        tab_w = (w - 32 - 3 * 6) // 4
+        tab_w = (w - 32 - (len(TABS) - 1) * 6) // len(TABS)
         tabs = [(k, pygame.Rect(win.x + 16 + i * (tab_w + 6), win.y + 56, tab_w, 32)) for i, (k, _l) in enumerate(TABS)]
         top = win.y + 56 + 32 + 10
         lst = pygame.Rect(win.x + 16, top, 420, win.bottom - 38 - top)
@@ -386,7 +400,8 @@ class ForgeWindow:
         _anvil_icon(surf, win.x + 34, win.y + 30, (215, 160, 90))
         surf.blit(ui._FONT_L.render("Brother Hammerstein's Forge", True, (250, 222, 170)), (win.x + 62, win.y + 10))
         ing = sum(1 for it in (player.backpack if player else ()) if it.slot == "material" and it.shape == "ingot")
-        it_t = _font(14, True).render(f"Forge Ingots: {ing}", True, (235, 200, 150))
+        it_t = _font(14, True).render(f"Forge Ingots: {ing}   Scrap: {int(getattr(player, 'scrap', 0))}", True,
+                                      (235, 200, 150))
         surf.blit(it_t, (r["close"].x - it_t.get_width() - 18, win.y + 14))
         ui._bevel_button(surf, r["close"], (140, 55, 55), hovered=r["close"].collidepoint(mouse))
         xt = ui._FONT_S.render("X", True, (255, 225, 225))
@@ -421,7 +436,8 @@ class ForgeWindow:
             msg = {"temper": "No gear in your backpack to temper. Bring 3 items of the same tier.",
                    "reforge": "No UT weapon in your backpack to reforge.",
                    "fuse": "No Weapon Shards in your backpack to fuse.",
-                   "stonework": "No gemstones in your backpack and none in your weapon."}[self.tab]
+                   "stonework": "No gemstones in your backpack and none in your weapon.",
+                   "salvage": "Nothing to salvage."}[self.tab]
             for i, line in enumerate(ui._wrap_text(msg, ui._FONT_S, lst.w - 24)):
                 surf.blit(ui._FONT_S.render(line, True, (170, 165, 160)), (lst.x + 12, lst.y + 12 + i * 18))
             return
@@ -491,18 +507,36 @@ class ForgeWindow:
             self._draw_button(surf, r, None, mouse)
             return
         title = {"temper": "Temper", "reforge": "Reforge a UT", "fuse": "Fuse Weapon Shards", "set": "Set a stone",
-                 "combine": "Combine stones", "pry": "Pry a stone out"}[rec["kind"]]
+                 "combine": "Combine stones", "pry": "Pry a stone out", "salvage": "Salvage",
+                 "smelt": "Smelt Scrap into an Ingot"}[rec["kind"]]
         surf.blit(_font(17, True).render(title, True, (250, 215, 150)), (x, y))
         y += 26
         # --- what goes in -> what comes out
-        if rec["kind"] in ("temper", "reforge", "fuse", "combine"):
+        if rec["kind"] in ("salvage", "smelt"):
+            col_w = (w - 40) // 2
+            have = int(getattr(player, "scrap", 0))
+            if rec["kind"] == "salvage":
+                y2 = self._item_card(surf, x, y, col_w, rec["use"][0], "Breaks down")
+                after = [f"+{rec['scrap']} Forge Scrap", f"You'll have {have + rec['scrap']}",
+                         f"{forge.SCRAP_PER_INGOT} Scrap = 1 Forge Ingot", "(UT and Divine can't be salvaged)"]
+            else:
+                y2 = self._item_card(surf, x, y, col_w, forge.scrap_icon(), f"Uses {forge.SCRAP_PER_INGOT} Scrap")
+                after = [f"You have {have} Scrap", "You get 1 Forge Ingot"]
+            ax = x + col_w + 40
+            surf.blit(_font(12, True).render("YOU GET", True, (190, 160, 120)), (ax, y))
+            for k, line in enumerate(after):
+                surf.blit(fs.render(line, True, (220, 215, 205) if k else (150, 230, 160)), (ax, y + 20 + k * 18))
+            pygame.draw.polygon(surf, (235, 180, 100), [(x + col_w + 8, d.y + 70), (x + col_w + 26, d.y + 80),
+                                                        (x + col_w + 8, d.y + 90)])
+            y = max(y2, y + 20 + len(after) * 18)
+        elif rec["kind"] in ("temper", "reforge", "fuse", "combine"):
             before = rec["use"][0] if rec.get("use") else None
             after = rec.get("result")
             col_w = (w - 40) // 2
             y = max(self._item_card(surf, x, y, col_w, before, {"temper": "Uses 3 of this tier (lead item)",
                                                                    "fuse": "Uses 3 like this", "combine": "Uses 3 like this",
                                                                    "reforge": "Before"}[rec["kind"]]),
-                    self._item_card(surf, x + col_w + 40, y, col_w, after, "You get"))
+                    self._item_card(surf, x + col_w + 40, y, col_w, after, "You get", compare_to=player))
             ax = x + col_w + 8
             pygame.draw.polygon(surf, (235, 180, 100), [(ax, d.y + 70), (ax + 18, d.y + 80), (ax, d.y + 90)])
         else:
@@ -560,7 +594,7 @@ class ForgeWindow:
                 surf.blit(t, (tx, br.y + (12 if len(lines) == 1 else 3) + k * 17))
         self._draw_button(surf, r, rec, mouse)
 
-    def _item_card(self, surf, x, y, w, item, head):
+    def _item_card(self, surf, x, y, w, item, head, compare_to=None):
         ui = _ui()
         from game import sprites
         surf.blit(_font(12, True).render(head.upper(), True, (190, 160, 120)), (x, y))
@@ -581,6 +615,11 @@ class ForgeWindow:
         if getattr(item, "rune_effect", "") and item.description:
             for sub in ui._wrap_text(item.description, ui._FONT_S, w)[:5]:
                 surf.blit(ui._FONT_S.render(sub, True, (175, 170, 180)), (x, y))
+                y += 17
+        if compare_to is not None and item.slot in ui.GEAR_SLOTS:
+            for text, col in ui.compare_lines(item, getattr(compare_to, item.slot, None))[:4]:
+                surf.blit(ui._FONT_S.render(text + ("" if text.startswith("(") else " vs equipped"), True, col),
+                          (x, y))
                 y += 17
         return y
 

@@ -19,6 +19,23 @@ Doc 40. No balance numbers changed. The new UI's own values:
 | Co-op forge reach | the Nexus only, within 180 px of Brother Hammerstein | `server.FORGE_REACH` |
 | The Hunter (night event) | a Shade Stalker with x2.2 HP, boss-grade loot (unchanged, now a named constant) | `night.HUNTER_HP_MULT` |
 | Calendar window | 960 x 640 (clamped), chips Nights / Blood Moons only / Live events (saved: `calendar_filter`), position saved in `panel_offsets["calendar"]` | `game/calendar_ui.py` |
+| Salvage | scrap = max(1, (tier + 1) // 2) per gear item (UT / Divine excluded); 10 Scrap = 1 Forge Ingot; T9+ or a stoned weapon asks to confirm | `forge.scrap_value`, `SCRAP_PER_INGOT` |
+| Auto-loot | your own bag within 40 px: potions, temp potions, materials, gems, dungeon shards, Weapon Shards (never gear) | `loot_filter.AUTO_RADIUS`, `AUTO_SLOTS` |
+| Hide junk bags | gear-only bags under Off / T3 / T5 / T7 / T9 / T11 (never UT, Divine or T12+) | `loot_filter.HIDE_CHOICES` |
+| Death recap | the last 12 hits are kept, the last 5 shown | `Player.HIT_LOG_LEN`, `death_recap.LAST_N` |
+| Telegraph strength | alpha x(0.5 + setting), i.e. x0.5 .. x1.5 (default x1) | `access.tele_alpha` |
+| Reduce flashing | lightning flash 0.3 (was 1.0) without the flicker; heartbeat vignette x0.35 | `sky_fx`, `ui.draw_blood_pulse` |
+| Blood Moon heartbeat | lub at 5% of the beat, dub (x0.62) at 27%; vignette x0.62; the red ambient swells by up to +34% | `ui.heartbeat_shape`, `lighting.ambient_color` |
+| World zoom | 1.0 / 1.1 / **1.25** (default) / 1.5 - the world drawn on screen / zoom and scaled up; the HUD never zoomed | `view_scale.ZOOM_CHOICES` |
+| Map pins | up to 5, world px, saved with the character | `map_pins.MAX_PINS` |
+| Chat manual | 64 commands, each with what it does + examples (/help <command>, /help all) | `game/admin_manual.py` |
+| Map zoom | full map 0.5x .. 10x, minimap 1x .. 10x, x1.2 per notch; Quest Map up to 10x | `minimap.MAX_ZOOM` |
+| Aggro | non-bosses x0.75 of the table range | `entities.AGGRO_SCALE` |
+| Night rules | HP x1.5, dmg x1.45, cooldowns x0.75, speed x1.2, aggro x1.3 (dark x1.55), leash x1.5 | `night.NIGHT_RULES` |
+| Blood Moon rules | HP x2.0, dmg x1.75, cooldowns x0.62, speed x1.3, aggro x1.6 (dark x1.9), leash x2.0 | `night.BLOOD_RULES` |
+| Island danger | 0.45 x rank (nearest island to the beach 0 .. furthest 1) + 0.55 x shore->centre; HP x0.7..x1.7, dmg x0.8..x1.35, XP x0.9..x1.6, extra loot 0..49% | `danger.island_frac`, `island_mults` |
+| Shelters | wayside shacks 3 per biome (was 2), a hamlet per biome (2 houses), an outpost + a shelter per island | `RealmSim.SHACKS_PER_BIOME`, `_stamp_hamlets`, `_stamp_island_outposts` |
+| Shared character | upload validated: level 1-20, stats 0-300, HP/MP <= 10k, bags in range, tiers 0-14, <= 400 kB; the further-along copy wins; mirrored back every 10 s | `characters.validate`, `pick_for_join`, `CoopClient.CHAR_MIRROR_EVERY` |
 | Dictionary tags | 14: CREATURE, BOSS, NIGHT MOB, NEUTRAL, HERB, NPC, PET, ITEM, GEAR, PLACE, DUNGEON, STORY, TIP (18 help pages), MECHANIC (22 help pages); chips saved in `dict_tags` | `codex.TAGS`, `codex.TIP_IDS` |
 
 ## Ends of V0.2 - "final final" content update (still v0.2)

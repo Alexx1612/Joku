@@ -263,7 +263,7 @@ The in-game **O** menu shows the same list (`game/ui.py` `HELP_LINES`).
 | Q / E, X | Rotate the camera, reset rotation |
 | M | Full map (scroll wheel or +/- to zoom; right-drag pans the Quest Map) |
 | L | Friends panel (co-op) |
-| O | Options menu (volumes, effects, FPS cap, auto-fire, fullscreen, Quest Log, Dictionary, Calendar...) |
+| O | Options menu (volumes, effects, FPS cap, loot, accessibility, key bindings, Quest Log, Dictionary, Calendar...) - every key above can be rebound in Options > Controls > Key bindings |
 | F11 | Fullscreen (shows more of the world, not a scaled image) |
 | 1-5 in a dialogue | Pick that answer (or click it) |
 | Esc | Close the top-most window (dialogue, journal, map, shop, options, bag, vault chest, trade, menus); with nothing open, asks "quit?" - Esc / Enter / Y quits, N stays |
@@ -549,6 +549,10 @@ game/clipboard.py    copy/paste helper
 game/calendar_ui.py  the Calendar window (forecast, live events, explanations, drag, filters)
 game/codex.py        Dictionary entries built from the game's own tables + their type tags
 game/forge_menu.py   Brother Hammerstein's Forge window + the server-checked forge_apply
+game/access.py       accessibility: colour-blind palettes, bullet outlines, telegraph strength, text size
+game/binds.py        key rebinding (translate-to-default layer) + the Key bindings window
+game/death_recap.py  what killed you: the hit log -> the death screen panel
+game/loot_filter.py  auto-loot, the hide-junk filter and rare-drop beams
 game/constants.py    screen/tile/net constants + stat and defense formulas
 game/crews.py        crew tags + shared boss-kill counter
 game/dialogue.py     finite dialogue trees + conversation state
@@ -592,7 +596,7 @@ docs/unity-rebuild/  feature-by-feature docs for rebuilding the game in Unity (0
 `run_all_checks.py` finds every `tests/check_*.py` and runs each as its own
 headless process (`SDL_VIDEODRIVER=dummy`, throwaway settings, no music
 rendering, no event rotation) and prints a PASS/FAIL summary - currently
-**84/84**. The checks are plain asserts that drive the real game objects:
+**87/87**. The checks are plain asserts that drive the real game objects:
 single-player `Game`, the co-op server's action handler and real
 client-server sockets, rendered screenshots, timing budgets (e.g. world
 generation < 3 s) and fixed-seed input fuzzing.
@@ -671,6 +675,30 @@ Built in batches; each has a detailed doc in `docs/unity-rebuild/`.
   (doc 28)**, released together as **Ends of V0.2 (65552b4)**.
 
 ### Ends of V0.2 - "final final fin" UI round (current, still v0.2)
+- **World tuning** (doc 42): the world is drawn **1.25x bigger** by default
+  while the HUD stays full size (Options > Display > Zoom: 100-150%);
+  **/help** now explains every command with examples (/help <command>,
+  /help all); the Quest Log shows **where each quest already counted you**
+  and where you haven't been yet; **click any map** (M, the Quest Map, the
+  Dictionary's map) to drop your own **pins** (up to 5, shown everywhere
+  quest markers are); the maps zoom to **10x**; monsters
+  notice you from closer; the **night is much tougher** (x1.5 HP, x1.45
+  damage, faster attacks; a Blood Moon x2 HP / x1.75 damage); the **islands**
+  get harder the further they are from the arrival beach and toward their
+  centres (the minimap says "Isle: Wild" etc.); a **hamlet** in every biome,
+  more wayside shelters, and an **outpost** and a shelter on every island;
+  your **single-player character comes along into co-op** (and co-op progress
+  comes back) - same name, same character, same permadeath.
+- **UX batches A + B** (doc 41): item tooltips compare against what you
+  have equipped (green ^ / red v; hold Shift for both side by side); YOU
+  DIED now shows what killed you, with which attack, the last hits and a
+  tip; Options > Loot (auto-loot potions / shards / gems / ingots, hide junk
+  bags below a tier, light beams over UT / Divine / T12+ drops); the Forge's
+  new **Salvage** tab (gear -> Forge Scrap, 10 Scrap -> 1 Ingot); a **Sort**
+  button on the backpack and **Stash mats** in vault chests; **Key
+  bindings** (Options > Controls); **Accessibility** (colour-blind palettes
+  for telegraphs and enemy bullets, bullet outlines, telegraph strength,
+  large text, reduce flashing). The Blood Moon's red now beats like a heart.
 - **The Forge window** (doc 40): F on Brother Hammerstein -> *Open the
   Forge*. Every recipe in four tabs (Temper, Reforge, Fuse Shards,
   Stonework) - no more 3-option cap - with READY / MISSING chips, before ->

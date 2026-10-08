@@ -21,13 +21,13 @@ REBUILD_INTERVAL = 0.4  # seconds between fog-of-war re-renders (cheap enough, a
 CORNER_W, CORNER_H = 266, 148
 CORNER_SIZE = CORNER_W
 CORNER_TOP_Y = 94  # below the dock's full-width clock/zone header (see ui.day_night_clock_rect)
-MIN_ZOOM, MAX_ZOOM, ZOOM_STEP = 0.5, 8.0, 0.25
+MIN_ZOOM, MAX_ZOOM, ZOOM_STEP = 0.5, 10.0, 0.25
 DEFAULT_ZOOM = 1.2
 
 # the corner minimap can ALSO zoom in/out (via the +/- buttons next to it, or the
 # +/- keys, without needing the full map open) - 1.0 = whole map fit to the corner
 # box, higher = cropped in and centered on the player, like a closer-range radar
-CORNER_MIN_ZOOM, CORNER_MAX_ZOOM, CORNER_ZOOM_STEP = 1.0, 8.0, 0.5
+CORNER_MIN_ZOOM, CORNER_MAX_ZOOM, CORNER_ZOOM_STEP = 1.0, 10.0, 0.5
 ZOOM_BTN_SIZE = 20
 
 TILE_MM_COLORS = {
@@ -65,11 +65,17 @@ class MinimapState:
                 if dx * dx + dy * dy <= r2:
                     self.explored.add((tx + dx, ty + dy))
 
+    # zoom steps multiply (each notch x1.2 in / x1/1.2 out), so 0.5x .. 10x is a dozen notches
+    # either way instead of three dozen tiny ones at the top end
+    @staticmethod
+    def _step(z, delta, lo, hi, unit):
+        return max(lo, min(hi, z * (1.2 ** (delta / unit))))
+
     def adjust_zoom(self, delta):
-        self.zoom = max(MIN_ZOOM, min(MAX_ZOOM, self.zoom + delta))
+        self.zoom = self._step(self.zoom, delta, MIN_ZOOM, MAX_ZOOM, ZOOM_STEP)
 
     def adjust_corner_zoom(self, delta):
-        self.corner_zoom = max(CORNER_MIN_ZOOM, min(CORNER_MAX_ZOOM, self.corner_zoom + delta))
+        self.corner_zoom = self._step(self.corner_zoom, delta, CORNER_MIN_ZOOM, CORNER_MAX_ZOOM, CORNER_ZOOM_STEP)
 
     def _base_surface(self, tilemap):
         if self._base is None:
@@ -261,7 +267,21 @@ def _danger_label(tilemap, player_pos):
     if tilemap is None or getattr(tilemap, "w", 0) < REALM_MIN_TILES:
         return None
     from game import danger
-    return danger.label(danger.danger_frac(player_pos.x, player_pos.y, tilemap.w, tilemap.h))
+    f = danger.danger_frac(player_pos.x, player_pos.y, tilemap.w, tilemap.h)
+    if f is None:  # out on a big island: its own scale (rank + shore -> centre)
+        g = danger.island_frac(player_pos.x, player_pos.y)
+        if g is not None:
+            name, col, t = danger.label(g)
+            return f"Isle: {name}", col, t
+    return danger.label(f)
+
+
+def full_map_world(mm, player_pos, screen_pos):
+    """The world px under a point of the full map (the same maths draw_full_map uses)."""
+    px_per_tile = max(2, int(5 * mm.zoom))
+    ox = C.SCREEN_W // 2 - int(player_pos.x / C.TILE * px_per_tile)
+    oy = C.SCREEN_H // 2 - int(player_pos.y / C.TILE * px_per_tile)
+    return ((screen_pos[0] - ox) / px_per_tile * C.TILE, (screen_pos[1] - oy) / px_per_tile * C.TILE)
 
 
 def draw_full_map(surf, tilemap, mm, player_pos, peers=(), portals=(), zone_name="", enemies=(), quest_marks=()):
@@ -336,5 +356,6 @@ def draw_full_map(surf, tilemap, mm, player_pos, peers=(), portals=(), zone_name
     font_s = pygame.font.SysFont("consolas", 14)
     title = font_m.render(f"{zone_name} - Map", True, (230, 220, 190))
     surf.blit(title, (C.SCREEN_W // 2 - title.get_width() // 2, 16))
-    hint = font_s.render(f"Scroll or +/- to zoom ({mm.zoom:.2f}x)  |  M or Esc to close", True, (170, 170, 185))
+    hint = font_s.render(f"Scroll or +/- to zoom ({mm.zoom:.2f}x)  |  click: place / remove a pin  |  M or Esc to close",
+                         True, (170, 170, 185))
     surf.blit(hint, (C.SCREEN_W // 2 - hint.get_width() // 2, C.SCREEN_H - 30))

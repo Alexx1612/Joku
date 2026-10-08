@@ -10,6 +10,7 @@ A RealmSim knows nothing about pygame input or rendering - it is fed a
 dict of {pid: Player} each tick and produces (a) mutated world state the
 caller draws, and (b) a list of "events" (feed messages) for that tick.
 """
+from game import codex  # readable place names for quest progress
 import math
 import random
 
@@ -459,9 +460,12 @@ def shard_difficulty(theme_name, danger_tier=0):
 def _danger_mults(enemy):
     """The danger multipliers (game/danger.py) a mob was spawned with - neutral outside the continent."""
     f = getattr(enemy, "danger", None)
-    if f is None:
-        return {"xp": 1.0, "loot_extra": 0.0, "portal": MOB_PORTAL_CHANCE}
     from game import danger
+    if f is None:
+        g = getattr(enemy, "island_danger", None)
+        if g is not None:
+            return danger.island_mults(g)
+        return {"xp": 1.0, "loot_extra": 0.0, "portal": MOB_PORTAL_CHANCE}
     return danger.mults(f)
 
 
@@ -705,6 +709,11 @@ class RealmSim:
         if not bonus:
             self._stamp_biome_buildings()
             self._stamp_islands()
+            from game import danger as _dg  # islands: ranked by distance from the arrival beach (doc 42)
+            sp = getattr(self, "_beach_spawn", None)
+            _dg.set_islands([(i["pos"].x, i["pos"].y) for i in self.islands], (sp.x, sp.y) if sp is not None else None)
+            self._stamp_island_outposts()  # doc 42: an outpost + a shelter on every island
+            self._repair_house_doors()
             self._populate_all_lairs()
         else:
             self._spawn_dungeon_boss()
@@ -1108,6 +1117,7 @@ class RealmSim:
             for h in a.get("houses", ()):
                 self._add_safe_house(h["interior"], h["doors"], a["name"])
         self._stamp_wayside_shacks(placed_rects)
+        self._stamp_hamlets(placed_rects)  # doc 42: a little settlement per biome
 
         # Curated biome decoration vignettes (Track C, Batch 14) - 20
         # guaranteed hand-composed prop clusters per biome, additional to
@@ -1768,7 +1778,7 @@ class RealmSim:
                         e._push_total = PUSH_DURATION
                         e.push_time = PUSH_DURATION
                     else:
-                        real = p.take_damage(random.randint(*e.dmg))
+                        real = p.take_damage(random.randint(*e.dmg), source=e.hit_info(contact=True))
                         self.events.append((p.pid, f"-{real} hp", (230, 90, 90)))
                         self.damage_popups.append((p.pos.x, p.pos.y, real, (255, 90, 90)))
                         hit_kind = "hit_player_by_boss" if e.rank == "boss" else "hit_player"
@@ -1813,6 +1823,9 @@ class RealmSim:
 
         self.enemies = [e for e in self.enemies if e.alive]
         self.ground_items = [g for g in self.ground_items if g.update(dt)]
+        from game import loot_filter
+        for p in alive:  # Options > Loot: the small stuff jumps into your backpack (never gear)
+            loot_filter.auto_loot(p, self.ground_items, self.events)
         self.portals = [pt for pt in self.portals if pt.update(dt)]
         # no more auto-pickup-by-walking-over: see find_nearby_bag() - a bag now waits
         # for you to actually choose to open it (right-click), showing what's inside via
@@ -1917,7 +1930,7 @@ class RealmSim:
             if z["dmg"] > 0:
                 for p in alive:
                     if self._in_zone(z, p.pos, p.radius * 0.6):
-                        real = p.take_damage(z["dmg"])
+                        real = p.take_damage(z["dmg"], source=z.get("info"))
                         self.events.append((p.pid, f"-{real} hp", (230, 90, 90)))
                         self.damage_popups.append((p.pos.x, p.pos.y, real, (255, 90, 90)))
                         kind = "hit_player_by_boss" if z.get("src_rank") == "boss" else "hit_player"
@@ -1949,6 +1962,7 @@ class RealmSim:
                     src.pos = old
                 for b in self.bullets[n0:]:
                     b.src_rank = src.rank
+                    b.src_info = z.get("info")
         self.enemy_zones = keep
 
     def zone_snapshot(self, center=None, radius=None):
@@ -2213,7 +2227,7 @@ class RealmSim:
         return out
 
     # ---------------------------------------------------------- safe houses --
-    SHACKS_PER_BIOME = 2
+    SHACKS_PER_BIOME = 3  # was 2 - more shelters out in the wilds (doc 42)
     SHACK_W, SHACK_H = 8, 6
     DOOR_REACH = 1.8 * TILE
 
@@ -2227,6 +2241,133 @@ class RealmSim:
             self._interior_owner[t] = idx
         for t in doors:
             self._interior_owner.setdefault(("door",) + tuple(t), idx)
+
+    def _stamp_house(self, tx, ty, w, h, biome, label, placed_rects, keep_lairs_out=20):
+        """A small doored house (walls in the biome's building tile, plank floor, a 2-tile door
+        at the bottom) - a real shelter at night (safe_houses). Returns its rect."""
+        grid = self.realm_map.grid
+        walls = world.BUILDING_WALL_TILE
+        wall = walls.get(biome, next(iter(walls.values())))
+        interior = []
+        for y in range(ty, ty + h):
+            for x in range(tx, tx + w):
+                border = x in (tx, tx + w - 1) or y in (ty, ty + h - 1)
+                grid[y][x] = wall if border else world.AREA_PLANK
+                if not border:
+                    interior.append((x, y))
+        mx = tx + w // 2
+        doors = [(mx - 1, ty + h - 1), (mx, ty + h - 1)]
+        for (x, y) in doors:
+            grid[y][x] = world.DOOR_OPEN
+        rect = pygame.Rect(tx, ty, w, h)
+        world.clear_blockers(grid, rect, margin=3)
+        placed_rects.append(rect)
+        self._add_safe_house(interior, doors, label)
+        keep_out = rect.inflate(keep_lairs_out, keep_lairs_out)
+        self.lairs = [l for l in self.lairs
+                      if not keep_out.collidepoint(int(l["pos"].x // TILE), int(l["pos"].y // TILE))]
+        return rect
+
+    def _repair_house_doors(self):
+        """After ALL the stamping: any shelter door a later decoration landed on is put back (open),
+        so every safe house can always be entered - a rare random-map collision otherwise."""
+        grid = self.realm_map.grid
+        for house in getattr(self, "safe_houses", ()):
+            for (x, y) in house["doors"]:
+                if grid[y][x] not in world.DOOR_TILES:
+                    grid[y][x] = world.DOOR_OPEN
+
+    def _clear_spot(self, rect, allowed=None):
+        """Every tile of rect (+1 margin) is open ground: no water, wall, prop or door (and, if
+        `allowed` is given, every tile is in that set)."""
+        grid = self.realm_map.grid
+        gh, gw = len(grid), len(grid[0])
+        for y in range(rect.y - 1, rect.bottom + 1):
+            for x in range(rect.x - 1, rect.right + 1):
+                if not (0 <= x < gw and 0 <= y < gh):
+                    return False
+                t = grid[y][x]
+                if t == world.WATER or t in world.SOLID or t in world.DOOR_TILES:
+                    return False
+                if allowed is not None and (x, y) not in allowed:
+                    return False
+        return True
+
+    def _scatter_props(self, spots):
+        """[(kind, (tx, ty))] big props; quietly skips any that don't fit the ground there."""
+        grid = self.realm_map.grid
+        for kind, (x, y) in spots:
+            if 0 <= y < len(grid) and 0 <= x < len(grid[0]) and grid[y][x] not in world.SOLID:
+                world.stamp_big_prop(grid, (x, y), kind)
+
+    HAMLET_W, HAMLET_H = 24, 16
+
+    def _stamp_hamlets(self, placed_rects):
+        """One small hamlet per biome: two doored houses round a well, with a campfire, lamp
+        posts, a market stall, barrels and a bench - life (and shelter) out in the wilds."""
+        grid = self.realm_map.grid
+        y0, y1, x0, x1 = self._continent_bounds()
+        rng = random.Random(len(grid) * 11 + 5)
+        done = set()
+        for _try in range(2400):
+            tx = rng.randint(x0 + 6, x1 - self.HAMLET_W - 6)
+            ty = rng.randint(y0 + 6, y1 - self.HAMLET_H - 6)
+            biome = world.TILE_TO_BIOME_NAME.get(grid[ty][tx])
+            if biome is None or biome in done:
+                continue
+            rect = pygame.Rect(tx, ty, self.HAMLET_W, self.HAMLET_H)
+            if any(rect.inflate(16, 16).colliderect(r) for r in placed_rects) or not self._clear_spot(rect):
+                continue
+            self._stamp_house(tx + 1, ty + 1, 8, 6, biome, "a hamlet house", placed_rects)
+            self._stamp_house(tx + 15, ty + 2, 8, 6, biome, "a hamlet house", placed_rects)
+            cx, cy = tx + 11, ty + 10
+            self._scatter_props([("well", (cx, cy)), ("campfire", (cx - 6, cy + 3)), ("lamp_post", (cx - 3, cy - 3)),
+                                 ("lamp_post", (cx + 4, cy - 3)), ("market_stall", (cx + 5, cy + 3)),
+                                 ("barrels", (tx + 2, ty + 9)), ("bench", (cx - 1, cy + 4)),
+                                 ("hay_bale", (tx + 21, ty + 11))])
+            placed_rects.append(rect)
+            done.add(biome)
+            self.hamlet_spots = getattr(self, "hamlet_spots", []) + [(biome, cx, cy)]
+        self.hamlets = sorted(done)
+
+    def _stamp_island_outposts(self):
+        """Out on every big island: an outpost camp (a doored house, a tent, a campfire, lamp
+        posts, barrels, a signboard) and a lone shelter - somewhere to rest between the camps."""
+        grid = self.realm_map.grid
+        tiles = getattr(self, "island_tiles", set())
+        placed = []
+        self.island_outposts = []
+        rng = random.Random(len(grid) * 13 + 7)
+        camps = [(int(l["pos"].x // TILE), int(l["pos"].y // TILE)) for l in self.lairs]
+        for isl in self.islands:
+            c = (int(isl["pos"].x // TILE), int(isl["pos"].y // TILE))
+            biome = isl.get("biome") or "forest"
+            made = 0
+            for _try in range(500):
+                if made >= 2:
+                    break
+                ang = rng.uniform(0, 2 * math.pi)
+                dist = rng.uniform(34, 95)
+                w, h = (18, 12) if made == 0 else (8, 6)
+                tx = int(c[0] + math.cos(ang) * dist) - w // 2
+                ty = int(c[1] + math.sin(ang) * dist) - h // 2
+                rect = pygame.Rect(tx, ty, w, h)
+                if any(rect.inflate(10, 10).colliderect(r) for r in placed):
+                    continue
+                if any(rect.inflate(20, 20).collidepoint(cp) for cp in camps):
+                    continue
+                if not self._clear_spot(rect, allowed=tiles):
+                    continue
+                if made == 0:
+                    self._stamp_house(tx, ty, 8, 6, biome, f"an outpost on {isl['label']}", placed, keep_lairs_out=8)
+                    self._scatter_props([("tent", (tx + 11, ty + 2)), ("campfire", (tx + 12, ty + 8)),
+                                         ("lamp_post", (tx + 9, ty + 7)), ("lamp_post", (tx + 16, ty + 7)),
+                                         ("barrels", (tx + 1, ty + 9)), ("signboard", (tx + 5, ty + 9))])
+                    self.island_outposts.append({"island": isl["idx"], "x": tx + 9, "y": ty + 6})
+                else:
+                    self._stamp_house(tx, ty, w, h, biome, f"a shelter on {isl['label']}", placed, keep_lairs_out=8)
+                placed.append(rect)
+                made += 1
 
     def _stamp_wayside_shacks(self, placed_rects):
         """A few small doored shacks out in every biome, so a shelter is never far at night."""
@@ -2249,25 +2390,8 @@ class RealmSim:
             if any(grid[y][x] == world.WATER or grid[y][x] in world.SOLID or grid[y][x] in world.DOOR_TILES
                    for y in range(ty - 1, ty + self.SHACK_H + 2) for x in range(tx - 1, tx + self.SHACK_W + 1)):
                 continue
-            wall = walls.get(biome, next(iter(walls.values())))
-            interior = []
-            for y in range(ty, ty + self.SHACK_H):
-                for x in range(tx, tx + self.SHACK_W):
-                    border = x in (tx, tx + self.SHACK_W - 1) or y in (ty, ty + self.SHACK_H - 1)
-                    grid[y][x] = wall if border else world.AREA_PLANK
-                    if not border:
-                        interior.append((x, y))
-            mx = tx + self.SHACK_W // 2
-            doors = [(mx - 1, ty + self.SHACK_H - 1), (mx, ty + self.SHACK_H - 1)]
-            for (x, y) in doors:
-                grid[y][x] = world.DOOR_OPEN
-            world.clear_blockers(grid, rect, margin=3)
-            placed_rects.append(rect)
+            self._stamp_house(tx, ty, self.SHACK_W, self.SHACK_H, biome, "a wayside shack", placed_rects)
             by_biome[biome] = by_biome.get(biome, 0) + 1
-            self._add_safe_house(interior, doors, "a wayside shack")
-            keep_out = rect.inflate(20, 20)
-            self.lairs = [l for l in self.lairs
-                          if not keep_out.collidepoint(int(l["pos"].x // TILE), int(l["pos"].y // TILE))]
 
     def door_near(self, pos):
         """The house whose door the player at `pos` is next to (or None)."""
@@ -2354,9 +2478,14 @@ class RealmSim:
                 continue  # landmark guardians are tuned to the story's acts (story.act_scale), not the map
             f = self.danger_at(e.pos)
             if f is None:
-                continue
-            m = danger.mults(f)
-            e.danger = f
+                g = danger.island_frac(e.pos.x, e.pos.y)  # the big islands: rank + shore -> centre
+                if g is None:
+                    continue
+                m = danger.island_mults(g)
+                e.island_danger = g
+            else:
+                m = danger.mults(f)
+                e.danger = f
             full = e.hp >= e.hp_max
             e.hp_max = max(1, int(round(e.hp_max * m["hp"])))
             e.hp = e.hp_max if full else min(e.hp, e.hp_max)
@@ -2368,7 +2497,7 @@ class RealmSim:
             if base is not None:  # the night rules already captured its day stats: scale those too
                 e._day_stats = (base[0] * m["aggro"], base[1], base[2] * m["speed"],
                                 (max(1, int(round(base[3][0] * m["dmg"]))), max(1, int(round(base[3][1] * m["dmg"])))),
-                                base[4] * m["cd"])
+                                base[4] * m["cd"], max(1, int(round(base[5] * m["hp"]))))
 
     def _rdv_scared(self, e, alive):
         """The Light of RDV ring: a non-boss monster this close to its wearer loses its nerve -
@@ -2641,7 +2770,8 @@ class RealmSim:
                 for p in players.values():
                     if p.alive and b.hit_test(p.pos, p.radius):
                         # "armor_pierce" (the Mad God's aimed volley + nova only) skips deF entirely
-                        real = p.take_damage(b.dmg, pierce_armor=b.status_effect == "armor_pierce")
+                        real = p.take_damage(b.dmg, pierce_armor=b.status_effect == "armor_pierce",
+                                             source=getattr(b, "src_info", None))
                         self.events.append((p.pid, f"-{real} hp", (230, 90, 90)))
                         self.damage_popups.append((p.pos.x, p.pos.y, real, (255, 90, 90)))
                         if b.status_effect in ("slow", "root"):  # stingers / vine + kelp snares
@@ -2959,7 +3089,8 @@ class RealmSim:
                     self._side_event(p, "near", kind, sidequests.NEAR_TICK, dict(ctx, count=c))
             for idx, lm in enumerate(self.landmarks):
                 if p.pos.distance_to(lm["pos"]) <= 3 * TILE:
-                    self._side_event(p, "reach", "landmark", 1, {"idx": idx})
+                    self._side_event(p, "reach", "landmark", 1,
+                                     {"idx": idx, "label": codex.place_name("landmark", lm.get("biome"))})
                 if p.pos.distance_to(lm["pos"]) <= 8 * TILE:
                     self._story_personal(p, "landmark", lm["biome"])  # Act I: "spot" it
             ptx, pty = int(px // TILE), int(py // TILE)
@@ -2969,10 +3100,12 @@ class RealmSim:
             self._story_gear_check(p)
             for isl in self.islands:
                 if p.pos.distance_to(isl["pos"]) <= (world.ISLAND_RADIUS + 2) * TILE:
-                    self._side_event(p, "reach", "island", 1, {"idx": isl["idx"]})
+                    self._side_event(p, "reach", "island", 1, {"idx": isl["idx"], "label": isl["label"]})
             for vi, (center, biome) in enumerate(self._vignette_centers):
                 if abs(center.x - px) <= 5 * TILE and abs(center.y - py) <= 5 * TILE:
-                    self._side_event(p, "reach", "vignette:" + biome, 1, {"idx": vi})
+                    self._side_event(p, "reach", "vignette:" + biome, 1,
+                                     {"idx": vi, "label": f"the {codex.BIOME_LABELS.get(biome, biome)} spot at "
+                                                          f"({int(center.x // TILE)}, {int(center.y // TILE)})"})
 
     # ------------------------------------------------------ island chests --
     ISLAND_CHEST_RADIUS = 72
@@ -3156,7 +3289,8 @@ class RealmSim:
             src = getattr(enemy, "loot_source", None) or self.loot_source
             lucky = 1 if (p is not None and "luck" in getattr(p, "temp_buffs", {})
                           and random.random() < STAR_LUCK_CHANCE) else 0
-            if getattr(enemy, "danger", None) is not None and random.random() < _danger_mults(enemy)["loot_extra"]:
+            if ((getattr(enemy, "danger", None) is not None or getattr(enemy, "island_danger", None) is not None)
+                    and random.random() < _danger_mults(enemy)["loot_extra"]):
                 lucky += 1  # the heart of the Realm pays better
             for roll_i in range(loot_rolls + lucky):
                 # the source's extras (mythic tier / ingots / Divine) ride the FIRST roll only
@@ -3432,7 +3566,7 @@ class RealmSim:
         self._ember_cd = self.EMBER_TICK
         for p in alive:
             if self.realm_map.tile_at(p.pos.x, p.pos.y) == world.ASH:
-                real = p.take_damage(self.EMBER_DMG)
+                real = p.take_damage(self.EMBER_DMG, source=("The Ashlands", "Smouldering embers", False))
                 self.events.append((p.pid, "Embers scorch you!", (230, 120, 60)))
                 self.damage_popups.append((p.pos.x, p.pos.y, real, (230, 120, 60)))
 

@@ -35,6 +35,17 @@ DEFAULTS = {
     "panel_offsets": {},  # dragged chat / quest-log / calendar positions, see ui.PANEL_OFFSETS
     "dict_tags": [],  # the Dictionary's picked tag filter chips (game/codex.py TAGS keys)
     "calendar_filter": ["nights", "live"],  # the Calendar's filter chips (game/calendar_ui.py FILTERS)
+    "auto_loot": True,       # walk over your bag: potions / shards / gems / ingots jump in (game/loot_filter.py)
+    "loot_hide_below": 0,    # hide bags holding only gear under this tier (0 = show all)
+    "loot_beams": True,      # a light column over bags with UT / Divine / T12+ inside
+    "keys": {},              # rebound keys only, {action: pygame key code} (game/binds.py)
+    # Options > Accessibility (game/access.py)
+    "colorblind": "off",     # off / deuteranopia / protanopia / tritanopia - telegraph + enemy bullet palette
+    "bullet_outline": False,
+    "tele_strength": 0.5,    # telegraph opacity: 0 -> x0.5, 0.5 -> x1, 1 -> x1.5
+    "text_size": "normal",   # normal / large
+    "reduce_flashing": False,
+    "zoom": 1.25,            # Options > Display > Zoom: everything drawn this much bigger (game/view_scale.py)
 }
 
 current = dict(DEFAULTS)
@@ -50,17 +61,29 @@ def _clean(data):
         val = data.get(key, default)
         if isinstance(default, bool):
             out[key] = val if isinstance(val, bool) else default
+        elif key == "zoom":  # not a 0..1 fraction like the other floats
+            out[key] = val if val in (1.0, 1.1, 1.25, 1.5) and not isinstance(val, bool) else default
         elif isinstance(default, float):
             out[key] = max(0.0, min(1.0, float(val))) if isinstance(val, (int, float)) and not isinstance(val, bool) else default
         elif key == "particles":
             out[key] = val if val in PARTICLE_LEVELS else default
         elif key == "fps_cap":
             out[key] = val if val in FPS_CAPS and not isinstance(val, bool) else default
+        elif key == "loot_hide_below":
+            from game.loot_filter import HIDE_CHOICES
+            out[key] = val if val in HIDE_CHOICES and not isinstance(val, bool) else default
         elif key == "panel_offsets":
             out[key] = {k: [int(v[0]), int(v[1])] for k, v in val.items()
                         if isinstance(v, (list, tuple)) and len(v) == 2
                         and all(isinstance(n, (int, float)) and not isinstance(n, bool) for n in v)
                         } if isinstance(val, dict) else {}
+        elif key == "colorblind":
+            out[key] = val if val in ("off", "deuteranopia", "protanopia", "tritanopia") else default
+        elif key == "text_size":
+            out[key] = val if val in ("normal", "large") else default
+        elif key == "keys":
+            out[key] = {str(a): int(k) for a, k in val.items()
+                        if isinstance(k, int) and not isinstance(k, bool)} if isinstance(val, dict) else {}
         elif isinstance(default, list):
             out[key] = [v for v in val if isinstance(v, str)] if isinstance(val, (list, tuple)) else list(default)
     return out
@@ -112,6 +135,11 @@ def apply():
     vfx.configure(shake=current["screen_shake"], hitstop=current["hit_stop"],
                   particles=current["particles"])
     weather.set_particle_level(current["particles"])
+    try:
+        from game import access
+        access.apply_text_size()
+    except Exception:
+        pass  # fonts need pygame - only matters for the real clients
     try:
         from game import ui
         ui.PANEL_OFFSETS.clear()

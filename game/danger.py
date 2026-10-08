@@ -83,6 +83,59 @@ def mults(frac):
     }
 
 
+# --- the big islands (doc 42): on top of their level-20 baseline, ranked by how far they are
+# from the arrival beach (the nearest is the gentlest, the far side the deadliest) AND, inside
+# each island, from easier at its shore to top-notch hard at its centre.
+ISLAND_CENTERS = []   # [(x, y)] world px - set by RealmSim (single-player / server) or the co-op client
+ISLAND_SPAWN = None   # (x, y) world px of the arrival beach
+ISLAND_RANK_WEIGHT = 0.45  # how much of an island's danger comes from its rank (the rest: shore -> centre)
+
+
+def set_islands(centers, spawn):
+    ISLAND_CENTERS[:] = [(float(x), float(y)) for x, y in centers]
+    global ISLAND_SPAWN
+    ISLAND_SPAWN = (float(spawn[0]), float(spawn[1])) if spawn is not None else None
+
+
+def island_rank(center):
+    """0.0 for the island nearest the arrival beach .. 1.0 for the furthest."""
+    if not ISLAND_CENTERS:
+        return 0.0
+    ref = ISLAND_SPAWN or ISLAND_CENTERS[0]
+    order = sorted(ISLAND_CENTERS, key=lambda c: math.hypot(c[0] - ref[0], c[1] - ref[1]))
+    i = min(range(len(order)), key=lambda k: math.hypot(order[k][0] - center[0], order[k][1] - center[1]))
+    return i / max(1, len(order) - 1)
+
+
+def island_frac(x, y):
+    """0.0 (the nearest island's shore) .. 1.0 (the furthest island's centre); None off the islands."""
+    if not ISLAND_CENTERS:
+        return None
+    from game import world
+    R = world.ISLAND_RADIUS * TILE
+    c = min(ISLAND_CENTERS, key=lambda c: math.hypot(c[0] - x, c[1] - y))
+    d = math.hypot(c[0] - x, c[1] - y)
+    if d > R * 1.05:
+        return None
+    inner = 1.0 - min(1.0, d / (R * 0.9))
+    return max(0.0, min(1.0, ISLAND_RANK_WEIGHT * island_rank(c) + (1 - ISLAND_RANK_WEIGHT) * inner))
+
+
+def island_mults(g):
+    """Island stat multipliers on top of the islands' own level-20 scaling (g from island_frac)."""
+    g = max(0.0, min(1.0, g or 0.0))
+    return {
+        "hp": 0.7 + 1.0 * g ** 1.1,     # nearest shore x0.7 .. furthest centre x1.7
+        "dmg": 0.8 + 0.55 * g,          # x0.8 .. x1.35
+        "speed": 0.96 + 0.1 * g,
+        "cd": 1.1 - 0.25 * g,           # attack cooldowns x1.1 .. x0.85
+        "aggro": 1.0,
+        "xp": 0.9 + 0.7 * g,            # x0.9 .. x1.6 XP
+        "loot_extra": max(0.0, g - 0.3) * 0.7,  # extra loot roll: 0 .. 49%
+        "portal": 0.05 + 0.06 * g,
+    }
+
+
 def ring_fracs():
     """The tier boundaries as fractions of the continent radius (for the full map's rings)."""
     return [1.0 - k / 5.0 for k in range(1, 5)]  # tier edges at 80/60/40/20% of the radius

@@ -180,6 +180,63 @@ def forge_options(player, limit=3, include_blocked=False):
     return out if limit is None else out[:limit]
 
 
+# --- Salvage: unwanted gear -> Forge Scrap (a per-character counter, saved with it), and
+# SCRAP_PER_INGOT Scrap -> 1 Forge Ingot. UT and Divine items are never salvaged.
+SCRAP_PER_INGOT = 10
+SALVAGE_CONFIRM_TIER = 9  # salvaging this tier or better (or a weapon with stones in it) asks twice
+
+
+def scrap_value(item):
+    if item is None or item.slot not in FORGE_SLOTS or item.is_ut or getattr(item, "divine", False):
+        return 0
+    return max(1, (item.tier + 1) // 2)
+
+
+def scrap_icon():
+    return I.Item("Forge Scrap", I.SLOT_MATERIAL, 3, "ingot",
+                  description="Bent nails, half a buckle, a sword that has seen things. Ten make an Ingot.")
+
+
+def salvage_options(player, include_blocked=False):
+    """[recipe]: one 'salvage' per gear item in the backpack, then 'smelt' (Scrap -> Ingot)."""
+    out = []
+    for it in player.backpack:
+        v = scrap_value(it)
+        if v:
+            out.append(dict(kind="salvage", use=[it], ingots=[], result=None, scrap=v, ok=True, why="",
+                            needs=[(it.display_name, it, 1, 1)],
+                            label=f"Salvage {it.display_name} -> +{v} Scrap"))
+    have = int(getattr(player, "scrap", 0))
+    full = len(player.backpack) >= player.backpack_size and len(player.backpack2) >= player.backpack2_size
+    why = (f"Need {SCRAP_PER_INGOT} Forge Scrap (you have {have})" if have < SCRAP_PER_INGOT else
+           "No room in your backpack (or Bag 2) for the Ingot" if full else "")
+    if not why or include_blocked:
+        out.append(dict(kind="smelt", use=[], ingots=[], result=I.make_forge_ingot(), ok=not why, why=why,
+                        needs=[("Forge Scrap", scrap_icon(), have, SCRAP_PER_INGOT)],
+                        label=f"Smelt {SCRAP_PER_INGOT} Scrap -> 1 Forge Ingot"))
+    return out
+
+
+def apply_salvage(player, recipe):
+    """Returns (ok, message, result_item_or_None)."""
+    if recipe["kind"] == "salvage":
+        it = recipe["use"][0]
+        bag = player.backpack
+        i = next((i for i, b in enumerate(bag) if b is it), None)
+        if i is None:
+            return False, "That item isn't in your backpack any more.", None
+        bag.pop(i)
+        player.scrap = int(getattr(player, "scrap", 0)) + recipe["scrap"]
+        return True, f"Brother Hammerstein breaks it down: +{recipe['scrap']} Scrap ({player.scrap} now).", None
+    if int(getattr(player, "scrap", 0)) < SCRAP_PER_INGOT:
+        return False, "Not enough Scrap.", None
+    ingot = I.make_forge_ingot()
+    if not player.try_pickup(ingot):
+        return False, "No room for the Ingot.", None
+    player.scrap -= SCRAP_PER_INGOT
+    return True, "Ten bits of junk, one shiny Forge Ingot. Recycling!", ingot
+
+
 def apply_forge(player, recipe):
     """Consumes the recipe's items from the backpack and adds the result.
     Returns (ok, message, result_item)."""

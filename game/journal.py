@@ -196,6 +196,20 @@ def _sprite_surface(sprite, size):
     return None
 
 
+def _draw_pin(surf, x, y, label, font, small=False):
+    """One of your map pins: a green map-pin shape (+ its name)."""
+    from game import map_pins
+    col = map_pins.PIN_COLOR
+    r = 3 if small else 6
+    pygame.draw.circle(surf, (0, 0, 0), (x, y - r - 2), r + 1)
+    pygame.draw.circle(surf, col, (x, y - r - 2), r)
+    pygame.draw.polygon(surf, col, [(x - r + 1, y - r), (x + r - 1, y - r), (x, y + 1)])
+    if label and not small:
+        t = font.render(label, True, col)
+        surf.blit(font.render(label, True, (0, 0, 0)), (x + 9, y - r * 2 - 4))
+        surf.blit(t, (x + 8, y - r * 2 - 5))
+
+
 class Journal:
     def __init__(self):
         self.stack = []
@@ -435,7 +449,7 @@ class Journal:
         if self.map_center is None:
             self.map_center = self._default_center(ctx)
         old = self.map_zoom
-        self.map_zoom = max(1.0, min(8.0, self.map_zoom * (1.25 if dy > 0 else 0.8)))
+        self.map_zoom = max(1.0, min(10.0, self.map_zoom * (1.25 if dy > 0 else 0.8)))
         if pos is not None and rect.collidepoint(pos):
             # keep the tile under the cursor fixed
             tx = self.map_center[0] + (pos[0] - rect.centerx) / scale
@@ -482,10 +496,23 @@ class Journal:
             e = codex.entry(self.sel) if self.sel else None
             if e is not None and self._where_has_points(e, ctx) and r["mapbtn"].collidepoint(pos):
                 self.open_map(e["where"], e["title"])
+                return
+            grid = ctx.get("grid")
+            if (e is not None and grid and ctx.get("on_pin") and r["mini"].collidepoint(pos)
+                    and (e["where"].get("biomes") or e["where"].get("areas"))):
+                mini = r["mini"]  # click the little map: a pin there (or remove the one under it)
+                tx = (pos[0] - mini.x) * len(grid[0]) / mini.w
+                ty = (pos[1] - mini.y) * len(grid) / mini.h
+                ctx["on_pin"]((tx * C.TILE, ty * C.TILE))
         elif mode == QUEST_MAP:
-            rect, _s = self._map_geom(ctx)
+            rect, scale = self._map_geom(ctx)
             if self._close_rect(pygame.Rect(0, 0, C.SCREEN_W, 40)).collidepoint(pos):
                 self.back()
+            elif scale and rect.collidepoint(pos) and ctx.get("on_pin"):
+                cx, cy = self.map_center or self._default_center(ctx)  # click the map: a pin there
+                tx = cx + (pos[0] - rect.centerx) / scale
+                ty = cy + (pos[1] - rect.centery) / scale
+                ctx["on_pin"]((tx * C.TILE, ty * C.TILE))
 
     def _do(self, action, ctx=None):
         if action[0] == "select":
@@ -592,6 +619,10 @@ class Journal:
                 done = o.get("have", 0) >= o.get("need", 1)
                 text(f"{'[x]' if done else '[ ]'} {o['text']}  ({o.get('have', 0)}/{o.get('need', 1)})",
                      (140, 230, 150) if done else (230, 228, 238), x=8)
+                if o.get("seen"):  # where it has already counted you
+                    text("Been there: " + ", ".join(o["seen"]), (140, 215, 150), x=24)
+                if o.get("todo") and not done:
+                    text("Not yet: " + ", ".join(o["todo"]), (160, 156, 172), x=24)
                 if o.get("target") and not done:
                     target_line("Where:", o["target"], map_title=o["text"])
         side = ctx.get("side") or []
@@ -615,6 +646,8 @@ class Journal:
             marker_button(qid, y0)
             select_line(qid, y0, fs.get_height())
             text(q.get("desc", ""), (190, 188, 200), x=16)
+            if q.get("seen"):  # each place / thing that has already counted
+                text("Done so far: " + ", ".join(q["seen"]), (140, 215, 150), x=16)
             extra = []
             for role in ("giver", "turn_in"):
                 npc_id = q.get(role)
@@ -946,6 +979,8 @@ class Journal:
             for (x, y, _label) in pts:
                 p = (mini.x + int(x * sx_), mini.y + int(y * sy_))
                 pygame.draw.circle(surf, (255, 70, 70), p, pulse, width=2)
+            for (wx, wy, label) in ctx.get("pins") or ():
+                _draw_pin(surf, mini.x + int(wx / C.TILE * sx_), mini.y + int(wy / C.TILE * sy_), None, fs, small=True)
             if ctx.get("player_tile"):
                 px, py = ctx["player_tile"]
                 pygame.draw.circle(surf, (255, 230, 90), (mini.x + int(px * sx_), mini.y + int(py * sy_)), 3)
@@ -1114,6 +1149,9 @@ class Journal:
             sx, sy = to_screen(x, y)
             pygame.draw.circle(surf, (255, 60, 60), (int(sx), int(sy)), int(pulse), width=3)
             pygame.draw.circle(surf, (255, 200, 200), (int(sx), int(sy)), 3)
+        for (wx, wy, label) in ctx.get("pins") or ():  # your own map pins
+            sx, sy = to_screen(wx / C.TILE, wy / C.TILE)
+            _draw_pin(surf, int(sx), int(sy), label, fs)
         if ctx.get("player_tile"):
             sx, sy = to_screen(*ctx["player_tile"])
             pygame.draw.circle(surf, (255, 230, 90), (int(sx), int(sy)), 6)
@@ -1131,7 +1169,7 @@ class Journal:
             surf.blit(t, (x + 16, ly))
             x += t.get_width() + 34
         note = self.map_note or ("" if ctx.get("player_tile") else "You're not in the Realm right now.")
-        hint = ("Wheel/+- zoom - right-drag to pan - hover for names - Esc closes" +
+        hint = ("Wheel/+- zoom - right-drag to pan - click: place / remove a pin - Esc closes" +
                 (f"   |   {note}" if note else ""))
         t = fs.render(hint, True, (150, 148, 165))
         surf.blit(t, (C.SCREEN_W // 2 - t.get_width() // 2, ly + 26))

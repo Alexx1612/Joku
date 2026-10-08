@@ -42,7 +42,7 @@ def _setting_row(kind, key, label, section, choices=None):
 
 
 def build_rows(auto_fire_get, auto_fire_set, fullscreen_get, fullscreen_toggle,
-               reset_camera, close, full_map=None, leave=None, journal=None):
+               reset_camera, close, full_map=None, leave=None, journal=None, keybinds=None):
     """full_map: optional (get_open, toggle) pair, shown only when a map exists.
     leave: optional (label, fn) - "Abandon run" in single-player, "Disconnect" in co-op.
     journal: optional [(label, fn)] - the Quest Log / Dictionary windows (game/journal.py)."""
@@ -56,14 +56,30 @@ def build_rows(auto_fire_get, auto_fire_set, fullscreen_get, fullscreen_toggle,
         _setting_row("cycle", "fps_cap", "FPS cap", "Display",
                      choices=[(30, "30"), (60, "60"), (120, "120"), (0, "Unlimited")]),
         _setting_row("toggle", "show_fps", "Show FPS", "Display"),
+        _setting_row("cycle", "zoom", "Zoom (everything bigger)", "Display",
+                     choices=[(1.0, "100%"), (1.1, "110%"), (1.25, "125%"), (1.5, "150%")]),
         _setting_row("slider", "luminosity", "Luminosity (night)", "Display"),
         _setting_row("toggle", "screen_shake", "Screen shake", "Effects"),
         _setting_row("toggle", "hit_stop", "Hit-stop (freeze on big hits)", "Effects"),
         _setting_row("cycle", "particles", "Particles", "Effects",
                      choices=[("off", "Off"), ("low", "Low"), ("high", "High")]),
+        _setting_row("toggle", "auto_loot", "Auto-loot potions / shards / gems", "Loot"),
+        _setting_row("cycle", "loot_hide_below", "Hide gear-only bags below", "Loot",
+                     choices=[(n, f"T{n}" if n else "Off") for n in (0, 3, 5, 7, 9, 11)]),
+        _setting_row("toggle", "loot_beams", "Light beams on rare drops", "Loot"),
+        _setting_row("cycle", "colorblind", "Colour-blind palette", "Accessibility",
+                     choices=[("off", "Off"), ("deuteranopia", "Deutan"), ("protanopia", "Protan"),
+                              ("tritanopia", "Tritan")]),
+        _setting_row("toggle", "bullet_outline", "Outline enemy bullets", "Accessibility"),
+        _setting_row("slider", "tele_strength", "Telegraph strength", "Accessibility"),
+        _setting_row("cycle", "text_size", "Text size", "Accessibility",
+                     choices=[("normal", "Normal"), ("large", "Large")]),
+        _setting_row("toggle", "reduce_flashing", "Reduce flashing", "Accessibility"),
     ]
     for label, fn in journal or ():
         rows.append(Row("action", label, "Journal", action=fn))
+    if keybinds is not None:  # opens game/binds.py's Key bindings window
+        rows.append(Row("action", "Key bindings...", "Controls", action=keybinds))
     rows.append(Row("action", "Reset camera rotation", "Actions", action=reset_camera))
     if full_map is not None:
         get_open, toggle = full_map

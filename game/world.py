@@ -3573,6 +3573,10 @@ class Camera:
         # inverse() DOES need to account for it, since it maps a point on the
         # final (rotated) screen back to world space, e.g. for mouse aiming.
         self.angle = 0.0
+        # Options > Display > Zoom (game/view_scale.py): the world is drawn on a small canvas with
+        # zoom 1 and scaled up; everywhere else (HUD anchors, mouse aim) the camera works in real
+        # screen pixels with this zoom, so a world point lands exactly where the scaled world shows it
+        self.zoom = 1.0
 
     def follow(self, target_pos):
         self.pos = pygame.Vector2(target_pos)
@@ -3594,10 +3598,12 @@ class Camera:
         rel = pygame.Vector2(world_pos[0] - self.pos.x, world_pos[1] - self.pos.y)
         if self.angle:
             rel = rel.rotate(-self.angle)
-        return (int(rel.x + self.screen_w / 2), int(rel.y + self.screen_h / 2))
+        z = self.zoom
+        return (int(rel.x * z + self.screen_w / 2), int(rel.y * z + self.screen_h / 2))
 
     def inverse(self, screen_pos):
-        rel = pygame.Vector2(screen_pos[0] - self.screen_w / 2, screen_pos[1] - self.screen_h / 2)
+        z = self.zoom or 1.0
+        rel = pygame.Vector2((screen_pos[0] - self.screen_w / 2) / z, (screen_pos[1] - self.screen_h / 2) / z)
         if self.angle:
             rel = rel.rotate(self.angle)
         return self.pos + rel

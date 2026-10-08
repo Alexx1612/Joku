@@ -26,10 +26,21 @@ import pygame
 
 from game.constants import TILE
 
-# night rules: (aggro, aggro when the target is outside every light, leash, speed, damage, cooldown)
-NIGHT_RULES = dict(aggro=1.6, aggro_dark=2.0, leash=1.5, speed=1.15, dmg=1.2, cd=0.85)
-BLOOD_RULES = dict(aggro=2.2, aggro_dark=2.6, leash=2.0, speed=1.25, dmg=1.35, cd=0.75)
+# night rules: (aggro, aggro when the target is outside every light, leash, speed, damage, cooldown,
+# HP). The night is a different game: monsters are much TOUGHER and hit much harder - but they
+# notice you only a little further off than by day (they used to spot you from over half a screen).
+NIGHT_RULES = dict(aggro=1.3, aggro_dark=1.55, leash=1.5, speed=1.2, dmg=1.45, cd=0.75, hp=1.5)
+BLOOD_RULES = dict(aggro=1.6, aggro_dark=1.9, leash=2.0, speed=1.3, dmg=1.75, cd=0.62, hp=2.0)
 NIGHT_MOB_CAP = 3          # night mobs alive near one player (Blood Moon: x2)
+
+
+def _set_hp_max(e, new_max):
+    """Night / dawn HP: change hp_max keeping the same fraction of health."""
+    if e.hp_max == new_max:
+        return
+    frac = e.hp / max(1, e.hp_max)
+    e.hp_max = new_max
+    e.hp = max(1, min(new_max, int(round(frac * new_max))))
 NIGHT_SPAWN_EVERY = 7.0
 NIGHT_SPAWN_WEIGHTS = {"shade_stalker": 40, "lantern_eater": 25, "night_mimic": 20, "hollow_watcher": 15}
 LIGHT_SAFE_TILES = 4       # a spawn point never lands this close to a light
@@ -180,11 +191,14 @@ class NightDirector:
             base = getattr(e, "_day_stats", None)
             if rules is None:
                 if base is not None:
-                    e.aggro_range, e.leash_range, e.speed, e.dmg, e.fire_rate_mult = base
+                    e.aggro_range, e.leash_range, e.speed, e.dmg, e.fire_rate_mult = base[:5]
+                    _set_hp_max(e, base[5])
                     e._day_stats = None
                 continue
             if base is None:
-                base = e._day_stats = (e.aggro_range, e.leash_range, e.speed, tuple(e.dmg), e.fire_rate_mult)
+                base = e._day_stats = (e.aggro_range, e.leash_range, e.speed, tuple(e.dmg), e.fire_rate_mult,
+                                       e.hp_max)
+            _set_hp_max(e, max(1, int(round(base[5] * rules.get("hp", 1.0)))))
             dark = not getattr(e, "_target_in_light", False)
             e.aggro_range = base[0] * (rules["aggro_dark"] if dark else rules["aggro"])
             e.leash_range = base[1] * rules["leash"]

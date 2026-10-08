@@ -48,10 +48,11 @@ def world_entries():
         "and you regenerate faster. The HUD says 'SAFE - Sheltered'."))
     r, b = nm.NIGHT_RULES, nm.BLOOD_RULES
     out.append(_help("help:night_rules", WORLD_CAT, "Night: the monsters get bolder",
-        f"At night every hostile notices you from x{r['aggro']} as far (x{r['aggro_dark']} if you stand in the "
-        f"dark), chases x{r['leash']} as far, moves x{r['speed']} faster, hits x{r['dmg']} harder and attacks "
-        f"x{1 / r['cd']:.2f} as often. Under a Blood Moon: x{b['aggro']} / x{b['aggro_dark']} / x{b['leash']} / "
-        f"x{b['speed']} / x{b['dmg']}. Everything goes back to normal at dawn.\n\nNight-only monsters come out "
+        f"At night every hostile has x{r['hp']} HP, hits x{r['dmg']} harder, attacks x{1 / r['cd']:.2f} as "
+        f"often, moves x{r['speed']} faster, notices you from x{r['aggro']} as far (x{r['aggro_dark']} if you "
+        f"stand in the dark) and chases x{r['leash']} as far. Under a Blood Moon: x{b['hp']} HP, x{b['dmg']} "
+        f"damage, x{1 / b['cd']:.2f} attacks, x{b['speed']} speed, x{b['aggro']} / x{b['aggro_dark']} notice. "
+        "Everything goes back to normal at dawn (wounded monsters keep their share of health).\n\nNight-only monsters come out "
         "of the dark, never inside a light: the Lantern-Eater (puts lamps out until dawn), the Shade Stalker "
         "(invisible outside any light), the Night Mimic (a loot bag... until it isn't) and the Hollow Watcher "
         "(shrieks, summons shades, calls everything near). They melt away at dawn. Night kills drop Weapon "

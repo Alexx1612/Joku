@@ -168,7 +168,7 @@ def check_singleplayer_windows():
     for _ in range(20):
         _wheel(1)
     g.handle_events()
-    assert g.journal.map_zoom == 8.0
+    assert g.journal.map_zoom == 10.0  # the Quest Map zooms to 10x (doc 42)
     g.draw()
     g.journal.close_all()
     # dictionary search via typing (keys never reach the game: "m" must not open the map)

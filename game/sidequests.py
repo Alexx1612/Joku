@@ -188,6 +188,20 @@ def _key_matches(want, key):
     return want == key
 
 
+def _seen_label(dist, val, n):
+    """A readable name for one distinct thing a quest counted (the Quest Log's "Done so far")."""
+    from game import codex
+    if dist == "biome":
+        return codex.place_name("biome", val)
+    if dist == "npc":
+        return codex.place_name("npc", val)
+    if dist == "topic":
+        return str(val).replace("_", " ")
+    if dist == "uid":
+        return f"#{n}"
+    return f"#{n}"
+
+
 class SideQuestProgress:
     def __init__(self):
         self.active = {}        # qid -> {"have": float, "seen": [distinct values]}
@@ -277,6 +291,7 @@ class SideQuestProgress:
                     if t < q["min_time"]:
                         continue
                 st["seen"].append(val)
+                st.setdefault("names", []).append(str(ctx.get("label") or _seen_label(dist, val, len(st["seen"]))))
                 st["have"] = float(len(st["seen"]))
             else:
                 st["have"] = min(float(need), st["have"] + amount)
@@ -344,13 +359,15 @@ class SideQuestProgress:
             out.append({"id": qid, "title": q["title"], "desc": q["desc"],
                         "have": int(self.progress(qid, player)), "need": q["need"],
                         "ready": self.ready(qid, player), "board": q["giver"] is None,
-                        "giver": q["giver"], "turn_in": q["turn_in"], "target": dict(q["target"])})
+                        "giver": q["giver"], "turn_in": q["turn_in"], "target": dict(q["target"]),
+                        "seen": list(self.active[qid].get("names") or [])})
         out.sort(key=lambda e: (not e["ready"], e["board"], e["title"]))
         return out
 
     # ------------------------------------------------------ persistence --
     def to_json(self):
-        return {"active": {k: {"have": v["have"], "seen": list(v["seen"])} for k, v in self.active.items()},
+        return {"active": {k: {"have": v["have"], "seen": list(v["seen"]), "names": list(v.get("names", []))}
+                           for k, v in self.active.items()},
                 "done": list(self.done), "board_done": self.board_done,
                 "talked": {k: list(v) for k, v in self.talked.items()},
                 "pending_items": [it.to_json() for it in self.pending_items]}
@@ -361,7 +378,8 @@ class SideQuestProgress:
         if isinstance(d, dict):
             for k, v in (d.get("active") or {}).items():
                 if k in QUESTS:
-                    sq.active[k] = {"have": float(v.get("have", 0)), "seen": list(v.get("seen", []))}
+                    sq.active[k] = {"have": float(v.get("have", 0)), "seen": list(v.get("seen", [])),
+                                    "names": list(v.get("names", []))}
             sq.done = [q for q in d.get("done", []) if q in QUESTS]
             sq.board_done = int(d.get("board_done", 0))
             sq.talked = {k: list(v) for k, v in (d.get("talked") or {}).items()}

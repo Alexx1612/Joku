@@ -986,21 +986,25 @@ def draw_enemy_zones(surf, cam, zones):
     area with a fill that grows toward it as the attack gets closer - a circle
     for ground AoEs (orange), a lane for aimed lines / dashes (red), a cone for
     sprays. The last 20% flashes brighter: move NOW."""
+    from game import access  # Options > Accessibility: palette, telegraph strength, no blinking
+    FA = access.tele_alpha(ZONE_FILL_ALPHA)
+    steady = access.reduced_flashing()
     for z in zones:
         shape, x, y, r, length, width, ang, frac, color, has_dmg = _zone_fields(z)
+        color = access.color(color)
         cx, cy = cam((x, y))
         # the camera can be rotated (Q/E): derive the on-screen angle from two
         # transformed points instead of using the world angle directly
         ex, ey = cam((x + math.cos(math.radians(ang)) * 100, y + math.sin(math.radians(ang)) * 100))
         ang = math.degrees(math.atan2(ey - cy, ex - cx))
-        hot = frac > 0.8 and (pygame.time.get_ticks() // 70) % 2 == 0
-        edge_a = 255 if hot else ZONE_EDGE_ALPHA
+        hot = frac > 0.8 and (steady or (pygame.time.get_ticks() // 70) % 2 == 0)
+        edge_a = 255 if hot else access.tele_alpha(ZONE_EDGE_ALPHA)
         if shape == "circle":
             rr = max(4, int(r))
             layer = pygame.Surface((rr * 2 + 4, rr * 2 + 4), pygame.SRCALPHA)
             c = (rr + 2, rr + 2)
-            pygame.draw.circle(layer, (*color, ZONE_FILL_ALPHA // 2), c, rr)
-            pygame.draw.circle(layer, (*color, ZONE_FILL_ALPHA + 40), c, max(2, int(rr * frac)))
+            pygame.draw.circle(layer, (*color, FA // 2), c, rr)
+            pygame.draw.circle(layer, (*color, min(255, FA + 40)), c, max(2, int(rr * frac)))
             pygame.draw.circle(layer, (*color, edge_a), c, rr, 2)
             surf.blit(layer, (cx - rr - 2, cy - rr - 2))
         elif shape == "line":
@@ -1008,8 +1012,8 @@ def draw_enemy_zones(surf, cam, zones):
             W = max(4, int(width))
             layer = pygame.Surface((L, W), pygame.SRCALPHA)
             wide = W > 30  # a bullet-wall swath: keep it light so it doesn't hide the floor
-            layer.fill((*color, 16 if wide else ZONE_FILL_ALPHA))
-            pygame.draw.rect(layer, (*color, 40 if wide else ZONE_FILL_ALPHA + 60), (0, 0, int(L * frac), W))
+            layer.fill((*color, access.tele_alpha(16) if wide else FA))
+            pygame.draw.rect(layer, (*color, access.tele_alpha(40) if wide else min(255, FA + 60)), (0, 0, int(L * frac), W))
             pygame.draw.rect(layer, (*color, edge_a), layer.get_rect(), 1)
             gap = _zone_extra(z, shape)
             if gap:  # a bullet wall: cut its real gap out of the lane so you can see where to slip through
@@ -1028,10 +1032,10 @@ def draw_enemy_zones(surf, cam, zones):
             c = pygame.Vector2(rr + 2, rr + 2)
             half = width / 2
             pts = [c] + [c + pygame.Vector2(rr, 0).rotate(ang - half + width * i / 8) for i in range(9)]
-            pygame.draw.polygon(layer, (*color, ZONE_FILL_ALPHA), pts)
+            pygame.draw.polygon(layer, (*color, FA), pts)
             inner = [c] + [c + pygame.Vector2(rr * frac, 0).rotate(ang - half + width * i / 8) for i in range(9)]
             if frac > 0.05:
-                pygame.draw.polygon(layer, (*color, ZONE_FILL_ALPHA + 50), inner)
+                pygame.draw.polygon(layer, (*color, min(255, FA + 50)), inner)
             pygame.draw.polygon(layer, (*color, edge_a), pts, 2)
             surf.blit(layer, (cx - rr - 2, cy - rr - 2))
         elif shape == "spokes":
@@ -1045,7 +1049,7 @@ def draw_enemy_zones(surf, cam, zones):
                 u = pygame.Vector2(1, 0).rotate(a + rot_off)
                 p0, p1 = c + u * 16, c + u * rr
                 pm = c + u * max(18, rr * frac)
-                pygame.draw.line(layer, (*color, ZONE_FILL_ALPHA + 20), p0, p1, 2)
+                pygame.draw.line(layer, (*color, min(255, FA + 20)), p0, p1, 2)
                 pygame.draw.line(layer, (*color, edge_a), p0, pm, 3)
                 side = u.rotate(90) * 5
                 pygame.draw.polygon(layer, (*color, edge_a), [p1 + u * 9, p1 + side, p1 - side])  # arrowhead

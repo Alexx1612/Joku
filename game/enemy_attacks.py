@@ -254,7 +254,7 @@ def _zone(e, shape, pos, life, color, dmg_mult=0.0, r=60, length=0, width=0, ang
     z = dict(shape=shape, x=float(pos[0]), y=float(pos[1]), r=float(r), length=float(length),
              width=float(width), ang=float(ang), life=float(life), t=0.0, color=color,
              dmg=dmg, sfx=sfx, burst=burst, effect=effect, shake=shake and dmg > 0,
-             src_rank=e.rank, src=e)
+             src_rank=e.rank, src=e, info=e.hit_info() if hasattr(e, "hit_info") else None)
     if extra:
         z.update(extra)
     e._new_zones.append(z)

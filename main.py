@@ -56,6 +56,9 @@ from game import npcs
 from game import journal
 from game import calendar_ui
 from game import forge_menu
+from game import loot_filter
+from game import binds
+from game import view_scale
 from game import codex
 from game import sidequests
 from game.entities import (Player, Bag, Portal, NexusBot, find_nearby_bag, bag_by_id,
@@ -157,10 +160,12 @@ class Game:
         self.nexus_npcs = npcs.spawn_nexus_npcs(self.nexus_map)  # Batch 15 friendly NPCs (game/npcs.py)
         self.dialogue = None  # the open dialogue.Conversation, or None
         self.journal = journal.Journal()  # Quest Log / Dictionary / Quest Map windows (game/journal.py)
+        self.keybinds = binds.KeybindWindow()  # Options > Key bindings... (game/binds.py)
         self.forge = forge_menu.ForgeWindow()  # Brother Hammerstein's Forge (F on him -> Open the Forge)
         self.forge.on_apply = self._forge_apply
         self.forge.on_fx = self._forge_fx
         self.cam = world.Camera(C.SCREEN_W, C.SCREEN_H)
+        view_scale.sync_camera(self.cam)  # Options > Display > Zoom (world only - game/view_scale.py)
         # small, static, always-safe maps - no exploration/fog gameplay needed, just
         # shown fully-revealed from the start so the right-docked HUD is consistent
         # (minimap always present) across every live-play screen
@@ -380,8 +385,10 @@ class Game:
 
     def die(self):
         earned = accounts.award_echoes_for_death(self.player_name, self.player._echoes_this_life)
+        from game import death_recap
         self.death_info = dict(level=self.player.level, kills=self.player.kills,
-                                cls=self.player.cls_name, earned_echoes=earned)
+                                cls=self.player.cls_name, earned_echoes=earned,
+                                recap=death_recap.build(self.player))  # what killed you
         # permadeath means what it says - the saved character (if any) is gone for
         # good, not just marked dead, so the next login/respawn starts completely
         # fresh rather than resuming a corpse
@@ -452,7 +459,8 @@ class Game:
             leave=("Abandon run (Class Select)", self._menu_quit_to_class_select)
             if self.state != STATE_CLASS_SELECT else None,
             journal=[("Quest Log", self._open_quest_log), ("Dictionary", self._open_dictionary),
-                     ("Calendar", self._open_calendar)]
+                     ("Calendar", self._open_calendar)],
+            keybinds=self._open_keybinds
             if self.player is not None else None)
 
     def _open_quest_log(self):
@@ -462,6 +470,10 @@ class Game:
     def _open_dictionary(self):
         self.help_open = False
         self.journal.open_dictionary()
+
+    def _open_keybinds(self):
+        self.help_open = False
+        self.keybinds.open_window()
 
     def _open_calendar(self):
         self.help_open = False
@@ -485,6 +497,8 @@ class Game:
             "player_tile": (p.pos.x / C.TILE, p.pos.y / C.TILE) if in_realm else None,
             "tracked": list(p.tracked_quests) if p is not None else [],
             "on_track": self._toggle_quest_marker,
+            "pins": list(p.map_pins) if p is not None else [],  # your map pins (click a map to add / remove)
+            "on_pin": self._toggle_pin if p is not None else None,
         }
 
     # ------------------------------------------------------- quest markers --
@@ -525,14 +539,24 @@ class Game:
                 "areas": codex.realm_areas(sim) if sim is not None else None,
                 "live_npcs": live, "nexus_npcs": nexus, "_portal_cache": self.__dict__.setdefault("_qm_portals", {})}
 
+    def _toggle_pin(self, world_pos):
+        """A map click: a pin there, or the pin under it removed (game/map_pins.py)."""
+        from game import map_pins
+        what = map_pins.toggle(self.player.map_pins, world_pos[0], world_pos[1], C.TILE)
+        self.push_feed("Pin placed - it shows on your maps and in the world." if what == "added" else "Pin removed.",
+                       map_pins.PIN_COLOR)
+
     def _quest_marks(self):
-        from game import quest_markers
+        from game import quest_markers, map_pins
         p = self.player
-        if p is None or not p.tracked_quests:
+        if p is None:
             return []
+        pins = map_pins.marks(p.map_pins, (p.pos.x, p.pos.y), self.state == STATE_REALM, C.TILE)
+        if not p.tracked_quests:
+            return pins
         story_log, side_log = p.story.quest_log(), p.sidequests.log(p)
         p.tracked_quests = quest_markers.prune(p.tracked_quests, story_log, side_log)
-        return quest_markers.markers(p.tracked_quests, story_log, side_log, self._quest_world())
+        return quest_markers.markers(p.tracked_quests, story_log, side_log, self._quest_world()) + pins
 
     def _draw_quest_markers_world(self, s, marks):
         """World pins / edge arrows + the tracker list - after the darkness, under the dock."""
@@ -584,9 +608,7 @@ class Game:
             self.update(dt)
             self.draw()
             # the game always renders onto a fixed-size canvas, then that canvas is
-            # scaled to whatever the real window/fullscreen size is - this works on
-            # any display backend, unlike pygame.SCALED which needs a render backend
-            # that isn't always available (e.g. it failed outright under headless test)
+            # scaled to whatever the real window/fullscreen size is
             if self.window.get_size() == self.screen.get_size():
                 self.window.blit(self.screen, (0, 0))
             else:
@@ -618,6 +640,11 @@ class Game:
                 continue
             if self.journal.is_open() and self.journal.handle_event(event, self._journal_ctx()):
                 continue
+            if self.keybinds.open:
+                self.keybinds.handle_event(event)  # raw keys: this is where you choose them
+                continue
+            if event.type in (pygame.KEYDOWN, pygame.KEYUP) and not self.chat_open:
+                event = binds.translate_event(event)  # rebound keys -> the defaults the code checks
             if self.forge.is_open() and self.forge.handle_event(event, self.player):
                 continue
             if self.calendar.open and self.calendar.handle_event(event, self.panel_drag, self._calendar_clock()):
@@ -786,6 +813,19 @@ class Game:
                       and ui.pet_pack_button_rect(self.player).collidepoint(event.pos)):
                     self.player.pack_pet()
                     self._show_pet_msg()
+                elif (self.vault_chest_open is not None and self.state == STATE_VAULT_ROOM
+                      and ui.vault_chest_stash_button_rect(self._vault_chest_screen_pos()).collidepoint(event.pos)):
+                    from game.items import stash_materials
+                    n = stash_materials(self.player.backpack, self.vault_items, self.vault_chest_open)
+                    if n:
+                        save_vault(self.player_name, self.vault_items)
+                    self.push_feed(f"Stashed {n} item{'s' if n != 1 else ''}." if n else
+                                   "Nothing to stash (or the chest is full).", (200, 220, 190))
+                elif (self.player is not None and self._dock_mode() == "inventory"
+                      and self.state in (STATE_NEXUS, STATE_BAZAAR, STATE_VAULT_ROOM, STATE_REALM, STATE_BONUS)
+                      and ui.sort_button_rect(self.player) is not None and len(self.player.backpack) > 1
+                      and ui.sort_button_rect(self.player).collidepoint(event.pos)):
+                    self.player.sort_backpack()
                 elif (self.state in (STATE_NEXUS, STATE_BAZAAR, STATE_REALM, STATE_BONUS)
                       and self.player is not None and ui.panel_tab_at(event.pos) is not None):
                     tab = ui.panel_tab_at(event.pos)  # clicking a dock tab label picks it
@@ -1316,7 +1356,7 @@ class Game:
         """Right-click: open the nearest bag in range as a drag-and-drop window
         (see game.entities.Bag / ui.draw_bag_window) instead of an instant grab -
         so you can see everything inside and choose what to take."""
-        bag = find_nearby_bag(self._current_bag_list(), self.player.pos, self.player.pid)
+        bag = find_nearby_bag(loot_filter.visible_bags(self._current_bag_list()), self.player.pos, self.player.pid)
         if bag is not None:
             self.open_bag_id = bag.id
 
@@ -1490,6 +1530,8 @@ class Game:
         p, sim = self.player, self.realm_sim
         low = p.hp < p.hp_max * 0.35
         if not (blood or low) or sim is None:
+            from game import lighting
+            lighting.GRADE["pulse"] = 0.0
             return 0.0
         near = sum(1 for e in sim.enemies if e.alive and not e.neutral and e.pos.distance_to(p.pos) < 420)
         period = max(0.42, 1.05 - 0.08 * near - (0.25 if low else 0.0))
@@ -1498,7 +1540,10 @@ class Game:
             self._beat_t = 0.0
             audio.play_event("heartbeat")
         phase = self._beat_t / period
-        return (0.55 if blood else 0.35) * max(0.0, 1.0 - phase * 3.0)
+        beat = ui.heartbeat_shape(phase)  # lub-dub, then quiet
+        from game import lighting
+        lighting.GRADE["pulse"] = beat if blood else 0.0  # the whole red night throbs with it
+        return (0.62 if blood else 0.38) * beat
 
     def _talk_to_given(self):
         """F next to Father Given: he says the current act's hint (and the act intro the
@@ -1643,6 +1688,9 @@ class Game:
         """Handles a click on the corner minimap's +/- zoom buttons. Returns True if
         the click landed on one (so the caller doesn't also treat it as something else)."""
         mm = self._current_minimap()
+        if mm is not None and mm.full_map_open and self.state == STATE_REALM:
+            self._toggle_pin(minimap.full_map_world(mm, self.player.pos, pos))  # click the map: a pin
+            return True
         if mm is None or mm.full_map_open:
             return False
         for rect, delta in minimap.corner_zoom_button_rects():
@@ -1752,6 +1800,8 @@ class Game:
 
     def update(self, dt):
         self._sync_drag_state()
+        if self.player is not None:
+            self.player.auto_loot = bool(settings.get("auto_loot"))  # Options > Loot (game/loot_filter.py)
         if self.state == STATE_INTRO:
             self.intro_timer += dt
             if self.intro_timer >= INTRO_DURATION:
@@ -1814,8 +1864,8 @@ class Game:
         if self.state in (STATE_CLASS_SELECT, STATE_DEAD):
             pass
         elif (not self.chat_open and not self.help_open and not self.quit_confirm_open and self.dialogue is None
-              and not (self.journal.is_open() or self.forge.is_open())):
-            keys = pygame.key.get_pressed()
+              and not (self.journal.is_open() or self.forge.is_open() or self.keybinds.open)):
+            keys = binds.Pressed()
             if keys[pygame.K_q]:
                 self.cam.rotate(-self.ROTATE_SPEED_DEG * dt)
             if keys[pygame.K_e]:
@@ -1831,7 +1881,7 @@ class Game:
             # above - otherwise WASD leaks through the menu and moves the player
             # by accident while browsing it.
             keys = None if (self.chat_open or self.help_open or self.echo_shop_open or self.quit_confirm_open
-                            or self.dialogue is not None or (self.journal.is_open() or self.forge.is_open())) else pygame.key.get_pressed()
+                            or self.dialogue is not None or (self.journal.is_open() or self.forge.is_open() or self.keybinds.open)) else binds.Pressed()
             self.player.update(dt, keys, tmap.bounds(), tmap.is_solid, tmap.speed_multiplier,
                                 cam_angle=self.cam.angle)
             if self.player.pet is not None:
@@ -1871,7 +1921,7 @@ class Game:
             mm.reveal(p.pos, radius=weather.reveal_radius_for(weather_kind, minimap.REVEAL_RADIUS_TILES))
             return
         keys = None if (self.chat_open or self.help_open or self.quit_confirm_open
-                        or self.dialogue is not None or (self.journal.is_open() or self.forge.is_open())) else pygame.key.get_pressed()
+                        or self.dialogue is not None or (self.journal.is_open() or self.forge.is_open() or self.keybinds.open)) else binds.Pressed()
         prev_pos = pygame.Vector2(p.pos)
         p.update(dt, keys, sim.realm_map.bounds(), sim.is_solid_at, sim.realm_map.speed_multiplier,
                  cam_angle=self.cam.angle)
@@ -1967,7 +2017,7 @@ class Game:
 
     def _handle_firing(self, p, sim, dt):
         if (self.chat_open or self.help_open or self.quit_confirm_open or self.dialogue is not None
-                or (self.journal.is_open() or self.forge.is_open())):
+                or (self.journal.is_open() or self.forge.is_open() or self.keybinds.open)):
             self._fire_buffer = 0.0
             return  # typing, or browsing the options menu, shouldn't also fire your weapon
         wants_fire = (self.auto_fire_enabled or pygame.mouse.get_pressed()[0]) and not self._ui_click_active
@@ -1997,6 +2047,7 @@ class Game:
     def draw(self):
         s = self.screen
         s.fill(C.COL_BG)
+        ui.COMPARE_PLAYER = self.player  # item tooltips compare against your equipped gear
         if self.state == STATE_INTRO:
             ui.draw_intro_screen(s, self.intro_timer, self.intro_joke)
         elif self.state == STATE_NAME_ENTRY:
@@ -2031,6 +2082,9 @@ class Game:
                                  f"Earned {d.get('earned_echoes', 0)} Echoes. "
                                  f"Permadeath - press Enter or click below to try again.", (220, 60, 60))
             ui.draw_death_screen_button(s, pygame.mouse.get_pos())
+            from game import death_recap
+            death_recap.draw(s, d.get("recap"), ui.death_screen_button_rect().bottom + 14, C.SCREEN_W // 2,
+                             ui._FONT_S, ui._FONT_M)
         if self.calendar.open:
             self.calendar.draw(s, self._calendar_clock(), pygame.mouse.get_pos())
         if self.help_open:
@@ -2056,6 +2110,7 @@ class Game:
             ui.draw_story_banner(s, self.story_banner[0], self.story_banner[1])
         if self.credits_t is not None:
             ui.draw_credits(s, self.credits_t)
+        self.keybinds.draw(s, pygame.mouse.get_pos())
         if self.quit_confirm_open:
             ui.draw_quit_confirm(s, pygame.mouse.get_pos())
 
@@ -2103,6 +2158,7 @@ class Game:
         if mm.full_map_open:
             minimap.draw_full_map(s, tmap, mm, self.player.pos, zone_name=name, quest_marks=qmarks)
             return
+        s = view_scale.world_begin(self.screen, self.cam)  # Options > Display > Zoom: the world, bigger
         if tmap is self.nexus_map:
             tmap.draw_backdrop(s, self.cam)
         # RotMG itself works this way: Q/E turns the MAP, characters stay upright -
@@ -2132,7 +2188,7 @@ class Game:
         self._draw_speech_bubbles(s)
         vfx.draw(s, self.cam)
         self._draw_quest_markers_world(s, qmarks)
-        if not (self.help_open or (self.journal.is_open() or self.forge.is_open()) or getattr(self, "dialogue", None) is not None
+        if not (self.help_open or (self.journal.is_open() or self.forge.is_open() or self.keybinds.open) or getattr(self, "dialogue", None) is not None
                 or getattr(self, "echo_shop_open", False)):
             # hidden under full windows: it showed through the options panel's title bar
             hint = ui._FONT_M.render(hint_text, True, (220, 210, 230))
@@ -2142,10 +2198,11 @@ class Game:
             if event_label:
                 banner = ui._FONT_S.render(f"Live event: {event_label}", True, (255, 220, 120))
                 s.blit(banner, (C.SCREEN_W // 2 - banner.get_width() // 2, 104))
+        s = view_scale.world_end(s, self.screen, self.cam)  # ...scaled up; the HUD below stays full size
         ui.draw_dock_frame(s, self.player)
         ui.draw_hud(s, name, None, False)  # hubs: no kill counter
         if not (self.echo_shop_open or self.help_open or self.vault_chest_open is not None
-                or self.dialogue is not None or (self.journal.is_open() or self.forge.is_open())):  # a modal overlay owns that space
+                or self.dialogue is not None or (self.journal.is_open() or self.forge.is_open() or self.keybinds.open)):  # a modal overlay owns that space
             ui.draw_story_log(s, self.player.story.quest_log(), self.quest_log_expanded,
                               side=self.player.sidequests.log(self.player), tracked=self.player.tracked_quests)
         if settings.get("show_fps"):
@@ -2183,12 +2240,14 @@ class Game:
             minimap.draw_full_map(s, sim.realm_map, mm, self.player.pos, portals=sim.portals, zone_name=name,
                                    enemies=sim.enemies, quest_marks=qmarks)
             return
+        s = view_scale.world_begin(self.screen, self.cam)  # Options > Display > Zoom: the world, bigger
         fog = mm.explored if sim.is_bonus_room else None
         sim.realm_map.canopy_overlay = True  # trunks in the floor pass, canopies drawn over entities below
         world.render_rotated_world(s, self.cam, lambda surf, cam: sim.realm_map.draw(surf, cam, surf.get_size(), fog=fog))
         self._set_night_view(sim)
         vfx.draw_enemy_zones(s, self.cam, sim.enemy_zones)  # attack telegraphs, under everything that moves
-        for g in sim.ground_items:
+        for g in loot_filter.visible_bags(sim.ground_items):  # Options > Loot
+            loot_filter.draw_beam(s, self.cam, g, pygame.time.get_ticks() / 1000)
             g.draw(s, self.cam)
         for pt in sim.portals:
             pt.draw(s, self.cam)
@@ -2292,6 +2351,7 @@ class Game:
         elif getattr(sim, "is_mg_room", False):
             vfx.draw_heroic_tint(s, "mg_room")
         self.weather_fx.draw(s)
+        s = view_scale.world_end(s, self.screen, self.cam)  # ...scaled up; the HUD below stays full size
         ui.draw_dock_frame(s, self.player)
         if not sim.is_bonus_room:
             clock = sim.clock_info()
@@ -2306,7 +2366,7 @@ class Game:
         if self._portal_prompt is not None:
             ui.draw_portal_prompt(s)
         if ((not sim.is_bonus_room or sim.theme_key == "forge") and not self.help_open
-                and self.dialogue is None and not (self.journal.is_open() or self.forge.is_open())):
+                and self.dialogue is None and not (self.journal.is_open() or self.forge.is_open() or self.keybinds.open)):
             ui.draw_story_log(s, self.player.story.quest_log(), self.quest_log_expanded,
                               side=self.player.sidequests.log(self.player), tracked=self.player.tracked_quests)
         else:

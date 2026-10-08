@@ -1194,6 +1194,28 @@ def make_star_fragment() -> Item:
 SLOT_MATERIAL = "material"
 
 
+STASH_SLOTS = ("material", "gem", "shard")
+
+
+def stash_materials(backpack, vault_items, chest_idx):
+    """The vault chest's "Stash mats" button: moves every material / gemstone / Weapon Shard /
+    dungeon shard from the backpack into the empty slots of the OPEN chest. Returns how many."""
+    lo = chest_idx * VAULT_CHEST_SIZE
+    moved = 0
+    i = 0
+    while i < len(backpack):
+        it = backpack[i]
+        if it.slot in STASH_SLOTS or getattr(it, "rune_effect", ""):
+            slot = next((j for j in range(lo, lo + VAULT_CHEST_SIZE) if vault_items[j] is None), None)
+            if slot is None:
+                break
+            vault_items[slot] = backpack.pop(i)
+            moved += 1
+            continue
+        i += 1
+    return moved
+
+
 def make_forge_ingot() -> Item:
     """The Anvil's fuel: T12+ tempering and UT reforging need these (game/forge.py)."""
     return Item("Forge Ingot", SLOT_MATERIAL, 12, "ingot",

@@ -496,12 +496,28 @@ class ClientCtx(BaseCtx):
 
 
 # ============================================================================ /help
-def _help_lines_for(cmds):
+_MANUAL_COLORS = {"what": (210, 215, 230), "head": (240, 210, 140), "ex": (150, 230, 160),
+                  "ex_what": (165, 175, 195)}
+
+
+def _manual_lines(cmd):
+    from game import admin_manual  # what it does + examples (game/admin_manual.py)
+    return [(t, _MANUAL_COLORS[k]) for t, k in admin_manual.lines_for(cmd)]
+
+
+def _help_lines_for(cmds, full=False):
+    """A category page: each command's usage, what it does and its first example
+    (full=True: every example - /help all)."""
+    from game import admin_manual
     out = []
     for c in cmds:
         alias = f"  (also /{', /'.join(c.aliases)})" if c.aliases else ""
         out.append((f"{c.usage}{alias}", INFO if c.admin else (180, 200, 180)))
-        out.append((f"      {c.desc}", (150, 160, 180)))
+        what, examples = admin_manual.MANUAL.get(c.name, (c.desc, []))
+        out.append((f"      {what}", (150, 160, 180)))
+        for ex, does in (examples if full else examples[:1]):
+            out.append((f"      e.g. {ex}  ->  {does}", (130, 200, 140)))
+        out.append(("", INFO))
     return out
 
 
@@ -513,12 +529,22 @@ def help_panel(arg=None, admin_on=True, coop=False):
         v.sort(key=lambda c: c.name)
     if arg:
         a = arg.lower().lstrip("/")
+        if a in ("all", "manual", "everything"):  # the whole manual, every command with every example
+            lines = [("Every command - what it does, with examples. Wheel / PgUp PgDn scroll, Esc closes.", HEAD)]
+            for key, label in CATEGORIES:
+                cmds = by_cat.get(key, [])
+                if cmds:
+                    lines += [("", INFO), (f"== {label} ==", HEAD)] + _help_lines_for(cmds, full=True)
+            return Panel("/help all - the manual", lines)
         cmd = resolve(a)
         if cmd is not None:
             lines = [(cmd.usage, HEAD), (cmd.desc, INFO)]
             if cmd.aliases:
                 lines.append(("Also: /" + ", /".join(cmd.aliases), INFO))
+            lines.append(("", INFO))
+            lines += _manual_lines(cmd)  # what it does + examples
             if cmd.details:
+                lines.append(("", INFO))
                 lines += [(ln, (170, 180, 200)) for ln in cmd.details.split("\n")]
             if cmd.admin and coop:
                 lines.append(("(co-op: needs a server started with --admin)", WARN))
@@ -533,7 +559,8 @@ def help_panel(arg=None, admin_on=True, coop=False):
                 key = pages[i]
                 return Panel(f"/help {a} - {dict(CATEGORIES)[key]}", _help_lines_for(by_cat.get(key, [])))
         return Panel("/help", [(f"No command or category '{arg}'.", WARN)])
-    lines = [("Type /help <category> (or a page number) for details, /help <command> for one command.", HEAD),
+    lines = [("/help <category> (or its number): what each command does + an example.", HEAD),
+             ("/help <command>: its full manual page.   /help all: every command with every example.", HEAD),
              ("Scroll with the mouse wheel / PgUp PgDn, Esc closes.", (170, 180, 200))]
     if coop and not admin_on:
         lines.append(("Admin commands need a server started with --admin (or RR_ADMIN=1).", WARN))
@@ -556,7 +583,7 @@ def help_panel(arg=None, admin_on=True, coop=False):
 
 
 @command("help", "/help [page | category | command]", "list every command (paged by category)",
-         "normal", aliases=("?", "commands"), side="client")
+         "normal", aliases=("?", "commands", "man", "manual", "helpp"), side="client")
 def _cmd_help(ctx, args):
     return help_panel(" ".join(args) if args else None, coop=ctx.coop,
                       admin_on=getattr(ctx, "admin_on", True))

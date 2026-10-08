@@ -47,6 +47,9 @@ from game import story
 from game import journal
 from game import calendar_ui
 from game import forge_menu
+from game import loot_filter
+from game import binds
+from game import view_scale
 from game.npcs import NPC
 from game.entities import Player, Enemy, Bullet, Bag, Portal, Obstacle, NexusBot, BAG_CAPACITY, CHEST_SKIN_NAMES
 from game.netmsg import send_msg, MessageReader
@@ -118,6 +121,7 @@ class GhostBag:
         self.name = d.get("name")
         self.count = d.get("count", 1)
         self.tier_color = tuple(d["tier_color"]) if d.get("tier_color") else (200, 200, 200)
+        self.top, self.gear_only, self.rare = d.get("top", 0), d.get("gear_only", False), d.get("rare")
 
 
 class GhostChest:
@@ -465,6 +469,7 @@ class CoopClient:
         self.debug_hitboxes = False  # /hitboxes
         self.death_info = None
         self.cam = world.Camera(C.SCREEN_W, C.SCREEN_H)
+        view_scale.sync_camera(self.cam)  # Options > Display > Zoom (world only - game/view_scale.py)
 
         self.nexus_map = world.TileMap(world.make_nexus())    # deterministic, matches server exactly
         self.bazaar_map = world.TileMap(world.make_bazaar())  # deterministic, matches server exactly
@@ -517,6 +522,8 @@ class CoopClient:
         self.sidequest_log = []  # the server's side quests (game/sidequests.SideQuestProgress.log())
         self.dialogue_view = None  # the open conversation (server-owned, see server._send_dialogue)
         self.journal = journal.Journal()  # Quest Log / Dictionary / Quest Map windows (game/journal.py)
+        self.keybinds = binds.KeybindWindow()  # Options > Key bindings... (game/binds.py)
+        self.map_pins = []  # your own map pins (game/map_pins.py) - loaded from your character once it arrives
         self.forge = forge_menu.ForgeWindow()  # Brother Hammerstein's Forge - the server does the forging
         self.forge.on_apply = self._forge_apply
         self.forge.on_fx = self._forge_fx
@@ -550,6 +557,7 @@ class CoopClient:
             self.update(dt)
             self.draw()
             self._present()
+        self._mirror_character(0.0, force=True)  # your latest co-op progress into your own save
         if self.link:
             self.link.stop()
         pygame.quit()
@@ -612,7 +620,8 @@ class CoopClient:
             leave=("Disconnect (return to Class Select)", self._menu_disconnect)
             if self.state == STATE_PLAY else None,
             journal=[("Quest Log", self._open_quest_log), ("Dictionary", self._open_dictionary),
-                     ("Calendar", self._open_calendar)]
+                     ("Calendar", self._open_calendar)],
+            keybinds=self._open_keybinds
             if self.state == STATE_PLAY else None)
 
     def _open_quest_log(self):
@@ -647,6 +656,10 @@ class CoopClient:
         elif key in ("gem_set", "gem_combine", "gem_pry"):
             vfx.dispatch([("gem_forge", at.x + 30, at.y + 4, color or (230, 230, 240))])
 
+    def _open_keybinds(self):
+        self.help_open = False
+        self.keybinds.open_window()
+
     def _open_calendar(self):
         self.help_open = False
         self.calendar.open = True
@@ -664,6 +677,8 @@ class CoopClient:
             "player_tile": (you.pos.x / C.TILE, you.pos.y / C.TILE) if in_realm else None,
             "tracked": list(self.tracked_quests or []),
             "on_track": self._toggle_quest_marker,
+            "pins": list(self.map_pins),  # your map pins (click a map to add / remove)
+            "on_pin": self._toggle_pin if self.you is not None else None,
         }
 
     # ------------------------------------------------------- quest markers --
@@ -703,13 +718,29 @@ class CoopClient:
         return {"zone": zone, "player": (self.you.pos.x, self.you.pos.y), "grid": grid, "areas": self.realm_areas,
                 "live_npcs": live, "nexus_npcs": nexus, "_portal_cache": self.__dict__.setdefault("_qm_portals", {})}
 
+    def _toggle_pin(self, world_pos):
+        """A map click: a pin there, or the pin under it removed - and the server saves them with you."""
+        from game import map_pins
+        what = map_pins.toggle(self.map_pins, world_pos[0], world_pos[1], C.TILE)
+        self.link.send({"type": "action", "action": "map_pins", "pins": [list(p) for p in self.map_pins]})
+        self.feed.insert(0, ["Pin placed - it shows on your maps and in the world." if what == "added"
+                             else "Pin removed.", map_pins.PIN_COLOR, 4.0])
+        self.feed = self.feed[:4]
+
     def _quest_marks(self):
-        from game import quest_markers
-        if self.you is None or not self.tracked_quests:
+        from game import quest_markers, map_pins
+        if self.you is None:
             return []
+        if not getattr(self, "_pins_loaded", False):  # your saved pins arrive with your character
+            self.map_pins = map_pins.clean(getattr(self.you, "map_pins", []))
+            self._pins_loaded = True
+        pins = map_pins.marks(self.map_pins, (self.you.pos.x, self.you.pos.y), self.zone == "realm", C.TILE)
+        if not self.tracked_quests:
+            return pins
         if self.quest_log is not None:
             self.tracked_quests = quest_markers.prune(self.tracked_quests, self.quest_log, self.sidequest_log)
-        return quest_markers.markers(self.tracked_quests, self.quest_log, self.sidequest_log, self._quest_world())
+        return quest_markers.markers(self.tracked_quests, self.quest_log, self.sidequest_log,
+                                     self._quest_world()) + pins
 
     def _draw_quest_markers_world(self, s, marks):
         from game import quest_markers
@@ -730,6 +761,7 @@ class CoopClient:
             mm.full_map_open = not mm.full_map_open
 
     def _menu_disconnect(self):
+        self._mirror_character(0.0, force=True)
         if self.link:
             self.link.stop()
         self.link = None
@@ -763,6 +795,11 @@ class CoopClient:
                 continue
             if self.journal.is_open() and self.journal.handle_event(event, self._journal_ctx()):
                 continue
+            if self.keybinds.open:
+                self.keybinds.handle_event(event)  # raw keys: this is where you choose them
+                continue
+            if event.type in (pygame.KEYDOWN, pygame.KEYUP) and not self.chat_open:
+                event = binds.translate_event(event)  # rebound keys -> the defaults the code checks
             if self.forge.is_open() and self.forge.handle_event(event, self.you):
                 continue
             if (self.calendar.open and self.state == STATE_PLAY
@@ -929,6 +966,14 @@ class CoopClient:
                       and self._dock_mode() == "pet"
                       and ui.pet_pack_button_rect(self.you).collidepoint(event.pos)):
                     self.link.send({"type": "action", "action": "pack_pet"})
+                elif (self.vault_chest_open is not None and self.zone == "vault_room"
+                      and ui.vault_chest_stash_button_rect(self._vault_chest_screen_pos()).collidepoint(event.pos)):
+                    self.link.send({"type": "action", "action": "vault_stash"})
+                elif (self.you and self._dock_mode() == "inventory" and len(self.you.backpack) > 1
+                      and self.zone in ("nexus", "bazaar", "vault_room", "realm", "bonus")
+                      and ui.sort_button_rect(self.you) is not None
+                      and ui.sort_button_rect(self.you).collidepoint(event.pos)):
+                    self.link.send({"type": "action", "action": "sort_backpack"})
                 elif (self.you and self.zone in ("nexus", "bazaar", "realm", "bonus")
                       and ui.panel_tab_at(event.pos) is not None):
                     tab = ui.panel_tab_at(event.pos)  # clicking a dock tab label picks it
@@ -964,7 +1009,8 @@ class CoopClient:
                 elif peer is not None:
                     self._open_context_menu_for(peer, event.pos)
                 elif self.zone in ("realm", "bonus", "bazaar"):
-                    self.link.send({"type": "action", "action": "open_bag"})
+                    self.link.send({"type": "action", "action": "open_bag",
+                                    "hide_below": settings.get("loot_hide_below")})
             elif event.type == pygame.MOUSEWHEEL:
                 if ui.chat_log_rect(self.chat_log).collidepoint(pygame.mouse.get_pos()):
                     max_scroll = ui.chat_log_max_scroll(self.chat_log)
@@ -993,6 +1039,9 @@ class CoopClient:
 
     def _minimap_button_click(self, pos):
         mm = self._current_minimap()
+        if mm is not None and mm.full_map_open and self.zone == "realm" and self.you is not None:
+            self._toggle_pin(minimap.full_map_world(mm, self.you.pos, pos))  # click the map: a pin
+            return True
         if mm is None or mm.full_map_open:
             return False
         for rect, delta in minimap.corner_zoom_button_rects():
@@ -1675,7 +1724,10 @@ class CoopClient:
             self.state = STATE_ERROR
             return
         self.link = NetLink(sock)
-        self.link.send({"type": "join", "name": self.name, "cls": cls_name})
+        from game import characters
+        # doc 42: bring your single-player character along (the server keeps the further-along copy)
+        self.link.send({"type": "join", "name": self.name, "cls": cls_name,
+                        "character": characters.load_character(self.name)})
         waited = 0.0
         while self.link.welcome_pid is None and self.link.error is None and waited < 5.0:
             pygame.time.wait(50)
@@ -1692,7 +1744,30 @@ class CoopClient:
     _THEME_ZONE_FOR_ZONE = {"nexus": "nexus", "bazaar": "bazaar", "vault_room": "nexus",
                              "realm": "realm", "bonus": "dungeon"}
 
+    CHAR_MIRROR_EVERY = 10.0  # s - how often the server's copy of you is mirrored to your own save
+
+    def _mirror_character(self, dt, force=False):
+        """Keeps the local save in step with the server's copy of you (so single-player picks up
+        where co-op left off); a co-op death deletes it - permadeath is the same everywhere."""
+        from game import characters
+        if self.state != STATE_PLAY:
+            return
+        if self.zone == "dead":
+            if not getattr(self, "_char_deleted", False):
+                characters.delete_character(self.name)
+                self._char_deleted = True
+            return
+        self._char_deleted = False
+        self._char_mirror_t = getattr(self, "_char_mirror_t", 0.0) + dt
+        if self.you is not None and self.you.alive and (force or self._char_mirror_t >= self.CHAR_MIRROR_EVERY):
+            self._char_mirror_t = 0.0
+            try:
+                characters.save_character(self.name, self.you)
+            except OSError:
+                pass
+
     def update(self, dt):
+        self._mirror_character(dt)
         if self.state == STATE_INTRO:
             self.intro_timer += dt
             if self.intro_timer >= ui.INTRO_DURATION:
@@ -1714,8 +1789,8 @@ class CoopClient:
                 audio.play_theme(track)
         audio.update_music()
 
-        if not self.chat_open and not self.help_open and not self.quit_confirm_open and not (self.journal.is_open() or self.forge.is_open()):
-            keys = pygame.key.get_pressed()
+        if not self.chat_open and not self.help_open and not self.quit_confirm_open and not (self.journal.is_open() or self.forge.is_open() or self.keybinds.open):
+            keys = binds.Pressed()
             if keys[pygame.K_q]:
                 self.cam.rotate(-self.ROTATE_SPEED_DEG * dt)
             if keys[pygame.K_e]:
@@ -1949,6 +2024,12 @@ class CoopClient:
                     self.realm_minimap = minimap.MinimapState()
                     self.realm_grid = pending_map  # kept for the journal's maps
                     self.realm_areas = self.link.pop_pending_areas()
+                    if self.realm_areas:  # the island danger scale needs the islands + the arrival beach
+                        from game import danger as _dg
+                        from game.constants import TILE as _T
+                        sp = self.realm_areas.get("spawn")
+                        _dg.set_islands([(i["x"] * _T, i["y"] * _T) for i in self.realm_areas.get("islands", [])],
+                                        (sp["x"] * _T, sp["y"] * _T) if sp else None)
                 else:
                     self.bonus_minimap = minimap.MinimapState()
             mm = self._current_minimap()
@@ -2073,7 +2154,7 @@ class CoopClient:
 
     def _send_input(self, dt):
         if (self._map_open() or self.chat_open or self.help_open or self.quit_confirm_open or self.echo_shop_open
-                or self.dialogue_view is not None or (self.journal.is_open() or self.forge.is_open())):
+                or self.dialogue_view is not None or (self.journal.is_open() or self.forge.is_open() or self.keybinds.open)):
             # checking the full map, typing in chat, or browsing the options menu is
             # a modal action - stop sending input while it's up (other players keep
             # moving normally; only yours freezes) so you don't drift/move by accident
@@ -2081,7 +2162,7 @@ class CoopClient:
             self._dash_pending = False
             return
         self._auto_tile_trigger()
-        keys = pygame.key.get_pressed()
+        keys = binds.Pressed()  # WASD through the key bindings (arrows always work)
         move = pygame.Vector2(0, 0)
         if keys[pygame.K_w] or keys[pygame.K_UP]:
             move.y -= 1
@@ -2116,7 +2197,8 @@ class CoopClient:
                 and not self._ui_click_active)
         dash = self._dash_pending
         self._dash_pending = False  # one-shot per keypress, not held-key-repeat like move/fire
-        self.link.send({"type": "input", "move": [move.x, move.y], "aim": [aim.x, aim.y], "fire": fire,
+        self.link.send({"type": "input", "auto_loot": bool(settings.get("auto_loot")),
+                        "move": [move.x, move.y], "aim": [aim.x, aim.y], "fire": fire,
                          "dash": dash})
 
         # the server is authoritative for actual fire timing; this is just a client-side
@@ -2130,6 +2212,7 @@ class CoopClient:
     def draw(self):
         s = self.screen
         s.fill(C.COL_BG)
+        ui.COMPARE_PLAYER = self.you  # item tooltips compare against your equipped gear
         if self.state == STATE_INTRO:
             ui.draw_intro_screen(s, self.intro_timer, self.intro_joke)
         elif self.state == STATE_CLASS_SELECT:
@@ -2168,6 +2251,7 @@ class CoopClient:
                 ui.draw_story_banner(s, self.story_banner[0], self.story_banner[1])
             if self.credits_t is not None:
                 ui.draw_credits(s, self.credits_t)
+        self.keybinds.draw(s, pygame.mouse.get_pos())
         if self.quit_confirm_open:
             ui.draw_quit_confirm(s, pygame.mouse.get_pos())
 
@@ -2179,6 +2263,9 @@ class CoopClient:
                                  f"{d.get('kills','?')} kills. Permadeath - press Enter or click below to respawn.",
                                  (220, 60, 60))
             ui.draw_death_screen_button(s, pygame.mouse.get_pos())
+            from game import death_recap
+            death_recap.draw(s, d.get("recap"), ui.death_screen_button_rect().bottom + 14, C.SCREEN_W // 2,
+                             ui._FONT_S, ui._FONT_M)
             return
         if self.you is None:
             ui.draw_center_text(s, "SYNCING...")
@@ -2234,7 +2321,9 @@ class CoopClient:
     def _night_pulse(self, blood):
         p = self.you
         low = p.hp < p.hp_max * 0.35
+        from game import lighting
         if not (blood or low):
+            lighting.GRADE["pulse"] = 0.0
             return 0.0
         near = sum(1 for e in self.enemies if e.pos.distance_to(p.pos) < 420 and e.rank != "trash")
         period = max(0.42, 1.05 - 0.08 * near - (0.25 if low else 0.0))
@@ -2242,7 +2331,9 @@ class CoopClient:
         if self._beat_t >= period:
             self._beat_t = 0.0
             audio.play_event("heartbeat")
-        return (0.55 if blood else 0.35) * max(0.0, 1.0 - (self._beat_t / period) * 3.0)
+        beat = ui.heartbeat_shape(self._beat_t / period)  # lub-dub, then quiet
+        lighting.GRADE["pulse"] = beat if blood else 0.0  # the whole red night throbs with it
+        return (0.62 if blood else 0.38) * beat
 
     def _current_place(self):
         """(zone_kind, key, title, subtitle, music_zone) for game.zone_banner, or None."""
@@ -2271,6 +2362,7 @@ class CoopClient:
         if mm.full_map_open:
             minimap.draw_full_map(s, tmap, mm, self.you.pos, peers=self.peers, zone_name=name, quest_marks=qmarks)
             return
+        s = view_scale.world_begin(self.screen, self.cam)  # Options > Display > Zoom: the world, bigger
         if tmap is self.nexus_map:
             tmap.draw_backdrop(s, self.cam)
         # RotMG itself works this way: Q/E turns the MAP, characters stay upright.
@@ -2301,7 +2393,7 @@ class CoopClient:
         vfx.draw(s, self.cam)
         self._draw_quest_markers_world(s, qmarks)
         self._draw_hover_tooltip()
-        if not (self.help_open or (self.journal.is_open() or self.forge.is_open()) or self.dialogue_view is not None
+        if not (self.help_open or (self.journal.is_open() or self.forge.is_open() or self.keybinds.open) or self.dialogue_view is not None
                 or getattr(self, "echo_shop_open", False)):
             # hidden under full windows: it showed through the options panel's title bar
             hint = ui._FONT_M.render(hint_text, True, (220, 210, 230))
@@ -2311,10 +2403,11 @@ class CoopClient:
             if event_label:
                 banner = ui._FONT_S.render(f"Live event: {event_label}", True, (255, 220, 120))
                 s.blit(banner, (C.SCREEN_W // 2 - banner.get_width() // 2, 104))
+        s = view_scale.world_end(s, self.screen, self.cam)  # ...scaled up; the HUD below stays full size
         ui.draw_dock_frame(s, self.you)
         ui.draw_hud(s, name, None, False)  # hubs: no kill counter
         if not (self.echo_shop_open or self.help_open or self.vault_chest_open is not None
-                or self.dialogue_view is not None or (self.journal.is_open() or self.forge.is_open())):  # a modal overlay owns that space
+                or self.dialogue_view is not None or (self.journal.is_open() or self.forge.is_open() or self.keybinds.open)):  # a modal overlay owns that space
             ui.draw_story_log(s, self.quest_log, self.quest_log_expanded, side=self.sidequest_log,
                               tracked=self.tracked_quests)
         if settings.get("show_fps"):
@@ -2354,6 +2447,7 @@ class CoopClient:
                                    peers=self.peers, portals=self.portals, zone_name=name, enemies=self.enemies,
                                    quest_marks=qmarks)
             return
+        s = view_scale.world_begin(self.screen, self.cam)  # Options > Display > Zoom: the world, bigger
         fog = mm.explored if (self.zone == "bonus" and mm is not None) else None
         self.tilemap.canopy_overlay = True  # trunks in the floor pass, canopies drawn over entities below
         world.render_rotated_world(s, self.cam, lambda surf, cam: self.tilemap.draw(surf, cam, surf.get_size(), fog=fog))
@@ -2366,7 +2460,8 @@ class CoopClient:
                                    self.tilemap, self.you.pos.x, self.you.pos.y, lit=not _clk.get("lanterns_out"))]
                                if _clk.get("night") else ())
         vfx.draw_enemy_zones(s, self.cam, getattr(self, "enemy_zones", []))  # server-sent attack telegraphs
-        for g in self.ground_items:
+        for g in loot_filter.visible_bags(self.ground_items):  # Options > Loot
+            loot_filter.draw_beam(s, self.cam, g, pygame.time.get_ticks() / 1000)
             g.draw(s, self.cam)
         for pt in self.portals:
             pt.draw(s, self.cam)
@@ -2488,6 +2583,7 @@ class CoopClient:
         elif self.zone == "bonus" and (self.theme_name or "").startswith("The Mad God's Room"):
             vfx.draw_heroic_tint(s, "mg_room")
         self.weather_fx.draw(s)
+        s = view_scale.world_end(s, self.screen, self.cam)  # ...scaled up; the HUD below stays full size
         ui.draw_dock_frame(s, self.you)
         if self.zone != "bonus":
             ui.draw_day_night_clock(s, self.light_level, self.blood_moon, clock=self.clock_info)
@@ -2503,7 +2599,7 @@ class CoopClient:
         if self.portal_prompt:
             ui.draw_portal_prompt(s)
         if ((self.zone != "bonus" or self.theme_name == DUNGEON_THEMES["forge"]["label"]) and not self.help_open
-                and self.dialogue_view is None and not (self.journal.is_open() or self.forge.is_open())):
+                and self.dialogue_view is None and not (self.journal.is_open() or self.forge.is_open() or self.keybinds.open)):
             ui.draw_story_log(s, self.quest_log, self.quest_log_expanded, side=self.sidequest_log,
                               tracked=self.tracked_quests)
         else:

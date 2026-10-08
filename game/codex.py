@@ -588,6 +588,47 @@ def filter_entries(query="", cat=None, tags=()):
     return [e for e in lst if not is_note(e)] + [e for e in lst if is_note(e)]
 
 
+def place_name(kind, key):
+    """A readable name for a place / thing a quest counted ("area" tavern_town -> "Tavern Town")."""
+    try:
+        if kind == "area":
+            from game import areas as areas_mod
+            return areas_mod.AREA_DEFS[key]["name"]
+        if kind in ("landmark", "guardian"):
+            from game import story
+            return cap(story.landmark_name(key))
+        if kind == "island":
+            from game import realm_sim
+            return realm_sim.ISLAND_NAMES[int(key)]
+        if kind == "npc":
+            from game import npcs
+            return npcs.NPCS[key]["name"]
+        if kind in ("dungeon", "heroic_dungeon"):
+            from game import realm_sim
+            return realm_sim.DUNGEON_THEMES[key]["label"]
+        if kind == "biome":
+            return BIOME_LABELS.get(key, str(key).title())
+    except (KeyError, IndexError, ValueError, TypeError):
+        pass
+    return str(key).replace("_", " ").title()
+
+
+def place_candidates(kind, keys=None):
+    """Every place a "visit N of these" objective could count (for its "Not yet" list), or None."""
+    if keys:
+        return list(keys)
+    if kind == "area":
+        from game import areas as areas_mod
+        return list(areas_mod.AREA_ORDER)
+    if kind == "island":
+        from game import realm_sim
+        return list(range(len(realm_sim.ISLAND_NAMES)))
+    if kind == "landmark":
+        from game import story
+        return list(story.OUTER_BIOMES)
+    return None
+
+
 def entry_for_target(target):
     """A quest target {kind, key, label} -> dictionary entry id (or None)."""
     if not target:

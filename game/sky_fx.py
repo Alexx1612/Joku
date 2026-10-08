@@ -38,7 +38,9 @@ class SkyFX:
         if "bolt" in clock:  # (None = no strike yet tonight: sequence 0)
             seq = b[0] if b else 0
             if self._bolt_seq is not None and b and seq != self._bolt_seq:
-                self.flash, self._flick = 1.0, 0.16
+                from game import access
+                calm = access.reduced_flashing()  # Options > Accessibility: no strobe, a soft glow
+                self.flash, self._flick = (0.3, 0.0) if calm else (1.0, 0.16)
                 rng = random.Random(b[0])
                 pts, x, y = [], 0.0, 0.0
                 for i in range(9):

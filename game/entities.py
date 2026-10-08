@@ -141,6 +141,7 @@ class Player:
         self._dash_time = 0.0     # remaining duration of an in-progress dash burst
         self._dash_vec = pygame.Vector2(0, 0)  # current dash velocity (px/sec), set once per try_dash()
         self._dash_iframes = 0.0  # remaining invincibility - see take_damage()
+        self.hit_log = []  # the last HIT_LOG_LEN hits taken [{who, what, tele, dmg}] - the death recap
         self.haste_time = 0.0  # remaining seconds of a "haste"-effect ability buff
         self.root_time = 0.0   # remaining seconds slowed by a boss root pulse (see the Thorn Warden)
         self.shield_hp = 0.0   # remaining absorb from a "shield"-effect ability
@@ -156,6 +157,8 @@ class Player:
         self.backpack2_size = BACKPACK2_SIZE
         self.rune_slots = [None] * RUNE_SLOT_COUNT
         self.tracked_quests = []  # quest ids with a map marker (game/quest_markers.py)
+        self.map_pins = []  # your own map pins [[x, y, label]] in world px (game/map_pins.py)
+        self.scrap = 0  # Forge Scrap from salvaging gear at the Anvil (game/forge.py) - 10 = 1 Forge Ingot
         self.alive = True
         self.kills = 0
         self.spawn_time = 0.0
@@ -413,6 +416,22 @@ class Player:
                 return True
             return False
         self.backpack.append(item)
+        return True
+
+    SORT_ORDER = ("weapon", "ability", "armor", "ring", "consumable", "temp_potion", "egg", "carrier",
+                  "gem", "material", "shard")
+
+    def sort_backpack(self):
+        """The backpack's Sort button: gear first (best tier first), then potions, eggs,
+        stones, materials, shards - stable, so equal items keep their order."""
+        order = {k: i for i, k in enumerate(self.SORT_ORDER)}
+
+        def key(it):
+            group = order.get(it.slot, len(order))
+            if getattr(it, "rune_effect", ""):
+                group = len(order) + 1
+            return (group, -(99 if it.is_ut else it.tier), it.name)
+        self.backpack.sort(key=key)
         return True
 
     def use_potion(self, index):
@@ -691,7 +710,10 @@ class Player:
     def register_fire(self):
         self._fire_cd = self.atk_interval()
 
-    def take_damage(self, dmg, pierce_armor=False):
+    HIT_LOG_LEN = 12
+
+    def take_damage(self, dmg, pierce_armor=False, source=None):
+        """source: (who, what, telegraphed) - logged for the death recap (game/death_recap.py)."""
         if self._dash_iframes > 0.0 or getattr(self, "god", False):  # /god (game/admin.py)
             return 0
         real = dmg if pierce_armor else C.player_defense(dmg, self.total_stat("deF"))
@@ -700,6 +722,13 @@ class Player:
             self.shield_hp -= absorbed
             real -= absorbed
         self.hp -= real
+        if real > 0:
+            who, what, tele = source or ("Something", "a hit", False)
+            log = getattr(self, "hit_log", None)
+            if log is None:
+                log = self.hit_log = []
+            log.append({"who": who, "what": what, "tele": bool(tele), "dmg": int(real)})
+            del log[:-self.HIT_LOG_LEN]
         self._hit_flash = 0.15
         if self.hp <= 0 and self.armor is not None and self.armor.divine_proc == "second_wind" \
                 and getattr(self, "_second_wind_cd", 0.0) <= 0:
@@ -821,6 +850,8 @@ class Player:
             story=self.story.to_json(),
             sidequests=self.sidequests.to_json(),
             tracked_quests=list(self.tracked_quests),
+            scrap=int(self.scrap),
+            map_pins=[list(p) for p in self.map_pins],
         )
 
     @staticmethod
@@ -857,6 +888,9 @@ class Player:
         p.story = StoryProgress.from_json(d.get("story"))
         p.sidequests = SideQuestProgress.from_json(d.get("sidequests"))
         p.tracked_quests = [str(q) for q in (d.get("tracked_quests") or [])][:3]
+        p.scrap = max(0, int(d.get("scrap", 0) or 0))
+        from game import map_pins as _pins
+        p.map_pins = _pins.clean(d.get("map_pins"))
         return p
 
     @staticmethod
@@ -885,7 +919,9 @@ class Player:
 
 RANK_XP = {"trash": 8, "elite": 30, "boss": 250}
 
-# aggro_range: how close a player must get before an idle enemy notices them.
+# aggro_range: how close a player must get before an idle enemy notices them (x AGGRO_SCALE for
+# every non-boss - the table values felt like "it saw me from half a screen away").
+AGGRO_SCALE = 0.75
 # leash_range: how far from home an AGGRO'd enemy will chase before giving up
 # and heading back - bosses have no leash (rank == "boss" is checked directly).
 # HP values are scaled up from the original v0.2 numbers (~2.2x trash/elite, ~1.6x
@@ -1367,7 +1403,8 @@ class Enemy:
         self._last_hit_damage = 0  # real post-mitigation amount from the most recent take_damage() call
         self.scale = d.get("scale", 1.0)
         self.radius = int(round(d["radius"] * self.scale))
-        self.aggro_range = d["aggro_range"]
+        # x AGGRO_SCALE: monsters used to notice you from over half a screen away (bosses still chase anywhere)
+        self.aggro_range = d["aggro_range"] * (1.0 if d["rank"] == "boss" else AGGRO_SCALE)
         self.leash_range = d["leash_range"]
         self.neutral = d.get("neutral", False)  # always-passive ambient wildlife - see update()
         self.contributors = {}  # pid -> damage dealt (co-op: everyone who hit it gets credit + loot)
@@ -1659,6 +1696,8 @@ class Enemy:
                 self._fire_pose_t = ANIM_ATTACK_POSE_DURATION  # Track 13.P: brief squash/stretch anticipation pose
         for b in bullets_out[n_before:]:
             b.src_rank = self.rank  # boss bullets hit (and shake) harder - see vfx hit_player_by_boss
+            if b.src_info is None:
+                b.src_info = self.hit_info()
 
     # ------------------------------------------------ attack sets (enemy_attacks) --
     def _set_attacks(self):
@@ -1683,7 +1722,21 @@ class Enemy:
     def _cd_mult(self):
         return (EA.PHASE2_CD_MULT if self.phase == 2 else 1.0) * self.fire_rate_mult
 
+    def display_name(self):
+        return self.kind.replace("_phase2", " (phase 2)").replace("_", " ").title()
+
+    def hit_info(self, contact=False):
+        """(who, what, telegraphed) for the death recap - the move it's firing right now."""
+        if contact:
+            return (self.display_name(), "Body slam (contact)", False)
+        m = getattr(self, "_cur_move", None)
+        if not m:
+            return (self.display_name(), "Plain shot", False)
+        name = m.get("label") or str(m.get("name", "attack")).replace("_", " ").title()
+        return (self.display_name(), name, m.get("tele", "none") not in ("none", None))
+
     def _fire_move(self, m, ctx, first=True):
+        self._cur_move = m
         EA.execute(self, m, ctx)
         if first and m.get("sfx"):
             self._sfx_pending.append(m["sfx"])
@@ -1820,6 +1873,7 @@ class Enemy:
                 for b in self._dash_out[-12:]:
                     if b.src_rank is None and b.owner == "enemy":
                         b.src_rank = self.rank
+                        b.src_info = self.hit_info()
 
     def _update_charge(self, dt, to_player_n, dist, bullets_out, tile_map=None):
         """A dash-in melee-burst mob: sits back strafing like the others, then
@@ -1918,6 +1972,7 @@ class Enemy:
         return {"trash": 5, "elite": 6, "boss": 8}.get(self.rank, 5)
 
     def _shoot(self, aim_dir, out):
+        self._cur_move = None  # a plain pattern shot (the death recap says so)
         dmg = random.randint(*self.dmg)
         speed = 220
         r = self._bullet_radius()
@@ -2232,7 +2287,7 @@ class Bullet:
                  # enemy-attack motions (game/enemy_attacks.py): sine sway, accelerate/brake,
                  # capped-turn homing, split-on-expiry, plus who fired it (boss hits shake more)
                  "age", "wave_amp", "wave_freq", "wave_phase", "base_dir", "accel", "max_speed", "min_speed",
-                 "home_turn", "target", "split", "split_speed", "split_aimed", "src_rank",
+                 "home_turn", "target", "split", "split_speed", "split_aimed", "src_rank", "src_info",
                  # player shots: Weapon Shard effects (game/runes.py), heavy/crit hits, Seeker homing
                  "rune_fx", "heavy", "crit", "seek",
                  # a gemmed weapon's shot: the first stone's kind (game/gems.py) - its trail + core
@@ -2274,6 +2329,7 @@ class Bullet:
         self.split_speed = 0.0
         self.split_aimed = False
         self.src_rank = None     # enemy bullets: the shooter's rank ("boss" hits shake harder)
+        self.src_info = None     # enemy bullets: (who, which attack, telegraphed?) - the death recap
         self.rune_fx = None      # {effect: strength} from the shooter's ACTIVE Weapon Shards
         self.heavy = False       # a top-of-range roll or a crit (gold popup)
         self.crit = False
@@ -2365,10 +2421,17 @@ class Bullet:
         if getattr(self, "gem", None):  # a gemmed weapon's shot: element trail + glowing core
             from game import gem_art
             gem_art.draw_bullet(surf, cam, self)
-        img = sprites.bullet_surface(self.color, self.radius, self.shape)
+        enemy = getattr(self, "owner", "") == "enemy"
+        from game import access
+        col = access.color(self.color) if enemy else self.color  # Options > Accessibility palette
+        img = sprites.bullet_surface(col, self.radius, self.shape)
         if self.shape in Bullet._DIRECTIONAL_SHAPES and self.vel.length_squared() > 0:
             img = pygame.transform.rotate(img, -self.vel.angle_to(pygame.Vector2(1, 0)))
-        surf.blit(img, img.get_rect(center=cam(self.pos)))
+        c = cam(self.pos)
+        surf.blit(img, img.get_rect(center=c))
+        if enemy and access.outline():  # on top of the glow: a dark ring + pale rim, readable on any floor
+            pygame.draw.circle(surf, (10, 10, 14), c, self.radius + 2, 2)
+            pygame.draw.circle(surf, (245, 245, 250), c, self.radius + 4, 2)
 
     def net_state(self):
         d = dict(x=round(self.pos.x, 1), y=round(self.pos.y, 1), owner=self.owner,
@@ -2393,6 +2456,7 @@ class Bullet:
             b = _mk_bullet(self.pos, pygame.Vector2(1, 0).rotate(ang), self.split_speed or 180,
                            max(1, int(self.dmg * 0.6)), self.color, radius=max(3, self.radius - 2), lifetime=1.4)
             b.src_rank = self.src_rank
+            b.src_info = self.src_info
             out.append(b)
         return out
 
@@ -2480,10 +2544,13 @@ class Bag:
         # bag - full item data (for the drag window) rides a dedicated bag_state
         # message sent only to whoever actually opens it, same pattern as the Vault
         first = self.items[0] if self.items else None
+        from game import loot_filter
+        top, gear_only, rare = loot_filter.summary(self.items)
         return dict(id=self.id, x=round(self.pos.x, 1), y=round(self.pos.y, 1),
                     bag_color=list(self.bag_color), count=len(self.items),
                     name=first.display_name if first else "",
-                    tier_color=list(first.color) if first else [150, 150, 150])
+                    tier_color=list(first.color) if first else [150, 150, 150],
+                    top=top, gear_only=gear_only, rare=rare)  # the loot filter / beams (game/loot_filter.py)
 
 
 BAG_LOOT_RADIUS = 45  # matches RealmSim.LOOT_RADIUS - also used by the Bazaar's bare bag list,

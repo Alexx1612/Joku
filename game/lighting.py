@@ -64,6 +64,11 @@ def ambient_color(light_level, luminosity, blood):
         a = a * (1 - (1 - GRADE.get("sky_dark", 1.0)) * dark)  # clouds
     tint = BLOOD_TINT if blood else MOON_TINT
     grade = GRADE["tint"]
+    if blood:  # the heartbeat: on each beat the red night swells brighter and redder, then sinks back
+        from game import access
+        p = GRADE.get("pulse", 0.0) * (0.35 if access.reduced_flashing() else 1.0)
+        a = a * (1.0 + 0.32 * p)  # quiet = the old Blood Moon night; each beat swells it
+        tint = (1.0, 0.42 - 0.12 * p, 0.42 - 0.12 * p)
     # at dusk / dawn the ambient warms back toward white; golden / blue hour colour on top
     return tuple(max(0, min(255, int(a * (t + (1 - t) * (1 - dark)) * g))) for t, g in zip(tint, grade))
 

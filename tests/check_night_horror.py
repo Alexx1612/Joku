@@ -232,6 +232,10 @@ def _night_sim(event=None, blood=False, seed=21):
     old_chance, sim._nights_since_blood_moon = rs.BLOOD_MOON_CHANCE, 0
     rs.BLOOD_MOON_CHANCE = 1.0 if blood else 0.0  # nightfall rolls the Blood Moon
     sim.tonight = None
+    # the chance is capped at 50%, so pin tonight's pre-drawn dice too (as /forecast blood does) -
+    # otherwise whether this night is a Blood Moon depended on what earlier checks did to the RNG
+    sim._ensure_forecast()
+    sim.forecast[0]["u_blood"] = -1.0 if blood else 2.0
     try:
         for _ in range(4):
             sim.begin_tick()
@@ -245,12 +249,16 @@ def _night_sim(event=None, blood=False, seed=21):
 def check_night_rules_and_dawn_restores():
     sim, p = _night_sim()
     gob = Enemy("goblin", p.pos + pygame.Vector2(900, 0))
-    base = (gob.aggro_range, gob.speed, gob.dmg)
+    base = (gob.aggro_range, gob.speed, gob.dmg, gob.hp_max)
     sim.enemies.append(gob)
     sim.night._apply_rules(True)
-    assert gob.aggro_range >= base[0] * 1.6 and gob.speed > base[1] and gob.dmg[1] > base[2][1]
+    r = night_mod.NIGHT_RULES
+    assert gob.aggro_range >= base[0] * r["aggro"] and gob.speed > base[1] and gob.dmg[1] > base[2][1]
+    assert gob.hp_max == round(base[3] * r["hp"]) and gob.hp == gob.hp_max, "tougher at night"
+    gob.hp = gob.hp_max // 2  # wounded at night...
     sim.night._apply_rules(False)
     assert (gob.aggro_range, gob.speed, tuple(gob.dmg)) == (base[0], base[1], tuple(base[2])), "dawn restores"
+    assert gob.hp_max == base[3] and abs(gob.hp - base[3] // 2) <= 1, "...keeps its share of health at dawn"
     print("check_night_rules_and_dawn_restores: PASSED")
 
 

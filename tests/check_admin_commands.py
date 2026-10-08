@@ -290,7 +290,25 @@ def check_coop_client_side_commands():
     print("check_coop_client_side_commands: PASSED")
 
 
+def check_every_command_has_a_manual_page():
+    """/help <command> explains what it does with examples; /help all is the whole manual."""
+    from game import admin_manual
+    for name, cmd in admin.COMMANDS.items():
+        what, examples = admin_manual.MANUAL.get(name, ("", []))
+        assert len(what) > 20 and examples, f"/{name} needs a manual entry with examples (game/admin_manual.py)"
+        for ex, does in examples:
+            assert ex.startswith("/") and does, (name, ex)
+        page = [t for t, _c in admin.help_panel(name)]
+        assert any(t.startswith("What it does:") for t in page) and "Examples:" in page, name
+    full = [t for t, _c in admin.help_panel("all")]
+    assert sum(1 for t in full if t.strip().startswith("e.g.")) >= len(admin.COMMANDS)
+    for alias in ("man", "helpp", "manual"):
+        assert admin.resolve(alias).name == "help"
+    print(f"check_every_command_has_a_manual_page: PASSED ({len(admin.COMMANDS)} commands)")
+
+
 if __name__ == "__main__":
+    check_every_command_has_a_manual_page()
     check_every_command_has_a_sample_and_help()
     check_single_player_runs_everything()
     check_effects()

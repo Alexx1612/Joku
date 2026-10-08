@@ -93,6 +93,25 @@ It is committed **locally only**: not pushed, and the release has not been rebui
       - TIP / MECHANIC entries drawn as note cards
       - typing a name selects it
     - **Screenshots:** `tools/snap_ui_windows.py` → `screenshots/2026-10-08/{forge_menu,calendar_menu,dictionary_redesign}/`.
+12. **UX batches A + B (doc 41)**
+    - comparison tooltips (`ui.COMPARE_PLAYER`, `ui.compare_lines`)
+    - the death recap (`game/death_recap.py`; hits tagged via `Bullet.src_info`, `zone["info"]`, `Enemy.hit_info`)
+    - `game/loot_filter.py`: auto-loot in `RealmSim.update`, hide-junk filter, beams
+    - Salvage / Smelt (`Player.scrap`), Sort, Stash mats
+    - `game/binds.py` (translate-to-default rebinding + window)
+    - `game/access.py` (palettes, outline, telegraph strength, text size, reduce flashing)
+    - the two-column Options menu
+    - the Blood Moon heartbeat (`ui.heartbeat_shape`, `lighting.GRADE["pulse"]`)
+    - **Still open from the 10-idea list (Batch C):** waystones, pings / waypoints, first-hour tips, the Bounty Board, the Graveyard.
+13. **World tuning (doc 42)**
+    - world zoom (`game/view_scale.py`, default 125%: the world pass on a small canvas, `Camera.zoom` everywhere else; HUD never zoomed; headless runs stay 100% unless `RR_ZOOM`)
+    - the `/help` manual (`game/admin_manual.py`), 'Been there / Not yet' per quest, map pins (`game/map_pins.py`)
+    - 10x maps
+    - aggro x0.75 (`entities.AGGRO_SCALE`)
+    - a much tougher night (`night.NIGHT_RULES` / `BLOOD_RULES` incl. HP)
+    - island danger (`danger.set_islands / island_frac / island_mults`, `e.island_danger`)
+    - hamlets, island outposts, more shacks (`RealmSim._stamp_house` etc.), `_repair_house_doors`
+    - one character in single-player and co-op (`characters.validate / pick_for_join`, `CoopClient._mirror_character`)
 
 ## Checkpoint commits (local, on top of 23123be)
 - `cf3a9ec`: telegraphs, story v2, NetLink fix
@@ -101,7 +120,7 @@ It is committed **locally only**: not pushed, and the release has not been rebui
 - `2b134b5`: Mad God's Room, effects wiring, docs
 
 ## Conventions (unchanged, keep following)
-- Run `python tests/run_all_checks.py` after every batch. There are now **84 scripts** (doc 40 added `check_forge_menu`). `check_areas_trees_bosses` and `check_big_islands` can flake on the random map or timing; re-run them alone.
+- Run `python tests/run_all_checks.py` after every batch. There are now **87 scripts** (doc 40 added `check_forge_menu`, doc 41 `check_ux_batch_a` / `_b`, doc 42 `check_world_tuning`). `check_areas_trees_bosses` and `check_big_islands` can flake on the random map or timing; re-run them alone.
 - Look at headless screenshots for visual work: set `RR_SHOT_DIR` for the new checks.
 - All art and music must be original.
 - Don't commit, push or release without the user's OK.

@@ -412,6 +412,7 @@ def step(state, dt):
         if s.zone == ZONE_DEAD:
             continue
         move = pygame.Vector2(s.last_input.get("move", [0, 0]))
+        s.player.auto_loot = bool(s.last_input.get("auto_loot", False))  # Options > Loot (game/loot_filter.py)
         if s.zone in (ZONE_NEXUS, ZONE_BAZAAR, ZONE_VAULT_ROOM) and s.player.pet is not None:
             # hubs have no RealmSim.tick_pets - without this the pet stayed frozen where the
             # player left the Realm (usually off-screen); no enemies, so only follow + heal/mana
@@ -484,8 +485,9 @@ def step(state, dt):
     for s in state.sessions.values():
         if s.zone in (ZONE_REALM, ZONE_BONUS) and not s.player.alive:
             earned = accounts.award_echoes_for_death(s.player.name, s.player._echoes_this_life)
+            from game import death_recap
             s.death_info = dict(level=s.player.level, kills=s.player.kills, cls=s.player.cls_name,
-                                 earned_echoes=earned)
+                                 earned_echoes=earned, recap=death_recap.build(s.player))
             s.zone = ZONE_DEAD
             # the saved character (if any) is gone for good, same as single-player's
             # die() - the next join/respawn starts completely fresh, not a corpse
@@ -664,6 +666,20 @@ def _apply_action(state, s, action):
         _pet_result(s, p)
     elif kind == "unequip":
         p.unequip(action.get("slot", ""))
+    elif kind == "map_pins":  # the client's own map pins - saved with the character
+        from game import map_pins
+        p.map_pins = map_pins.clean(action.get("pins"))
+    elif kind == "sort_backpack":
+        p.sort_backpack()  # the backpack's Sort button
+    elif kind == "vault_stash" and s.zone == ZONE_VAULT_ROOM and s.vault_items:
+        from game.items import stash_materials
+        n = stash_materials(p.backpack, s.vault_items, s.vault_chest)
+        if n:
+            save_vault(p.name, s.vault_items)
+            send_msg(s.sock, {"type": "vault_state",
+                               "items": [(it.to_json() if it is not None else None) for it in s.vault_items]})
+        s.story_feed.append((f"Stashed {n} item{'s' if n != 1 else ''}." if n else
+                             "Nothing to stash (or the chest is full).", (200, 220, 190)))
     elif kind == "swap_backpack":
         p.swap_backpack(action.get("i", -1), action.get("j", -1))
     elif kind == "socket_proc":
@@ -679,7 +695,10 @@ def _apply_action(state, s, action):
         # analogous "vault_state" flow for the Vault)
         bags = _bag_list_for_zone(state, s)
         if bags is not None:
-            bag = find_nearby_bag(bags, p.pos, p.pid)
+            from game import loot_filter  # the client's "hide gear bags below" choice rides along
+            hide = action.get("hide_below", 0)
+            hide = hide if hide in loot_filter.HIDE_CHOICES else 0
+            bag = find_nearby_bag(loot_filter.visible_bags(bags, hide), p.pos, p.pid)
             if bag is not None:
                 send_msg(s.sock, {"type": "bag_state", "id": bag.id,
                                    "items": [it.to_json() for it in bag.items]})
@@ -1246,6 +1265,12 @@ def handle_client(sock, addr, state):
         cls_name = join.get("cls", "wizard")
         accounts.touch_account(name)
         saved = characters.load_character(name)
+        # doc 42: the client's single-player character rides along; the further-along copy wins
+        uploaded = characters.validate(join.get("character"), name) if join.get("character") else None
+        chosen = characters.pick_for_join(saved, uploaded)
+        if chosen is not None and chosen is uploaded:
+            print(f"[server] {name}: using the character this player brought along (level {uploaded.get('level')})")
+        saved = chosen
         if saved is not None:
             player = Player.from_full_state(dict(saved, pid=pid, name=name))
             player.alive = True  # a dead character is never saved - see characters.delete_character

@@ -244,9 +244,24 @@ class StoryProgress:
         if act is None:
             return {"act": self.act, "title": FREE_PLAY_TITLE, "hint": FREE_PLAY_HINT, "objectives": []}
         return {"act": self.act, "title": act["title"], "hint": act["hint"],
-                "objectives": [{"text": o["text"], "have": self._count(o), "need": o["need"],
-                                "target": objective_target(o)}
+                "objectives": [dict({"text": o["text"], "have": self._count(o), "need": o["need"],
+                                     "target": objective_target(o)}, **self._places(o))
                                for o in act["objectives"]]}
+
+    PLACE_KINDS = ("area", "landmark", "island", "npc", "guardian", "dungeon", "heroic_dungeon")
+
+    def _places(self, o):
+        """Where this objective has already counted you ("seen") and, for a finite set of places,
+        where you haven't been yet ("todo") - shown under it in the Quest Log."""
+        if o["kind"] not in self.PLACE_KINDS:
+            return {}
+        from game import codex
+        got = [k for k in self.done.get(o["id"], []) if not isinstance(k, int) or o["kind"] == "island"]
+        out = {"seen": [codex.place_name(o["kind"], k) for k in got]}
+        cands = codex.place_candidates(o["kind"], o["keys"])
+        if cands is not None and len(cands) > 1:
+            out["todo"] = [codex.place_name(o["kind"], k) for k in cands if k not in got]
+        return out
 
     def to_json(self):
         return {"act": self.act, "done": {k: list(v) for k, v in self.done.items()}, "v": STORY_VERSION}
