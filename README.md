@@ -255,14 +255,15 @@ The in-game **O** menu shows the same list (`game/ui.py` `HELP_LINES`).
 | F | Context action: pick a night herb, open / close a door next to you, talk to an NPC or animal nearby, open a vault chest, fish at water, wish at the Nexus fountain, talk to Father Given |
 | J | Expand / collapse the small HUD quest log (click it to open the full Quest Log) |
 | T | Track / untrack the selected quest's marker (Quest Log) |
-| K | Calendar: the next 7 nights (moon, weather, events, Blood Moons) and the live-event schedule |
+| K | Calendar (also Options > Journal > Calendar): the next 7 nights (moon, weather, events, Blood Moons) and the live-event schedule - hover / click a row for what it does, drag its title bar to move it |
+| F on Brother Hammerstein | His chat -> **Open the Forge**: Up/Down pick a recipe, Left/Right or Tab switch tabs, Enter = FORGE (twice for destructive work), Esc closes |
 | T (in the Quest Log) | Show / hide the map marker for the selected quest (or click its Show marker button) |
 | Enter | Open chat (with history) / step through the portal you're standing on / open a vault chest |
 | R | Back to the Nexus (Realm) / leave the dungeon |
 | Q / E, X | Rotate the camera, reset rotation |
 | M | Full map (scroll wheel or +/- to zoom; right-drag pans the Quest Map) |
 | L | Friends panel (co-op) |
-| O | Options menu (volumes, effects, FPS cap, auto-fire, fullscreen, Quest Log, Dictionary...) |
+| O | Options menu (volumes, effects, FPS cap, auto-fire, fullscreen, Quest Log, Dictionary, Calendar...) |
 | F11 | Fullscreen (shows more of the world, not a scaled image) |
 | 1-5 in a dialogue | Pick that answer (or click it) |
 | Esc | Close the top-most window (dialogue, journal, map, shop, options, bag, vault chest, trade, menus); with nothing open, asks "quit?" - Esc / Enter / Y quits, N stays |
@@ -337,9 +338,16 @@ zone), `/accept` / `/decline` (trade invites) and
 - **Tiers**: normal loot tops out at T11. **T12-T13** (cyan "mythic" badge)
   only drop in Heroic dungeons, on the big islands and in the Mad God's Room.
   **T14** (red-hot badge) never drops - it's forged.
-- **Brother Hammerstein's Anvil** (Nexus, talk with F): *temper* any 3 gear
-  items of the same tier (mixed slots are fine) into one of the next tier,
-  shaped like the first (Forge Ingots needed from T12 up), or *reforge* a UT with 2 Ingots (+20% damage, proc kept).
+- **Brother Hammerstein's Forge** (Nexus tavern, F on him -> *Open the
+  Forge*): a window with every recipe - no cap - in four tabs. *Temper* any
+  3 gear items of the same tier (mixed slots are fine) into one of the next
+  tier, shaped like the first (Forge Ingots needed from T12 up); *reforge* a
+  UT with 2 Ingots (+20% damage, proc kept); *fuse* 3 Weapon Shards; and
+  *stonework* (set / combine / pry gemstones, with the weapon's sockets
+  drawn). Recipes you can't make yet are listed greyed out with what's
+  missing; the detail panel shows before -> after, each ingredient with how
+  many you own (red when short) and the Ingot cost; destructive work (pry,
+  T12+ items, 2+ Ingots) asks you to click FORGE twice.
 - **Divine items** (the Mad God's Room): a Divine weapon per class
   (*Starfall*: every 4th shot adds 3 piercing star bolts), Divine armor
   (*Second Wind*: a killing blow leaves you at 1 HP, once per 90 s), a Divine
@@ -501,14 +509,18 @@ synthesized at runtime; `tools/export_audio.py` exports them as `.wav`.
 - A framed right dock: day/night clock (countdown, moon phase) with zone
   name and kills, a wide radar minimap with the local danger tier under it,
   player panel, Items / Bag 2 / Shards / Pet tabs, equipment and backpack.
-- The Calendar (K), the Quest Log with markers (J / T), the Dictionary
-  (11 categories, searchable).
+- The Calendar (K or Options; opaque, draggable, explains every event,
+  weather, moon phase and live event, filter chips), the Quest Log with
+  markers (J / T), the Dictionary (11 categories, searchable, every entry
+  tagged CREATURE / BOSS / NIGHT MOB / NEUTRAL / HERB / NPC / PET / ITEM /
+  GEAR / PLACE / DUNGEON / STORY / TIP / MECHANIC with filter chips; tips
+  and mechanics are listed under their own sub-heading as note cards).
 - Draggable chat and HUD quest log (positions saved), a draggable-and-
   resizable game window, FPS counter.
 - **Options (O)**: master / music / SFX volume, mute, fullscreen, FPS cap
   (30 / 60 / 120 / unlimited), show FPS, screen shake, hit-stop, particles
   (off / low / high), auto-fire, Luminosity (night darkness, default 50%),
-  plus Quest Log, Dictionary, reset camera,
+  plus Quest Log, Dictionary, Calendar, reset camera,
   full map, leave. Saved to `settings.json`.
 
 ## Where saves live
@@ -534,7 +546,9 @@ game/big_props.py    multi-tile trees/props art, trunks and canopies
 game/characters.py   per-character save/load
 game/chat_input.py   chat input line: cursor, selection, clipboard, history
 game/clipboard.py    copy/paste helper
-game/codex.py        Dictionary entries built from the game's own tables
+game/calendar_ui.py  the Calendar window (forecast, live events, explanations, drag, filters)
+game/codex.py        Dictionary entries built from the game's own tables + their type tags
+game/forge_menu.py   Brother Hammerstein's Forge window + the server-checked forge_apply
 game/constants.py    screen/tile/net constants + stat and defense formulas
 game/crews.py        crew tags + shared boss-kill counter
 game/dialogue.py     finite dialogue trees + conversation state
@@ -578,7 +592,7 @@ docs/unity-rebuild/  feature-by-feature docs for rebuilding the game in Unity (0
 `run_all_checks.py` finds every `tests/check_*.py` and runs each as its own
 headless process (`SDL_VIDEODRIVER=dummy`, throwaway settings, no music
 rendering, no event rotation) and prints a PASS/FAIL summary - currently
-**83/83**. The checks are plain asserts that drive the real game objects:
+**84/84**. The checks are plain asserts that drive the real game objects:
 single-player `Game`, the co-op server's action handler and real
 client-server sockets, rendered screenshots, timing budgets (e.g. world
 generation < 3 s) and fixed-seed input fuzzing.
@@ -656,7 +670,21 @@ Built in batches; each has a detailed doc in `docs/unity-rebuild/`.
 - **Balance/terrain/UI round (doc 27)** and **Batch 15 "living world"
   (doc 28)**, released together as **Ends of V0.2 (65552b4)**.
 
-### Ends of V0.2 - "final final" content update (current, still v0.2)
+### Ends of V0.2 - "final final fin" UI round (current, still v0.2)
+- **The Forge window** (doc 40): F on Brother Hammerstein -> *Open the
+  Forge*. Every recipe in four tabs (Temper, Reforge, Fuse Shards,
+  Stonework) - no more 3-option cap - with READY / MISSING chips, before ->
+  after, ingredient counts, the weapon's sockets, a confirm step for
+  destructive work and a hammering animation. Co-op: the server re-checks
+  every forge request.
+- **The Calendar** is now in the Options menu too, fully opaque, movable by
+  its title bar (remembered), and explains every night event, weather, moon
+  phase and live event with the real numbers; filter chips.
+- **The Dictionary** tags every entry (14 tags with colour + icon + label),
+  has filter chips (remembered), lists creatures first and tips/mechanics
+  under their own sub-heading as lighter note cards; typing a name picks it.
+
+### Ends of V0.2 - "final final" content update (still v0.2)
 - **Honest telegraphs** (doc 31): no attack re-aims after its warning; spoke
   telegraphs for bullet moves; chained-dash lanes; Crossfire only hits from
   its circles; a test fires every warned move at a strafing player.

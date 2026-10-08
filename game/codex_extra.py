@@ -115,11 +115,14 @@ def world_entries():
         "left over dawn's (the sun comes up in the east). Just after sunset and just before sunrise the dark "
         "turns a cool blue ('blue hour'). Low mist hangs around for a minute at sunrise."))
     out.append(_help("help:calendar", WORLD_CAT, "The Calendar (K)",
-        f"Press K for the Calendar: the next {rs.FORECAST_NIGHTS} nights - when each one falls, the moon's phase, "
+        f"Press K (or Options > Journal > Calendar) for the Calendar: the next {rs.FORECAST_NIGHTS} nights - when each one falls, the moon's phase, "
         "the weather, the night's event, and every BLOOD MOON in red - plus the live-event schedule (Double "
         "Loot, Happy Hour, Blood Moon Week, Two-for-One) with when each starts. The Realm keeps to its schedule: "
         "what the Calendar shows is what happens (a live event that starts in between can still make a Blood "
-        "Moon more likely). Works in co-op too."))
+        "Moon more likely). Hover or click a row and the card on the right explains that night's event, "
+        "weather and moon (or that live event) with the real numbers. Drag the window by its title bar - it "
+        "remembers where you put it - and use the chips at the top to show only Blood Moons or hide the live "
+        "events. Works in co-op too."))
     lo, hi = danger.mults(0.0), danger.mults(1.0)
     out.append(_help("help:danger", WORLD_CAT, "Danger: the closer to the centre, the deadlier",
         "The Realm gets more dangerous the closer you get to the CENTRE of the continent, and gentler toward the "
@@ -173,11 +176,16 @@ def gear_entries():
         "the Blood Moon each roll their own, better tables. Near the centre of the continent kills can roll an "
         "extra bag (see Danger)."))
     out.append(_help("help:anvil", GEAR_CAT, "Brother Hammerstein's Anvil",
-        "In the Nexus tavern. Talk to him (F) to:\n- Temper: any 3 gear items of the same tier -> 1 of the next "
-        "tier (T12+ costs Forge Ingots).\n- Reforge a UT for a fresh roll (costs Ingots).\n- Fuse 3 Weapon Shards "
-        "of one rarity into 1 of the next.\n- Stonework: set Gemstones into your weapon, combine 3 stones into a "
-        "better one, or pry one out.\nForge Ingots drop from Heroic bosses, big-island bosses and the Mad God's "
-        "Room.", sprite={"src": "item", "key": "ingot", "tint": (255, 200, 120)}))
+        "In the Nexus tavern. Talk to him (F) and pick 'Open the Forge': a window with every recipe your "
+        "backpack can make - and the ones it can't yet, greyed out with what's missing - in four tabs:\n"
+        "- Temper: any 3 gear items of the same tier -> 1 of the next tier (T12+ costs Forge Ingots).\n"
+        f"- Reforge (UT): a UT weapon + {forge.REFORGE_INGOTS} Ingots -> a Reforged UT that hits "
+        f"{int(round((forge.REFORGE_DMG_MULT - 1) * 100))}% harder.\n- Fuse Shards: 3 Weapon Shards of one rarity -> "
+        "1 of the next.\n- Stonework: set Gemstones into your weapon, combine 3 stones into a better one, or pry "
+        "one out.\nPick a recipe on the left: the right side shows what you get (before -> after), every "
+        "ingredient with how many you own (red when short) and the Ingot cost. FORGE (or Enter) does it after a "
+        "few hammer blows. Prying a stone, or anything that eats a T12+ item or 2+ Ingots, asks you to click "
+        "twice.\nForge Ingots drop from Heroic bosses, big-island bosses and the Mad God's Room.", sprite={"src": "item", "key": "ingot", "tint": (255, 200, 120)}))
     out.append(_help("help:gems", GEAR_CAT, "Gemstones",
         "Seven stones, each an element: Ruby (fire), Sapphire (frost), Topaz (lightning), Emerald (venom), "
         "Amethyst (arcane), Onyx (shadow) and Diamond (radiant). Five grades - Chipped, Flawed, Regular, "
@@ -197,12 +205,13 @@ def gear_entries():
                         text=f"{name}: {what}.\n\nResonant (3 {name}s in one weapon): {gems.RESONANT[kind]}.",
                         where={"biomes": [], "areas": []}))
     out.append(_help("help:stonework", GEAR_CAT, "Stonework at the Anvil",
-        "'Stonework: gems and sockets...' on Brother Hammerstein's menu:\n"
+        "The Stonework tab of Brother Hammerstein's Forge window (F on him -> Open the Forge) draws your "
+        "weapon's sockets with the stones in them and what they add:\n"
         "- Set a stone from your backpack into your EQUIPPED weapon (a Flawless stone costs "
         f"{gems.SET_INGOTS['flawless']} Forge Ingot, a Perfect {gems.SET_INGOTS['perfect']}).\n"
         "- Combine 3 identical stones into 1 of the next grade (Flawless -> Perfect costs "
-        f"{gems.COMBINE_INGOTS['flawless']} Ingot).\n- Pry out the last stone set - it shatters.\nTwo alike hum "
-        "together; three SING."))
+        f"{gems.COMBINE_INGOTS['flawless']} Ingot).\n- Pry out the last stone set - it shatters (you confirm first).\n"
+        "Two alike hum together; three SING."))
     out.append(_help("help:gem_veins", GEAR_CAT, "Gem veins",
         "Glittering rocks in the highlands, desert, tundra, caves, the Ashlands and the jungle - each biome has "
         "its own mix of stones. Stand next to one and press F: a short dig (walk away to cancel), then a "

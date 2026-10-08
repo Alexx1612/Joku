@@ -88,7 +88,8 @@ def check_every_tree_is_finite_and_has_bye():
             assert len(v["options"]) <= dialogue.MAX_OPTIONS
             if len(v["options"]) == 1:
                 break
-            conv.choose(0)
+            # walk the chat itself ("Open the Forge" just hands over to the Forge window)
+            conv.choose(next(i for i, o in enumerate(v["options"]) if o != dialogue.OPEN_FORGE))
         # chat topics collapse across conversations too (not endless)
         again = dialogue.Conversation(conv.player, npc_id=npc_id)
         again.start()
@@ -441,7 +442,7 @@ def check_coop_client_dialogue_gui():
         def pop_whispers(self):
             return []
 
-        pop_trade_notices = pop_pet_results = pop_echo_shop_states = pop_whispers
+        pop_trade_notices = pop_pet_results = pop_echo_shop_states = pop_forge_results = pop_whispers
 
         def pop_story(self):
             return [], []

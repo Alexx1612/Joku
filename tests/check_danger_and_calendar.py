@@ -168,10 +168,127 @@ def check_calendar_ui_and_clock():
     print("check_calendar_ui_and_clock: PASSED")
 
 
+def check_calendar_window():
+    """Opaque, draggable (position saved), explained, filterable, and in the Options menu."""
+    from game import settings, ui, night as nm, night_sky as ns
+    from game.panel_drag import PanelDrag
+    settings.SETTINGS_PATH = os.path.join(tempfile.mkdtemp(prefix="rr_dc_set_"), "settings.json")
+    ui.PANEL_OFFSETS.pop("calendar", None)
+    live_events._rotation = True  # the live-event rows (restored at the end)
+    SIM.day_time = 100
+    clock = SIM.clock_info()
+    cal = calendar_ui.CalendarWindow()
+    cal.open = True
+    # opaque: nothing of a pure-red world may show anywhere inside the window
+    screen.fill((255, 0, 0))
+    cal.draw(screen, clock)
+    r = calendar_ui.rect()
+    assert screen.get_rect().contains(r)
+    for x in range(r.x + 4, r.right - 4, 7):
+        for y in range(r.y + 4, r.bottom - 4, 7):
+            assert screen.get_at((x, y))[:3] != (255, 0, 0), ("see-through at", x, y)
+    # every event, weather, moon phase and live event is explained, with the real numbers
+    for key in rs.NIGHT_EVENT_LABELS:
+        t = calendar_ui.event_text(key)
+        assert len(t) > 60 and "quiet night" not in t, key
+    assert str(nm.FOG_LIGHT_MULT) in calendar_ui.event_text("fog")
+    assert str(nm.LAMPLIGHTER_HP) in calendar_ui.event_text("lamplighter")
+    assert str(nm.BLOOD_SURVIVOR_XP) in calendar_ui.event_text("blood_moon")
+    assert str(nm.HUNTER_HP_MULT) in calendar_ui.event_text("hunter")
+    for w, _wt in ns.NIGHT_WEATHER:
+        assert len(calendar_ui.weather_text(w)) > 30, w
+    assert "lightning" in calendar_ui.weather_text("storm")
+    for ph in range(len(rs.MOON_PHASES)):
+        assert rs.MOON_PHASES[ph] in calendar_ui.moon_text(ph)
+    assert f"x{rs.FULL_MOON_BLOOD_MULT}" in calendar_ui.moon_text(4)
+    for key in live_events.EVENTS:
+        assert live_events.EVENTS[key]["label"] in calendar_ui.live_text(key)
+    assert "x2.5" in calendar_ui.live_text("blood_moon_week") and "+50% XP" in calendar_ui.live_text("happy_hour")
+    # clicking a row selects it (its detail shows), Up/Down walk the rows
+    rows = cal.rows(clock)
+    assert [k for k, _r in rows][:2] == [("night", 0), ("night", 1)] and any(k[0] == "live" for k, _r in rows)
+    pd = PanelDrag()
+    assert cal.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=rows[2][1].center), pd, clock)
+    assert cal.sel == ("night", 2)
+    cal.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_DOWN, mod=0, unicode=""), pd, clock)
+    assert cal.sel == ("night", 3)
+    # WASD is NOT swallowed (you can walk with the calendar up)
+    assert not cal.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_w, mod=0, unicode="w"), pd, clock)
+    # drag by the title bar: it moves, the position is saved, and it stays on-screen
+    tb = calendar_ui.title_rect()
+    start = (tb.x + 80, tb.centery)
+    before = calendar_ui.rect().topleft
+    cal.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=start), pd, clock)
+    cal.handle_event(pygame.event.Event(pygame.MOUSEMOTION, pos=(start[0] + 60, start[1] + 40), rel=(60, 40),
+                                        buttons=(1, 0, 0)), pd, clock)
+    cal.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=(start[0] + 60, start[1] + 40)), pd, clock)
+    after = calendar_ui.rect().topleft
+    assert (after[0] - before[0], after[1] - before[1]) == (60, 40), (before, after)
+    assert settings.get("panel_offsets").get("calendar") == [60, 40]
+    ui.set_panel_offset("calendar", (5000, 5000))
+    assert screen.get_rect().contains(calendar_ui.rect())
+    ui.PANEL_OFFSETS.pop("calendar", None)
+    # filter chips persist; "Blood Moons only" shows only Blood Moon nights
+    chips = dict(calendar_ui.chip_rects())
+    cal.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=chips["live"].center), pd, clock)
+    assert "live" not in cal.filter and "live" not in settings.get("calendar_filter")
+    assert calendar_ui.CalendarWindow().filter == cal.filter
+    cal.toggle_filter("blood")
+    fc = clock["forecast"]
+    assert all(fc[k[1]][3] for k, _r in cal.rows(clock)), "only Blood Moon nights"
+    cal.draw(screen, clock)
+    cal.toggle_filter("nights")  # nights off -> blood off too
+    assert not {"nights", "blood"} & cal.filter
+    cal.draw(screen, clock)
+    cal.toggle_filter("nights")
+    cal.toggle_filter("live")
+    # the close X and Esc close it
+    cal.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=calendar_ui.close_rect().center), pd, clock)
+    assert not cal.open
+    cal.open = True
+    cal.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE, mod=0, unicode=""), pd, clock)
+    assert not cal.open
+    live_events._rotation = False
+    print("check_calendar_window: PASSED")
+
+
+def check_calendar_in_options_menu():
+    import main
+    import coop_client
+    g = main.Game()
+    g.player_name = "CalSP"
+    g.start_run("wizard")
+    labels = [r.label for r in g._menu_items()]
+    i = labels.index("Calendar")
+    assert labels[i - 1] == "Dictionary" and labels[i - 2] == "Quest Log", labels
+    g.help_open = True
+    g._menu_items()[i].action()
+    assert g.calendar.open and not g.help_open
+    g.draw()
+    pygame.event.post(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE, mod=0, unicode=""))
+    g.handle_events()
+    assert not g.calendar.open and not g.quit_confirm_open, "Esc closes the calendar first"
+    pygame.event.post(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_k, mod=0, unicode="k"))
+    g.handle_events()
+    assert g.calendar.open, "K still works"
+    client = coop_client.CoopClient("127.0.0.1", 0, "CalCoop")
+    client.state = coop_client.STATE_PLAY
+    labels = [r.label for r in client._menu_items()]
+    assert "Calendar" in labels
+    client._menu_items()[labels.index("Calendar")].action()
+    assert client.calendar.open
+    client.draw()
+    from game import ui
+    assert any(k.startswith("Calendar") and "Options" in v for k, v in ui.HELP_LINES)
+    print("check_calendar_in_options_menu: PASSED")
+
+
 if __name__ == "__main__":
     check_danger_gradient()
     check_danger_survives_night_rules()
     check_rewards_and_dungeons()
     check_forecast_comes_true()
     check_calendar_ui_and_clock()
+    check_calendar_window()
+    check_calendar_in_options_menu()
     print("\nALL DANGER + CALENDAR CHECKS PASSED")

@@ -54,6 +54,8 @@ from game import gates
 from game import dialogue
 from game import npcs
 from game import journal
+from game import calendar_ui
+from game import forge_menu
 from game import codex
 from game import sidequests
 from game.entities import (Player, Bag, Portal, NexusBot, find_nearby_bag, bag_by_id,
@@ -92,7 +94,7 @@ class Game:
         audio.play_theme()
         self.fullscreen = False
         self.help_open = False
-        self.calendar_open = False  # K: the in-game calendar (game/calendar_ui.py)
+        self.calendar = calendar_ui.CalendarWindow()  # K / Options: the in-game calendar (game/calendar_ui.py)
         self.menu_selected = 0
         self.quit_confirm_open = False  # Esc with nothing else open asks before quitting
         self.panel_drag = PanelDrag()  # mouse-draggable chat log / quest log
@@ -155,6 +157,9 @@ class Game:
         self.nexus_npcs = npcs.spawn_nexus_npcs(self.nexus_map)  # Batch 15 friendly NPCs (game/npcs.py)
         self.dialogue = None  # the open dialogue.Conversation, or None
         self.journal = journal.Journal()  # Quest Log / Dictionary / Quest Map windows (game/journal.py)
+        self.forge = forge_menu.ForgeWindow()  # Brother Hammerstein's Forge (F on him -> Open the Forge)
+        self.forge.on_apply = self._forge_apply
+        self.forge.on_fx = self._forge_fx
         self.cam = world.Camera(C.SCREEN_W, C.SCREEN_H)
         # small, static, always-safe maps - no exploration/fog gameplay needed, just
         # shown fully-revealed from the start so the right-docked HUD is consistent
@@ -446,7 +451,8 @@ class Game:
             full_map=(lambda: mm.full_map_open, self._menu_toggle_full_map) if mm is not None else None,
             leave=("Abandon run (Class Select)", self._menu_quit_to_class_select)
             if self.state != STATE_CLASS_SELECT else None,
-            journal=[("Quest Log", self._open_quest_log), ("Dictionary", self._open_dictionary)]
+            journal=[("Quest Log", self._open_quest_log), ("Dictionary", self._open_dictionary),
+                     ("Calendar", self._open_calendar)]
             if self.player is not None else None)
 
     def _open_quest_log(self):
@@ -456,6 +462,13 @@ class Game:
     def _open_dictionary(self):
         self.help_open = False
         self.journal.open_dictionary()
+
+    def _open_calendar(self):
+        self.help_open = False
+        self.calendar.open = True
+
+    def _calendar_clock(self):
+        return self.realm_sim.clock_info() if self.realm_sim is not None else None
 
     def _journal_ctx(self):
         """What the Quest Log / Dictionary / Quest Map need (see game/journal.py)."""
@@ -605,6 +618,10 @@ class Game:
                 continue
             if self.journal.is_open() and self.journal.handle_event(event, self._journal_ctx()):
                 continue
+            if self.forge.is_open() and self.forge.handle_event(event, self.player):
+                continue
+            if self.calendar.open and self.calendar.handle_event(event, self.panel_drag, self._calendar_clock()):
+                continue
             if self.dialogue is not None and event.type in (pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN):
                 choice = ui.dialogue_choice_for_event(event, self.dialogue.view())
                 if choice is not None:
@@ -661,7 +678,7 @@ class Game:
                 elif event.key == pygame.K_j and self.player is not None:
                     self.quest_log_expanded = not self.quest_log_expanded
                 elif event.key == pygame.K_k and self.player is not None:
-                    self.calendar_open = not self.calendar_open
+                    self.calendar.toggle()
                 elif event.key == pygame.K_i and self.state in (STATE_REALM, STATE_BONUS):
                     self._set_auto_fire(not self.auto_fire_enabled)
                     self.push_feed(f"Auto-fire {'ON' if self.auto_fire_enabled else 'OFF'}",
@@ -688,8 +705,6 @@ class Game:
                 elif event.key == pygame.K_ESCAPE:
                     if self._map_open():
                         self._current_minimap().full_map_open = False
-                    elif self.calendar_open:
-                        self.calendar_open = False
                     elif self.help_open:
                         self.help_open = False
                     elif self.echo_shop_open:
@@ -1411,20 +1426,34 @@ class Game:
         self._play_dialogue_sfx(conv)
         if view is None:
             self.dialogue = None
+        if conv.open_forge:
+            self.forge.open_window()
+
+    def _anvil_pos(self):
+        npc = next((n for n in getattr(self, "nexus_npcs", ()) if getattr(n, "npc_id", None) == "hammerstein"), None)
+        return npc.pos if npc is not None else self.player.pos
+
+    def _forge_apply(self, recipe, confirmed=False):
+        """The Forge window's FORGE (after its hammering animation): do it, report it."""
+        res = forge_menu.apply(self.player, recipe)
+        for msg, color in res["feed"]:
+            self.push_feed(msg, color)
+        return res
+
+    def _forge_fx(self, key, color=None):
+        """Forge window sounds + sparks at the Anvil (hammer, success, stonework in the stone's colour)."""
+        audio.play_event(key)
+        at = self._anvil_pos()
+        if key == "forge_success":
+            vfx.dispatch([("forge_sparks", at.x, at.y, (255, 190, 90))])
+        elif key in ("gem_set", "gem_combine", "gem_pry"):
+            vfx.dispatch([("gem_forge", at.x + 30, at.y + 4, color or (230, 230, 240))])
 
     def _play_dialogue_sfx(self, conv):
-        """A conversation's sound cues (the Anvil's hammer / forge_success, a trial's sting),
-        plus a burst of forge sparks at the NPC when something came off the Anvil."""
+        """A conversation's sound cues (the Anvil's hammer when you walk up, a trial's sting).
+        Forging itself happens in the Forge window - see _forge_fx."""
         for key in conv.sfx:
             audio.play_event(key)
-            if key == "forge_success":
-                npc = next((n for n in getattr(self, "nexus_npcs", ()) if n.npc_id == conv.npc_id), None)
-                at = npc.pos if npc is not None else self.player.pos
-                vfx.dispatch([("forge_sparks", at.x, at.y, (255, 190, 90))])
-            elif key in ("gem_set", "gem_combine", "gem_pry"):  # stonework: sparks in the stone's colour
-                npc = next((n for n in getattr(self, "nexus_npcs", ()) if n.npc_id == conv.npc_id), None)
-                at = npc.pos if npc is not None else self.player.pos
-                vfx.dispatch([("gem_forge", at.x + 30, at.y + 4, getattr(conv, "gem_flash", None) or (230, 230, 240))])
         conv.sfx = []
 
     def _vision_mult(self, clock, lights_world, night):
@@ -1765,6 +1794,8 @@ class Game:
             self.player.quest_msgs.clear()
         if self.dialogue is not None and self.state not in (STATE_NEXUS, STATE_REALM, STATE_BONUS):
             self.dialogue = None  # zone changed under an open conversation
+        if self.forge.is_open() and self.state != STATE_NEXUS:
+            self.forge.close()  # the Anvil is in the Nexus
         for m in self.feed:
             m[2] -= dt
         self.feed = [m for m in self.feed if m[2] > 0]
@@ -1783,7 +1814,7 @@ class Game:
         if self.state in (STATE_CLASS_SELECT, STATE_DEAD):
             pass
         elif (not self.chat_open and not self.help_open and not self.quit_confirm_open and self.dialogue is None
-              and not self.journal.is_open()):
+              and not (self.journal.is_open() or self.forge.is_open())):
             keys = pygame.key.get_pressed()
             if keys[pygame.K_q]:
                 self.cam.rotate(-self.ROTATE_SPEED_DEG * dt)
@@ -1800,7 +1831,7 @@ class Game:
             # above - otherwise WASD leaks through the menu and moves the player
             # by accident while browsing it.
             keys = None if (self.chat_open or self.help_open or self.echo_shop_open or self.quit_confirm_open
-                            or self.dialogue is not None or self.journal.is_open()) else pygame.key.get_pressed()
+                            or self.dialogue is not None or (self.journal.is_open() or self.forge.is_open())) else pygame.key.get_pressed()
             self.player.update(dt, keys, tmap.bounds(), tmap.is_solid, tmap.speed_multiplier,
                                 cam_angle=self.cam.angle)
             if self.player.pet is not None:
@@ -1840,7 +1871,7 @@ class Game:
             mm.reveal(p.pos, radius=weather.reveal_radius_for(weather_kind, minimap.REVEAL_RADIUS_TILES))
             return
         keys = None if (self.chat_open or self.help_open or self.quit_confirm_open
-                        or self.dialogue is not None or self.journal.is_open()) else pygame.key.get_pressed()
+                        or self.dialogue is not None or (self.journal.is_open() or self.forge.is_open())) else pygame.key.get_pressed()
         prev_pos = pygame.Vector2(p.pos)
         p.update(dt, keys, sim.realm_map.bounds(), sim.is_solid_at, sim.realm_map.speed_multiplier,
                  cam_angle=self.cam.angle)
@@ -1936,7 +1967,7 @@ class Game:
 
     def _handle_firing(self, p, sim, dt):
         if (self.chat_open or self.help_open or self.quit_confirm_open or self.dialogue is not None
-                or self.journal.is_open()):
+                or (self.journal.is_open() or self.forge.is_open())):
             self._fire_buffer = 0.0
             return  # typing, or browsing the options menu, shouldn't also fire your weapon
         wants_fire = (self.auto_fire_enabled or pygame.mouse.get_pressed()[0]) and not self._ui_click_active
@@ -2000,9 +2031,8 @@ class Game:
                                  f"Earned {d.get('earned_echoes', 0)} Echoes. "
                                  f"Permadeath - press Enter or click below to try again.", (220, 60, 60))
             ui.draw_death_screen_button(s, pygame.mouse.get_pos())
-        if self.calendar_open:
-            from game import calendar_ui
-            calendar_ui.draw(s, self.realm_sim.clock_info() if self.realm_sim is not None else None)
+        if self.calendar.open:
+            self.calendar.draw(s, self._calendar_clock(), pygame.mouse.get_pos())
         if self.help_open:
             items = self._menu_items()
             self.menu_selected %= len(items)
@@ -2014,6 +2044,8 @@ class Game:
                                        selected_idx=self.echo_shop_selected, mouse_pos=pygame.mouse.get_pos())
         if self.dialogue is not None:
             ui.draw_dialogue(s, self.dialogue.view(), pygame.mouse.get_pos())
+        if self.forge.is_open():
+            self.forge.draw(s, self.player, pygame.mouse.get_pos(), 1 / max(1, self.clock.get_fps() or 60))
         if self.cmd_panel is not None:
             ui.draw_cmd_panel(s, self.cmd_panel)
         if self.journal.is_open():
@@ -2100,7 +2132,7 @@ class Game:
         self._draw_speech_bubbles(s)
         vfx.draw(s, self.cam)
         self._draw_quest_markers_world(s, qmarks)
-        if not (self.help_open or self.journal.is_open() or getattr(self, "dialogue", None) is not None
+        if not (self.help_open or (self.journal.is_open() or self.forge.is_open()) or getattr(self, "dialogue", None) is not None
                 or getattr(self, "echo_shop_open", False)):
             # hidden under full windows: it showed through the options panel's title bar
             hint = ui._FONT_M.render(hint_text, True, (220, 210, 230))
@@ -2113,7 +2145,7 @@ class Game:
         ui.draw_dock_frame(s, self.player)
         ui.draw_hud(s, name, None, False)  # hubs: no kill counter
         if not (self.echo_shop_open or self.help_open or self.vault_chest_open is not None
-                or self.dialogue is not None or self.journal.is_open()):  # a modal overlay owns that space
+                or self.dialogue is not None or (self.journal.is_open() or self.forge.is_open())):  # a modal overlay owns that space
             ui.draw_story_log(s, self.player.story.quest_log(), self.quest_log_expanded,
                               side=self.player.sidequests.log(self.player), tracked=self.player.tracked_quests)
         if settings.get("show_fps"):
@@ -2274,7 +2306,7 @@ class Game:
         if self._portal_prompt is not None:
             ui.draw_portal_prompt(s)
         if ((not sim.is_bonus_room or sim.theme_key == "forge") and not self.help_open
-                and self.dialogue is None and not self.journal.is_open()):
+                and self.dialogue is None and not (self.journal.is_open() or self.forge.is_open())):
             ui.draw_story_log(s, self.player.story.quest_log(), self.quest_log_expanded,
                               side=self.player.sidequests.log(self.player), tracked=self.player.tracked_quests)
         else:

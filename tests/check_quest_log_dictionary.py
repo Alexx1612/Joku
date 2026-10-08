@@ -67,7 +67,7 @@ def check_dictionary_coverage_and_search():
     cats = {c for c, _l in codex.CATEGORIES}
     assert all(e["cat"] in cats for e in codex.entries())
     assert any(e["id"] == "enemy:deer" for e in codex.search("deer"))
-    assert codex.search("fusion")[0]["id"] == "help:fusion"
+    assert "help:fusion" in [e["id"] for e in codex.search("fusion")]
     assert any(e["id"] == "help:bond" for e in codex.search("bond"))
     assert codex.search("zzzqqq") == []
     # the stats shown come straight from ENEMY_KINDS
@@ -194,7 +194,12 @@ def check_singleplayer_windows():
     pets_idx = [c for c, _l in codex.CATEGORIES].index("pets")
     _click(g.journal._cat_rect(r, pets_idx).center)
     g.handle_events()
-    assert g.journal.cat == "pets" and g.journal.sel == "help:pets"
+    # creatures first, then the "Tips & mechanics" sub-heading and the how-to pages
+    assert g.journal.cat == "pets" and g.journal.sel == codex.filter_entries("", "pets")[0]["id"]
+    assert g.journal.sel.startswith("pet:"), g.journal.sel
+    kinds = [k for k, _e in g.journal._rows()]
+    assert kinds.count("header") == 1 and g.journal._row_index("help:pets") > kinds.index("header")
+    g.journal.sel = "help:pets"
     g.draw()
     _shot(g.screen, "p1b_pets_help.png")
     # a plain click on the small HUD quest log opens the full Quest Log
@@ -267,7 +272,7 @@ def check_coop_client_windows_and_snapshot_areas():
         def pop_whispers(self):
             return []
 
-        pop_trade_notices = pop_pet_results = pop_echo_shop_states = pop_whispers
+        pop_trade_notices = pop_pet_results = pop_echo_shop_states = pop_forge_results = pop_whispers
 
         def pop_story(self):
             return [], []

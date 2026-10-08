@@ -64,7 +64,76 @@ def check_new_systems_have_entries():
     print(f"check_new_systems_have_entries: PASSED ({len(REQUIRED)} entries, {len(SEARCHES)} searches)")
 
 
+def check_every_entry_is_tagged():
+    """One type tag per entry (codex.entry_tag), creatures wear creature tags, every help:
+    page is a TIP or a MECHANIC, and the chips filter (OR between chips, AND with search)."""
+    from game.entities import ENEMY_KINDS
+    es = codex.entries()
+    assert all(e.get("tag") in codex.TAGS for e in es)
+    assert all(codex.entry_tag(e) == e["tag"] for e in es)
+    for label, abbr, col, icon in codex.TAGS.values():
+        assert label and abbr and icon and len(col) == 3  # colour is never the only cue
+    for e in es:
+        if e["id"].startswith("enemy:"):
+            assert e["tag"] in codex.CREATURE_TAGS, (e["id"], e["tag"])
+        if e["id"].startswith("help:"):
+            assert e["tag"] in codex.NOTE_TAGS, (e["id"], e["tag"])
+        if e["id"].startswith("npc:") and e["cat"] == "npcs":
+            assert e["tag"] == "npc", e["id"]
+        if e["id"].startswith("pet:"):
+            assert e["tag"] == "pet"
+    ids = {e["id"] for e in es}
+    assert codex.TIP_IDS <= ids, codex.TIP_IDS - ids
+    assert codex.entry("enemy:red_harvester")["tag"] == "boss"
+    assert codex.entry("enemy:shade_stalker")["tag"] == "night_mob"
+    assert codex.entry("enemy:goblin")["tag"] == "creature"
+    herb = next(k for k, d in ENEMY_KINDS.items() if d.get("herb"))
+    assert codex.entry(f"enemy:{herb}")["tag"] == "herb"
+    assert codex.entry("help:stonework")["tag"] == "tip" and codex.entry("help:blood_moon")["tag"] == "mechanic"
+    # every tag is used by something
+    assert {e["tag"] for e in es} == set(codex.TAGS), set(codex.TAGS) - {e["tag"] for e in es}
+    # filtering: chips OR together, AND with the search; chips span every category
+    tips = codex.filter_entries("", "mobs", {"tip"})
+    assert tips and all(e["tag"] == "tip" for e in tips) and len({e["cat"] for e in tips}) > 1
+    both = codex.filter_entries("", None, {"boss", "night_mob"})
+    assert {e["tag"] for e in both} == {"boss", "night_mob"}
+    red = codex.filter_entries("harvester", None, {"boss", "night_mob"})
+    assert red and all(e["tag"] in ("boss", "night_mob") and "harvester" in e["search"] for e in red)
+    assert len(red) < len(both) and "help:blood_moon" not in [e["id"] for e in red]
+    # world content first, then the tips & mechanics (each category, and any search)
+    for cat, _l in codex.CATEGORIES:
+        lst = codex.filter_entries("", cat)
+        notes = [codex.is_note(e) for e in lst]
+        assert notes == sorted(notes), cat
+    # the window: chip clicks filter, the "Tips & mechanics" sub-heading sits after the world rows
+    from game import journal, settings
+    import tempfile
+    settings.SETTINGS_PATH = os.path.join(tempfile.mkdtemp(prefix="rr_dict_set_"), "settings.json")
+    j = journal.Journal()
+    j.open_dictionary()
+    j._pick_category("pets")
+    rows = j._rows()
+    h = [k for k, _e in rows].index("header")
+    assert all(not codex.is_note(e) for _k, e in rows[:h]) and all(codex.is_note(e) for _k, e in rows[h + 1:])
+    r = j._dict_rects()
+    chip = dict((t, rc) for t, rc in j._chip_rects(r))
+    j._click(chip["tip"].center, {})
+    assert j.tags == {"tip"} and settings.get("dict_tags") == ["tip"]
+    assert all(e["tag"] == "tip" for e in j._list())
+    assert journal.Journal().tags == {"tip"}, "the chips are remembered"
+    j._click(chip[None].center, {})
+    assert not j.tags and settings.get("dict_tags") == []
+    # the whole window fits at 1366x820 (chips, categories, list, detail)
+    from game import constants as C
+    win = r["win"]
+    assert pygame.Rect(0, 0, C.SCREEN_W, C.SCREEN_H).contains(win)
+    assert all(win.contains(rc) for _t, rc in r["chips"])
+    assert win.contains(j._cat_rect(r, len(codex.CATEGORIES) - 1)) and win.contains(r["mid"])
+    print(f"check_every_entry_is_tagged: PASSED ({len(es)} entries, {len(codex.TAGS)} tags)")
+
+
 if __name__ == "__main__":
     check_every_mob_and_npc()
     check_new_systems_have_entries()
+    check_every_entry_is_tagged()
     print("\nALL DICTIONARY COMPLETENESS CHECKS PASSED")

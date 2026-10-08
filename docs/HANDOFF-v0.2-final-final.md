@@ -12,7 +12,7 @@ It is committed **locally only**: not pushed, and the release has not been rebui
 ## Where to look first
 - `README.md`: features (story, items/forge, Heroic, islands, Mad God's Room), and version history "final final".
 - `GAME_DATA.md`: its new top section holds every new number and name.
-- `docs/unity-rebuild/31` to `34`: rebuild-level detail for each part below. The index is `00-INDEX.md`.
+- `docs/unity-rebuild/31` to `40`: rebuild-level detail for each part below. The index is `00-INDEX.md`.
 
 ## What this session did
 1. **Telegraphs never lie** (doc 31, `game/enemy_attacks.py`)
@@ -79,6 +79,20 @@ It is committed **locally only**: not pushed, and the release has not been rebui
     - **Dawn/dusk light:** reworked into a soft band that travels left to right at dusk and right to left at dawn.
     - **Dictionary:** the new categories Gear & Crafting and Night & World.
     - **Pacing re-measured:** median 105.4 min (Act II about twice as long).
+11. **The Forge window, the Calendar in Options, the tagged Dictionary (doc 40, "final final fin" session)**
+    - **Forge:** F on Brother Hammerstein → his chat → **Open the Forge** (`game/forge_menu.py`).
+      - Four tabs: Temper / Reforge (UT) / Fuse Shards / Stonework. Every recipe is listed, with no cap.
+      - Blocked recipes show the reason. The detail panel shows before → after, ingredient counts and sockets.
+      - A confirm step guards pry, T12+ items and 2+ Ingots. A 0.6 s hammering animation plays before the result.
+      - Co-op: `forge_apply` is re-validated by the server (`forge_menu.apply_request`, Nexus only, ≤180 px from the Anvil).
+      - The old forge / stonework dialogue nodes are gone.
+    - **Calendar** (`CalendarWindow`): also in Options → Journal. It's opaque, drags by its title bar (saved in `panel_offsets`), and has a detail card that explains every event, weather, moon phase and live event from the constants. Filter chips are saved in `calendar_filter`.
+    - **Dictionary:** `codex.entry_tag` gives one of 14 tags. It also has:
+      - filter chips (OR between chips, AND with search; saved in `dict_tags`)
+      - world content first, then a "Tips & mechanics" sub-heading
+      - TIP / MECHANIC entries drawn as note cards
+      - typing a name selects it
+    - **Screenshots:** `tools/snap_ui_windows.py` → `screenshots/2026-10-08/{forge_menu,calendar_menu,dictionary_redesign}/`.
 
 ## Checkpoint commits (local, on top of 23123be)
 - `cf3a9ec`: telegraphs, story v2, NetLink fix
@@ -87,7 +101,7 @@ It is committed **locally only**: not pushed, and the release has not been rebui
 - `2b134b5`: Mad God's Room, effects wiring, docs
 
 ## Conventions (unchanged, keep following)
-- Run `python tests/run_all_checks.py` after every batch. There are now **83 scripts**. `check_areas_trees_bosses` and `check_big_islands` can flake on the random map or timing; re-run them alone.
+- Run `python tests/run_all_checks.py` after every batch. There are now **84 scripts** (doc 40 added `check_forge_menu`). `check_areas_trees_bosses` and `check_big_islands` can flake on the random map or timing; re-run them alone.
 - Look at headless screenshots for visual work: set `RR_SHOT_DIR` for the new checks.
 - All art and music must be original.
 - Don't commit, push or release without the user's OK.

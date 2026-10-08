@@ -669,29 +669,24 @@ def _wrap_text(text, font, max_width):
 TOOLTIP_WRAP_WIDTH = 240
 
 
-def _tooltip(surf, pos, item):
-    lines = [item.display_name]
-    stat_line_count = 0
+def item_stat_lines(item):
+    """An item's stat lines (damage, bonuses, ability, proc, sockets, pet levels) - the middle
+    of its tooltip, also shown by the Forge window (game/forge_menu.py)."""
+    lines = []
     if item.min_dmg or item.max_dmg:
         lines.append(f"Damage: {item.min_dmg}-{item.max_dmg}")
-        stat_line_count += 1
     _special = {"heal": "{v}% HP healed", "glow": "+{v}% light radius (2 min)",
                 "luck": "Extra loot chance (4 min)"}
     for k, v in item.stat_bonus.items():
         lines.append(_special[k].format(v=v) if k in _special else f"+{v} {k.upper()}")
-        stat_line_count += 1
     if item.effect:
         from game.items import ability_power
         lines.append(f"{item.effect.title()}: {ability_power(item)} dmg/hp, {item.mp_cost} MP")
-        stat_line_count += 1
     if item.proc:
         lines.append(item.proc)
-        stat_line_count += 1
     if item.slot == "weapon":
         from game import gems as _gems  # sockets and the stones forged into them
-        gl = _gems.describe_weapon(item)
-        lines.extend(gl)
-        stat_line_count += len(gl)
+        lines.extend(_gems.describe_weapon(item))
     if item.pet_state:
         from game.items import PET_KINDS, PET_RARITY_MAX_LEVEL, pet_bond_level, pet_is_maxed
         rarity = PET_KINDS.get(item.pet_kind, {}).get("rarity", "common")
@@ -702,7 +697,13 @@ def _tooltip(surf, pos, item):
         lines.append("Lv " + " ".join(f"{k[0].upper()}{levels.get(k, 1)}" for k in ("heal", "magic", "attack"))
                      + f"  (cap {cap})")
         lines.append(f"Bond {bond_lvl} (x{1 + 0.04 * bond_lvl:.2f} power)")
-        stat_line_count += 3
+    return lines
+
+
+def _tooltip(surf, pos, item):
+    stats = item_stat_lines(item)
+    lines = [item.display_name] + stats
+    stat_line_count = len(stats)
     desc_lines = _wrap_text(item.description, _FONT_S, TOOLTIP_WRAP_WIDTH) if item.description else []
     lines.extend(desc_lines)
     w = max(max(_FONT_S.size(l)[0] for l in lines) + 16, 120)
@@ -1430,7 +1431,7 @@ HELP_LINES = [
     ("Dock tabs (Items/Bag 2/Shards/Pet)", "Tab"),
     ("Talk / door / herb / mine / fish", "F"),
     ("Quest log / track marker", "J / T"),
-    ("Calendar (nights, events)", "K"),
+    ("Calendar (nights, events)", "K / Options"),
     ("Chat / enter portal", "Enter"),
     ("Nexus / leave dungeon", "R"),
     ("Rotate camera", "Q / E"),

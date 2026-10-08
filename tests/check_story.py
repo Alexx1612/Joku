@@ -541,7 +541,7 @@ def check_coop_client_quest_log():
         def pop_whispers(self):
             return []
 
-        pop_trade_notices = pop_pet_results = pop_echo_shop_states = pop_whispers
+        pop_trade_notices = pop_pet_results = pop_echo_shop_states = pop_forge_results = pop_whispers
 
         def pop_dialogue(self):
             return None

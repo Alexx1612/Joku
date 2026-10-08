@@ -105,19 +105,33 @@ def reforge_result(item):
                   description=(item.description + " Reforged at the Anvil: it hits noticeably harder now.").strip())
 
 
-def forge_options(player, limit=3):
+def _plural(n, word):
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def forge_options(player, limit=3, include_blocked=False):
     """Recipes the player's BACKPACK can make right now (equipped gear is never used), best first.
-    Each: {kind, label, use: [items], ingots: [items], result: Item}."""
+    Each: {kind, label, use: [items], ingots: [items], result: Item, ok, why, needs}.
+    include_blocked=True also lists the ones it CAN'T make yet (ok=False, `why` says what's
+    missing) - the Forge window shows those greyed out. needs = [(label, icon item, have, need)].
+    limit=None means no cap."""
+    from game import runes as _runes
     bag = list(player.backpack)
     ingots = [it for it in bag if _is_ingot(it)]
+    ingot_icon = ingots[0] if ingots else I.make_forge_ingot()
+
+    def ingot_need(cost):
+        return [("Forge Ingot", ingot_icon, len(ingots), cost)] if cost else []
+
+    def short(need, have, what):
+        return f"Need {need} {what} (you have {have})"
+
     groups = {}
     for it in bag:
         if it.slot in FORGE_SLOTS and not it.is_ut and not getattr(it, "divine", False):
             groups.setdefault(it.tier, []).append(it)
     out = []
     for tier, its in sorted(groups.items(), key=lambda kv: -kv[0]):
-        if len(its) < 3:
-            continue
         # the first item whose line has a next tier decides the result
         lead = next((it for it in its if temper_result(it) is not None), None)
         if lead is None:
@@ -126,34 +140,44 @@ def forge_options(player, limit=3):
         its = [lead] + [it for it in its if it is not lead]
         slot = res.slot
         cost = ingot_cost(res.tier)
-        if len(ingots) < cost:
+        why = (short(3, len(its), f"T{tier} gear items") if len(its) < 3 else
+               short(cost, len(ingots), "Forge Ingot" + ("s" if cost > 1 else "")) if len(ingots) < cost else "")
+        if why and not include_blocked:
             continue
         used_slots = {it.slot for it in its[:3]}
         pretty = ({"weapon": "weapons", "armor": "armors", "ring": "rings", "ability": "abilities"}[slot]
                   if used_slots == {slot} else "items")
-        extra = f" + {cost} Ingot{'s' if cost > 1 else ''}" if cost else ""
-        out.append(dict(kind="temper", use=its[:3], ingots=ingots[:cost], result=res,
+        extra = f" + {_plural(cost, 'Ingot')}" if cost else ""
+        out.append(dict(kind="temper", use=its[:3], ingots=ingots[:cost], result=res, ok=not why, why=why,
+                        needs=[(f"T{tier} gear (any slot)", lead, len(its), 3)] + ingot_need(cost),
                         label=f"Temper 3 T{tier} {pretty}{extra} -> [T{res.tier}] {res.name}"))
     # Weapon Shards: 3 of the same rarity fuse into 1 of the next rarity (game/runes.py)
-    from game import runes as _runes
     by_rarity = {}
     for it in bag:
         if _runes.is_rune(it):
             by_rarity.setdefault(it.rune_rarity, []).append(it)
     for rar in reversed(_runes.RARITIES):
         its = by_rarity.get(rar, [])
-        if len(its) >= 3:
-            res = _runes.fuse_result(its[:3])
-            if res is not None:
-                out.append(dict(kind="fuse", use=its[:3], ingots=[], result=res,
-                                label=f"Fuse 3 {rar} Shards -> {res.name}"))
-    if len(ingots) >= REFORGE_INGOTS:
-        for it in bag:
-            res = reforge_result(it)
-            if res is not None:
-                out.append(dict(kind="reforge", use=[it], ingots=ingots[:REFORGE_INGOTS], result=res,
-                                label=f"Reforge {it.name} + {REFORGE_INGOTS} Ingots"))
-    return out[:limit]
+        if not its or rar == _runes.RARITIES[-1]:
+            continue
+        res = _runes.fuse_result((its * 3)[:3])  # what the first shard's effect fuses into
+        why = short(3, len(its), f"{rar} Shards") if len(its) < 3 else ""
+        if res is None or (why and not include_blocked):
+            continue
+        out.append(dict(kind="fuse", use=its[:3], ingots=[], result=res, ok=not why, why=why,
+                        needs=[(f"{rar.title()} Weapon Shard", its[0], len(its), 3)],
+                        label=f"Fuse 3 {rar} Shards -> {res.name}"))
+    for it in bag:
+        res = reforge_result(it)
+        if res is None:
+            continue
+        why = short(REFORGE_INGOTS, len(ingots), "Forge Ingots") if len(ingots) < REFORGE_INGOTS else ""
+        if why and not include_blocked:
+            continue
+        out.append(dict(kind="reforge", use=[it], ingots=ingots[:REFORGE_INGOTS], result=res, ok=not why, why=why,
+                        needs=[("UT weapon", it, 1, 1)] + ingot_need(REFORGE_INGOTS),
+                        label=f"Reforge {it.name} + {REFORGE_INGOTS} Ingots"))
+    return out if limit is None else out[:limit]
 
 
 def apply_forge(player, recipe):

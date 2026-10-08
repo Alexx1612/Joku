@@ -49,6 +49,7 @@ LAMPLIGHTER_HP = 420
 LAMPLIGHTER_WAVE_EVERY = 24.0
 LAMPLIGHTER_HELP_RADIUS = 900.0
 FOG_LIGHT_MULT = 0.6
+HUNTER_HP_MULT = 2.2         # 'Something Is Hunting': the Hunter is a Shade Stalker with this much HP
 BLOOD_HORDE_EVERY = 30.0
 BLOOD_HORDE_SIZE = (6, 10)
 BLOOD_HORDE_RING = (11, 14)  # tiles from the player - a ring closing in from just off-screen
@@ -247,7 +248,7 @@ class NightDirector:
         if pos is None:
             return
         h = self._make("shade_stalker", pos)
-        h.hp_max = h.hp = int(h.hp_max * 2.2)
+        h.hp_max = h.hp = int(h.hp_max * HUNTER_HP_MULT)
         h.hunt_pid = victim.pid
         h.aggro = True
         h.loot_rank_override = "boss"

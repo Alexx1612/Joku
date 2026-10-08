@@ -7,7 +7,21 @@ not just whatever's currently in the code. Numbers are read from the code
 (file named in each heading). Update this alongside README.md's version
 history when any of them change.
 
-## Ends of V0.2 - "final final" content update (current - still v0.2)
+## Ends of V0.2 - "final final fin" UI round (current - still v0.2)
+
+Doc 40. No balance numbers changed. The new UI's own values:
+
+| What | Value | Where |
+|---|---|---|
+| Forge tabs | Temper, Reforge (UT), Fuse Shards, Stonework (Set / Combine / Pry) - no recipe cap | `forge_menu.TABS` |
+| Asks for a second click | Pry; any recipe eating 2+ Forge Ingots; any recipe eating a T12+ item | `forge_menu.needs_confirm`, `CONFIRM_TIER = 12` |
+| Hammering before the result | 0.6 s; result banner 5 s | `forge_menu.ANIM_TIME`, `RESULT_TIME` |
+| Co-op forge reach | the Nexus only, within 180 px of Brother Hammerstein | `server.FORGE_REACH` |
+| The Hunter (night event) | a Shade Stalker with x2.2 HP, boss-grade loot (unchanged, now a named constant) | `night.HUNTER_HP_MULT` |
+| Calendar window | 960 x 640 (clamped), chips Nights / Blood Moons only / Live events (saved: `calendar_filter`), position saved in `panel_offsets["calendar"]` | `game/calendar_ui.py` |
+| Dictionary tags | 14: CREATURE, BOSS, NIGHT MOB, NEUTRAL, HERB, NPC, PET, ITEM, GEAR, PLACE, DUNGEON, STORY, TIP (18 help pages), MECHANIC (22 help pages); chips saved in `dict_tags` | `codex.TAGS`, `codex.TIP_IDS` |
+
+## Ends of V0.2 - "final final" content update (still v0.2)
 
 Everything in the "Ends of V0.2" section below still applies, except where this section replaces it (story, tiers,
 islands, dungeon list).
@@ -319,7 +333,8 @@ the time (killer level 16+).
 7 nights ahead (`FORECAST_NIGHTS`). Each coming night's dice are pre-drawn; at nightfall they're resolved with the
 rules in force (Blood Moon chance 12% + 3%/night since the last, x2 full moon, x live event, max 50%; weather
 45/25/18/12; events fog / hunter / lanterns_out / market / lamplighter). Live-event slots: 25 min each, schedule
-none, Double Loot, none, Happy Hour, none, Blood Moon Week, none, Two-for-One.
+none, Double Loot, none, Happy Hour, none, Blood Moon Week, none, Two-for-One. (Doc 40: the window is also in
+Options > Journal, opaque, draggable, and explains each row - see the section at the top.)
 
 ### Dawn / dusk light (`ui.draw_sky_grade`)
 

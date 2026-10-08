@@ -32,7 +32,9 @@ DEFAULTS = {
     "auto_fire": False,
     "fullscreen": False,
     "luminosity": 0.5,  # night darkness: 0 = pitch black outside lights, 0.5 = default horror dark, 1 = ~clear
-    "panel_offsets": {},  # dragged chat / quest-log positions, see ui.PANEL_OFFSETS
+    "panel_offsets": {},  # dragged chat / quest-log / calendar positions, see ui.PANEL_OFFSETS
+    "dict_tags": [],  # the Dictionary's picked tag filter chips (game/codex.py TAGS keys)
+    "calendar_filter": ["nights", "live"],  # the Calendar's filter chips (game/calendar_ui.py FILTERS)
 }
 
 current = dict(DEFAULTS)
@@ -59,6 +61,8 @@ def _clean(data):
                         if isinstance(v, (list, tuple)) and len(v) == 2
                         and all(isinstance(n, (int, float)) and not isinstance(n, bool) for n in v)
                         } if isinstance(val, dict) else {}
+        elif isinstance(default, list):
+            out[key] = [v for v in val if isinstance(v, str)] if isinstance(val, (list, tuple)) else list(default)
     return out
 
 

@@ -45,6 +45,8 @@ from game.panel_drag import PanelDrag
 from game.chat_input import ChatInput, LogSelection
 from game import story
 from game import journal
+from game import calendar_ui
+from game import forge_menu
 from game.npcs import NPC
 from game.entities import Player, Enemy, Bullet, Bag, Portal, Obstacle, NexusBot, BAG_CAPACITY, CHEST_SKIN_NAMES
 from game.netmsg import send_msg, MessageReader
@@ -213,6 +215,7 @@ class NetLink:
         self.story_feed = []  # story lines/banners ride ONE snapshot each - collected here as each
         self.story_banners = []  # snapshot is seen, same reason as pending_map below
         self.dialogue_msgs = []  # server "dialogue" messages ({"view": dict | None}), in order
+        self.forge_results = []  # server "forge_result" replies to the Forge window's forge_apply
         self.admin_results = []  # server "admin_result" replies to /commands (game/admin.py)
         self.server_admin = False  # did the server start with --admin?
         self.welcome_pid = None
@@ -283,6 +286,9 @@ class NetLink:
                     elif t == "dialogue":
                         with self.lock:
                             self.dialogue_msgs.append(msg)
+                    elif t == "forge_result":
+                        with self.lock:
+                            self.forge_results.append(msg)
                     elif t == "admin_result":
                         with self.lock:
                             self.admin_results.append(msg)
@@ -359,6 +365,11 @@ class NetLink:
             v, self.admin_results = self.admin_results, []
         return v
 
+    def pop_forge_results(self):
+        with self.lock:
+            msgs, self.forge_results = self.forge_results, []
+        return msgs
+
     def pop_dialogue(self):
         """The newest dialogue message since the last call, or None if none arrived."""
         with self.lock:
@@ -395,7 +406,7 @@ class CoopClient:
         settings.load()  # before the first theme plays, so saved volumes apply from the start
         audio.play_theme()
         self.fullscreen = False
-        self.calendar_open = False  # K: the in-game calendar (game/calendar_ui.py)
+        self.calendar = calendar_ui.CalendarWindow()  # K / Options: the in-game calendar (game/calendar_ui.py)
         self.help_open = False
         self.menu_selected = 0
         self.quit_confirm_open = False  # Esc with nothing else open asks before quitting
@@ -506,6 +517,9 @@ class CoopClient:
         self.sidequest_log = []  # the server's side quests (game/sidequests.SideQuestProgress.log())
         self.dialogue_view = None  # the open conversation (server-owned, see server._send_dialogue)
         self.journal = journal.Journal()  # Quest Log / Dictionary / Quest Map windows (game/journal.py)
+        self.forge = forge_menu.ForgeWindow()  # Brother Hammerstein's Forge - the server does the forging
+        self.forge.on_apply = self._forge_apply
+        self.forge.on_fx = self._forge_fx
         self.sidequests_done = []  # completed side-quest titles (server snapshot)
         self.realm_grid = None  # the last open-Realm grid + its area info, kept for the journal
         self.realm_areas = None  # even while you're back in the Nexus
@@ -597,7 +611,8 @@ class CoopClient:
             full_map=(lambda: mm.full_map_open, self._menu_toggle_full_map) if mm is not None else None,
             leave=("Disconnect (return to Class Select)", self._menu_disconnect)
             if self.state == STATE_PLAY else None,
-            journal=[("Quest Log", self._open_quest_log), ("Dictionary", self._open_dictionary)]
+            journal=[("Quest Log", self._open_quest_log), ("Dictionary", self._open_dictionary),
+                     ("Calendar", self._open_calendar)]
             if self.state == STATE_PLAY else None)
 
     def _open_quest_log(self):
@@ -607,6 +622,34 @@ class CoopClient:
     def _open_dictionary(self):
         self.help_open = False
         self.journal.open_dictionary()
+
+    def _forge_apply(self, recipe, confirmed=False):
+        """The Forge window's FORGE: ask the server (it re-checks everything). Its answer comes
+        back as a "forge_result" message -> ForgeWindow.show_result."""
+        # self.you is rebuilt from every snapshot: find the same recipe in the CURRENT backpack
+        now = next((r for recs in forge_menu.catalog(self.you).values() for r in recs
+                    if r["label"] == recipe["label"] and r["kind"] == recipe["kind"]), None)
+        if now is None or not now["ok"]:
+            return dict(ok=False, msg="That recipe isn't possible any more.", color=forge_menu.FAIL,
+                        sfx="forge_fail", result=None, feed=[])
+        key = forge_menu.recipe_key(self.you, now)
+        self.link.send({"type": "action", "action": "forge_apply", **key, "confirmed": bool(confirmed)})
+        return None
+
+    def _forge_fx(self, key, color=None):
+        audio.play_event(key)
+        npc = next((n for n in getattr(self, "npcs", ()) if getattr(n, "npc_id", None) == "hammerstein"), None)
+        at = npc.pos if npc is not None else (self.you.pos if self.you is not None else None)
+        if at is None:
+            return
+        if key == "forge_success":
+            vfx.dispatch([("forge_sparks", at.x, at.y, (255, 190, 90))])
+        elif key in ("gem_set", "gem_combine", "gem_pry"):
+            vfx.dispatch([("gem_forge", at.x + 30, at.y + 4, color or (230, 230, 240))])
+
+    def _open_calendar(self):
+        self.help_open = False
+        self.calendar.open = True
 
     def _journal_ctx(self):
         """What the Quest Log / Dictionary / Quest Map need (see game/journal.py)."""
@@ -720,6 +763,11 @@ class CoopClient:
                 continue
             if self.journal.is_open() and self.journal.handle_event(event, self._journal_ctx()):
                 continue
+            if self.forge.is_open() and self.forge.handle_event(event, self.you):
+                continue
+            if (self.calendar.open and self.state == STATE_PLAY
+                    and self.calendar.handle_event(event, self.panel_drag, self.clock_info)):
+                continue
             if self.dialogue_view is not None and event.type in (pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN):
                 choice = ui.dialogue_choice_for_event(event, self.dialogue_view)
                 if choice is not None:
@@ -804,8 +852,6 @@ class CoopClient:
                 elif event.key == pygame.K_ESCAPE:
                     if self._map_open():
                         self._current_minimap().full_map_open = False
-                    elif getattr(self, "calendar_open", False):
-                        self.calendar_open = False
                     elif self.context_menu is not None:
                         self.context_menu = None
                     elif self.inspect_pid is not None:
@@ -1589,7 +1635,7 @@ class CoopClient:
         elif key == pygame.K_j:
             self.quest_log_expanded = not self.quest_log_expanded
         elif key == pygame.K_k:
-            self.calendar_open = not self.calendar_open
+            self.calendar.toggle()
         elif key == pygame.K_i and self.zone in ("realm", "bonus"):
             self._set_auto_fire(not self.auto_fire_enabled)
             self.feed.insert(0, [f"Auto-fire {'ON' if self.auto_fire_enabled else 'OFF'}",
@@ -1668,7 +1714,7 @@ class CoopClient:
                 audio.play_theme(track)
         audio.update_music()
 
-        if not self.chat_open and not self.help_open and not self.quit_confirm_open and not self.journal.is_open():
+        if not self.chat_open and not self.help_open and not self.quit_confirm_open and not (self.journal.is_open() or self.forge.is_open()):
             keys = pygame.key.get_pressed()
             if keys[pygame.K_q]:
                 self.cam.rotate(-self.ROTATE_SPEED_DEG * dt)
@@ -1863,17 +1909,20 @@ class CoopClient:
         dmsg = self.link.pop_dialogue()
         if dmsg is not None:
             self.dialogue_view = dmsg.get("view")
-            for key in dmsg.get("sfx", []):  # the Anvil's hammer / forge_success, a trial's sting
+            for key in dmsg.get("sfx", []):  # the Anvil's hammer when you walk up, a trial's sting
                 audio.play_event(key)
-                if key == "forge_success":
-                    vfx.dispatch([("forge_sparks", self.you.pos.x, self.you.pos.y - 20, (255, 190, 90))])
-                elif key in ("gem_set", "gem_combine", "gem_pry"):  # stonework sparks
-                    from game import gems as _gems
-                    lead = _gems.lead_kind(self.you.weapon) if self.you is not None else None
-                    col = _gems.color_of(lead) if lead and key == "gem_set" else (230, 230, 240)
-                    vfx.dispatch([("gem_forge", self.you.pos.x, self.you.pos.y - 20, col)])
             if self.dialogue_view is not None:
                 self._cancel_drag()
+            if dmsg.get("open_forge"):
+                self.forge.open_window()
+                self._cancel_drag()
+        for fr in self.link.pop_forge_results():
+            from game.items import Item
+            res = dict(fr, color=tuple(fr.get("color") or forge_menu.FAIL), feed=[])
+            res["result"] = Item.from_json(fr["result"]) if fr.get("result") else None
+            self.forge.show_result(res)
+        if self.forge.is_open() and (self.state != STATE_PLAY or self.zone != "nexus"):
+            self.forge.close()  # the Anvil is in the Nexus
         self.sidequest_log = snap.get("sidequests") or []
         self.sidequests_done = snap.get("sidequests_done") or []
         self.npcs = [NPC.from_net_state(d) for d in snap.get("npcs", [])]
@@ -2024,7 +2073,7 @@ class CoopClient:
 
     def _send_input(self, dt):
         if (self._map_open() or self.chat_open or self.help_open or self.quit_confirm_open or self.echo_shop_open
-                or self.dialogue_view is not None or self.journal.is_open()):
+                or self.dialogue_view is not None or (self.journal.is_open() or self.forge.is_open())):
             # checking the full map, typing in chat, or browsing the options menu is
             # a modal action - stop sending input while it's up (other players keep
             # moving normally; only yours freezes) so you don't drift/move by accident
@@ -2094,9 +2143,8 @@ class CoopClient:
             ui.draw_center_text(s, "CONNECTION ERROR", self.error_msg + "  (Enter to go back)", (220, 80, 80))
         elif self.state == STATE_PLAY:
             self._draw_play(s)
-        if getattr(self, "calendar_open", False) and self.state == STATE_PLAY:
-            from game import calendar_ui
-            calendar_ui.draw(s, self.clock_info)
+        if self.calendar.open and self.state == STATE_PLAY:
+            self.calendar.draw(s, self.clock_info, pygame.mouse.get_pos())
         if self.help_open:
             items = self._menu_items()
             self.menu_selected %= len(items)
@@ -2108,6 +2156,8 @@ class CoopClient:
                                        selected_idx=self.echo_shop_selected, mouse_pos=pygame.mouse.get_pos())
         if self.state == STATE_PLAY and self.zone != "dead" and self.dialogue_view is not None:
             ui.draw_dialogue(s, self.dialogue_view, pygame.mouse.get_pos())
+        if self.forge.is_open() and self.state == STATE_PLAY and self.you is not None:
+            self.forge.draw(s, self.you, pygame.mouse.get_pos(), 1 / max(1, self.clock.get_fps() or 60))
         if self.state == STATE_PLAY and self.cmd_panel is not None:
             ui.draw_cmd_panel(s, self.cmd_panel)
         if self.state == STATE_PLAY and self.journal.is_open():
@@ -2251,7 +2301,7 @@ class CoopClient:
         vfx.draw(s, self.cam)
         self._draw_quest_markers_world(s, qmarks)
         self._draw_hover_tooltip()
-        if not (self.help_open or self.journal.is_open() or self.dialogue_view is not None
+        if not (self.help_open or (self.journal.is_open() or self.forge.is_open()) or self.dialogue_view is not None
                 or getattr(self, "echo_shop_open", False)):
             # hidden under full windows: it showed through the options panel's title bar
             hint = ui._FONT_M.render(hint_text, True, (220, 210, 230))
@@ -2264,7 +2314,7 @@ class CoopClient:
         ui.draw_dock_frame(s, self.you)
         ui.draw_hud(s, name, None, False)  # hubs: no kill counter
         if not (self.echo_shop_open or self.help_open or self.vault_chest_open is not None
-                or self.dialogue_view is not None or self.journal.is_open()):  # a modal overlay owns that space
+                or self.dialogue_view is not None or (self.journal.is_open() or self.forge.is_open())):  # a modal overlay owns that space
             ui.draw_story_log(s, self.quest_log, self.quest_log_expanded, side=self.sidequest_log,
                               tracked=self.tracked_quests)
         if settings.get("show_fps"):
@@ -2453,7 +2503,7 @@ class CoopClient:
         if self.portal_prompt:
             ui.draw_portal_prompt(s)
         if ((self.zone != "bonus" or self.theme_name == DUNGEON_THEMES["forge"]["label"]) and not self.help_open
-                and self.dialogue_view is None and not self.journal.is_open()):
+                and self.dialogue_view is None and not (self.journal.is_open() or self.forge.is_open())):
             ui.draw_story_log(s, self.quest_log, self.quest_log_expanded, side=self.sidequest_log,
                               tracked=self.tracked_quests)
         else:

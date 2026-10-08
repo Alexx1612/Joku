@@ -162,14 +162,20 @@ def check_anvil_dialogue_forges_and_counts_for_act_iii():
     p.backpack = _items_of("weapon", 8, 3)
     conv = dialogue.start_conversation(p, npc=npcs.NPC("hammerstein", pygame.Vector2(0, 0)))
     view = conv.view()
-    assert view["options"][0].startswith("Temper 3 T8 weapons"), view["options"]
-    conv.choose(0)
-    assert conv.forged and conv.forged[0].tier == 9 and "forge_success" in conv.sfx
+    # the chat leads with "Open the Forge"; recipes live in the Forge window (game/forge_menu.py)
+    assert view["options"][0] == dialogue.OPEN_FORGE, view["options"]
+    assert not any(o.startswith("Temper") for o in view["options"])
+    assert conv.choose(0) is None and conv.open_forge and conv.done
+    from game import forge_menu
+    r = forge_menu.catalog(p)["temper"][0]
+    assert r["ok"] and r["label"].startswith("Temper 3 T8 weapons"), r["label"]
+    res = forge_menu.apply(p, r)
+    assert res["ok"] and res["result"].tier == 9 and res["sfx"] == "forge_success"
     assert p.story.done.get("gear_forge"), p.story.done
-    assert conv.view()["options"][-1] == dialogue.BYE
-    # nothing left to forge: the Anvil just chats
+    # nothing left to forge: the Forge's Temper tab is empty, the chat still offers the window
+    assert not any(r["ok"] for r in forge_menu.catalog(p)["temper"])
     conv2 = dialogue.start_conversation(p, npc=npcs.NPC("hammerstein", pygame.Vector2(0, 0)))
-    assert not any(o.startswith("Temper") for o in conv2.view()["options"])
+    assert conv2.view()["options"][0] == dialogue.OPEN_FORGE
     print("check_anvil_dialogue_forges_and_counts_for_act_iii: PASSED")
 
 

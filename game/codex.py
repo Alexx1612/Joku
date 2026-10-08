@@ -283,8 +283,9 @@ def _area_entries():
             ("gear", "Gear tiers", "Items run T1-T11 from normal loot, T12-T13 from Heroic dungeons, the big "
                                    "islands and the Mad God's Room, and T14 only from the Anvil. UT and Divine "
                                    "items are special drops."),
-            ("anvil", "The Anvil (Nexus)", "Brother Hammerstein's forge in the Nexus: combine 3 items of the "
-                                           "same slot and tier into one of the next tier, or reforge a UT."),
+            ("anvil", "The Anvil (Nexus)", "Brother Hammerstein's forge in the Nexus tavern: talk to him (F) and "
+                                           "pick 'Open the Forge' - temper 3 items of a tier into the next, "
+                                           "reforge a UT, fuse Weapon Shards, or set / combine / pry gemstones."),
             ("heroic_trials", "Heroic trials", "One trial quest per dungeon, given by a local near that dungeon's "
                                                "biome. Finishing it unlocks the Heroic version of the dungeon."),
             ("heroic_dungeons", "Heroic dungeons", "Much harder versions of every dungeon (level 16+), opened with "
@@ -481,10 +482,11 @@ def entries():
         from game import codex_extra
         out += codex_extra.gear_entries() + codex_extra.world_entries()
         for e in out:
-            e["search"] = " ".join([e["title"], e["id"], e["text"]] +
+            e["tag"] = entry_tag(e)
+            e["search"] = " ".join([e["title"], e["id"], e["text"], TAGS[e["tag"]][0]] +
                                    [f"{k} {v}" for k, v in e["stats"]]).lower()
         order = {c: i for i, (c, _l) in enumerate(CATEGORIES)}
-        out.sort(key=lambda e: (order.get(e["cat"], 99), not e["id"].startswith("help:"), e["title"]))
+        out.sort(key=lambda e: (order.get(e["cat"], 99), e["tag"] in NOTE_TAGS, e["title"]))
         _ENTRIES = out
         _BY_ID = {e["id"]: e for e in out}
     return _ENTRIES
@@ -502,6 +504,88 @@ def search(query="", cat=None):
     if words:
         return [e for e in entries() if all(w in e["search"] for w in words)]
     return [e for e in entries() if cat is None or e["cat"] == cat]
+
+
+# --- type tags ---------------------------------------------------------------------------
+# Every entry wears ONE tag, shown as a chip (colour + icon + text, never colour alone) in
+# the list and the detail view, and used by the Dictionary's filter chips. The tag is
+# derived from the entry's id + the game's own data (entry_tag), so new entries tag
+# themselves. TIP / MECHANIC entries are advice, not world content - they get the lighter
+# "note card" look and sit under a "Tips & mechanics" sub-heading.
+# key -> (label, short badge text, colour, icon name - drawn by game/journal.py)
+TAGS = {
+    "creature": ("CREATURE", "CRE", (215, 85, 70), "skull"),
+    "boss": ("BOSS", "BOS", (235, 150, 40), "crown"),
+    "night_mob": ("NIGHT MOB", "NGT", (140, 110, 235), "moon"),
+    "neutral": ("NEUTRAL", "NEU", (120, 200, 120), "leaf"),
+    "herb": ("HERB", "HRB", (110, 215, 200), "flower"),
+    "npc": ("NPC", "NPC", (90, 170, 245), "person"),
+    "pet": ("PET", "PET", (240, 140, 200), "paw"),
+    "item": ("ITEM", "ITM", (215, 200, 110), "bag"),
+    "gear": ("GEAR", "GER", (225, 170, 110), "sword"),
+    "place": ("PLACE", "PLC", (150, 190, 120), "pin"),
+    "dungeon": ("DUNGEON", "DGN", (185, 120, 230), "portal"),
+    "story": ("STORY", "STY", (230, 215, 160), "book"),
+    "tip": ("TIP", "TIP", (255, 220, 90), "bulb"),
+    "mechanic": ("MECHANIC", "MEC", (150, 200, 225), "cog"),
+}
+NOTE_TAGS = ("tip", "mechanic")
+CREATURE_TAGS = ("creature", "boss", "night_mob", "neutral", "herb")
+# help:* pages that are how-to ADVICE ("do this to get that"); every other help:* page
+# explains a RULE of the game and is a MECHANIC.
+TIP_IDS = frozenset({
+    "help:pets", "help:carriers", "help:fusion", "help:loot", "help:trading", "help:ut_sockets",
+    "help:bag2", "help:weapon_shards", "help:stonework", "help:gem_veins", "help:chat_commands",
+    "help:quest_markers", "help:safe_houses", "help:night_herbs", "help:calendar", "help:sidequests",
+    "help:anvil", "help:potions",
+})
+# area:* entries that aren't places on the map
+_AREA_TAG = {"area:gear": "mechanic", "area:dungeons": "dungeon", "area:heroic_dungeons": "dungeon",
+             "area:heroic_trials": "mechanic", "area:locals": "npc", "area:water": "tip"}
+
+
+def entry_tag(e):
+    """The type tag (a TAGS key) of a dictionary entry, from its id + the game data."""
+    eid = e["id"]
+    if eid.startswith("help:"):
+        return "tip" if eid in TIP_IDS else "mechanic"
+    if eid.startswith("enemy:"):
+        from game import entities
+        d = entities.ENEMY_KINDS.get(eid.split(":", 1)[1], {})
+        if d.get("neutral") and d.get("unshootable"):
+            return "herb" if d.get("herb") else "neutral"
+        if d.get("rank") == "boss":
+            return "boss"
+        return "night_mob" if d.get("night_only") else "creature"
+    if eid.startswith("npc:"):
+        return "npc" if e.get("cat") == "npcs" else "neutral"
+    if eid.startswith("pet:"):
+        return "pet"
+    if eid.startswith("item:"):
+        return "gear" if eid.startswith("item:ut:") else "item"
+    if eid.startswith(("portal:", "area:dungeon:")):
+        return "dungeon"
+    if eid.startswith("area:"):
+        return _AREA_TAG.get(eid, "place")
+    if eid.startswith("story:"):
+        return "story"
+    return "mechanic"
+
+
+def is_note(e):
+    """TIP / MECHANIC - advice about the game, not a thing that lives in it."""
+    return e.get("tag", entry_tag(e)) in NOTE_TAGS
+
+
+def filter_entries(query="", cat=None, tags=()):
+    """The Dictionary list: search words AND (any of the picked tag chips). With a search
+    or a chip active the list spans every category, otherwise it's just `cat`. World
+    content first, then the tips & mechanics (each part keeps entries()' order)."""
+    tags = set(tags or ())
+    lst = search(query, None if (query.strip() or tags) else cat)
+    if tags:
+        lst = [e for e in lst if e["tag"] in tags]
+    return [e for e in lst if not is_note(e)] + [e for e in lst if is_note(e)]
 
 
 def entry_for_target(target):

@@ -36,6 +36,101 @@ def _ui():
     return ui
 
 
+_FONTS = {}
+
+
+def _font(size, bold=False):
+    k = (size, bold)
+    if k not in _FONTS:
+        _FONTS[k] = pygame.font.SysFont("consolas", size, bold=bold)
+    return _FONTS[k]
+
+
+# ------------------------------------------------------------- tag chips --
+def _dim(col, k):
+    return tuple(max(0, min(255, int(c * k))) for c in col)
+
+
+def draw_tag_icon(surf, icon, cx, cy, s, col, bg=(20, 20, 26)):
+    """A tiny procedural pictogram (s = half-size in px) for a codex.TAGS icon name."""
+    cx, cy = int(cx), int(cy)
+    if icon == "skull":
+        pygame.draw.circle(surf, col, (cx, cy - 1), s)
+        pygame.draw.rect(surf, col, (cx - s // 2, cy + s // 2, s, s // 2 + 1))
+        for dx in (-s // 2, s // 2):
+            pygame.draw.circle(surf, bg, (cx + dx, cy - 1), max(1, s // 3))
+    elif icon == "crown":
+        pygame.draw.polygon(surf, col, [(cx - s, cy + s // 2), (cx - s, cy - s // 2), (cx - s // 2, cy),
+                                        (cx, cy - s), (cx + s // 2, cy), (cx + s, cy - s // 2), (cx + s, cy + s // 2)])
+    elif icon == "moon":
+        pygame.draw.circle(surf, col, (cx, cy), s)
+        pygame.draw.circle(surf, bg, (cx + s // 2 + 1, cy - s // 3), s)
+    elif icon == "leaf":
+        pygame.draw.polygon(surf, col, [(cx - s, cy + s), (cx - s // 2, cy - s // 2), (cx + s, cy - s),
+                                        (cx + s // 2, cy + s // 2)])
+        pygame.draw.line(surf, bg, (cx - s, cy + s), (cx + s // 2, cy - s // 2), 1)
+    elif icon == "flower":
+        r = max(1, s // 2)
+        for dx, dy in ((0, -r), (0, r), (-r, 0), (r, 0)):
+            pygame.draw.circle(surf, col, (cx + dx, cy + dy), r)
+        pygame.draw.circle(surf, bg, (cx, cy), max(1, r // 2 + 1))
+    elif icon == "person":
+        pygame.draw.circle(surf, col, (cx, cy - s // 2), max(2, s // 2))
+        pygame.draw.polygon(surf, col, [(cx - s, cy + s), (cx - s // 2, cy), (cx + s // 2, cy), (cx + s, cy + s)])
+    elif icon == "paw":
+        pygame.draw.circle(surf, col, (cx, cy + s // 3), max(2, s // 2 + 1))
+        for dx in (-s // 2 - 1, 0, s // 2 + 1):
+            pygame.draw.circle(surf, col, (cx + dx, cy - s // 2 - (1 if dx == 0 else 0)), max(1, s // 3))
+    elif icon == "bag":
+        pygame.draw.circle(surf, col, (cx, cy + s // 4), s - 1)
+        pygame.draw.rect(surf, col, (cx - s // 3, cy - s, 2 * (s // 3) + 1, s // 2 + 1))
+    elif icon == "sword":
+        pygame.draw.line(surf, col, (cx - s, cy + s), (cx + s, cy - s), 2)
+        pygame.draw.line(surf, col, (cx - s, cy - 1), (cx + 1, cy + s), 2)
+    elif icon == "pin":
+        pygame.draw.circle(surf, col, (cx, cy - s // 3), max(2, s * 2 // 3))
+        pygame.draw.polygon(surf, col, [(cx - s // 2, cy), (cx + s // 2, cy), (cx, cy + s)])
+        pygame.draw.circle(surf, bg, (cx, cy - s // 3), max(1, s // 4))
+    elif icon == "portal":
+        pygame.draw.ellipse(surf, col, (cx - s * 2 // 3, cy - s, s * 4 // 3, 2 * s), 2)
+    elif icon == "book":
+        pygame.draw.rect(surf, col, (cx - s, cy - s * 2 // 3, 2 * s, s * 4 // 3))
+        pygame.draw.line(surf, bg, (cx, cy - s * 2 // 3), (cx, cy + s * 2 // 3), 1)
+    elif icon == "bulb":
+        pygame.draw.circle(surf, col, (cx, cy - s // 4), s * 3 // 4 + 1)
+        pygame.draw.rect(surf, col, (cx - s // 3, cy + s // 3, 2 * (s // 3) + 1, s * 2 // 3))
+        pygame.draw.line(surf, bg, (cx - s // 3, cy + s * 2 // 3), (cx + s // 3, cy + s * 2 // 3), 1)
+    elif icon == "cog":
+        for i in range(8):
+            a = i * math.pi / 4
+            pygame.draw.line(surf, col, (cx, cy), (cx + math.cos(a) * s, cy + math.sin(a) * s), 3)
+        pygame.draw.circle(surf, col, (cx, cy), s * 2 // 3 + 1)
+        pygame.draw.circle(surf, bg, (cx, cy), max(1, s // 3))
+
+
+def tag_chip_size(tag, short=False, font=None):
+    label, abbr, _c, _i = codex.TAGS[tag]
+    f = font or _font(12, True)
+    return f.size(abbr if short else label)[0] + 24, f.get_height() + 6
+
+
+def draw_tag_chip(surf, tag, x, y, short=False, active=True, hovered=False, font=None):
+    """A tag chip: tinted fill + border + icon + text (never colour alone). Returns its rect."""
+    label, abbr, col, icon = codex.TAGS[tag]
+    f = font or _font(12, True)
+    w, h = tag_chip_size(tag, short, f)
+    r = pygame.Rect(x, y, w, h)
+    fill = _dim(col, 0.42 if active else 0.16)
+    if hovered:
+        fill = _dim(fill, 1.35)
+    pygame.draw.rect(surf, fill, r, border_radius=h // 2)
+    pygame.draw.rect(surf, col if active else _dim(col, 0.6), r, width=1, border_radius=h // 2)
+    draw_tag_icon(surf, icon, r.x + 10, r.centery, 5, col if active else _dim(col, 0.8), bg=fill)
+    t = f.render(abbr if short else label, True, (255, 250, 238) if active else (175, 172, 185))
+    surf.blit(t, (r.x + 18, r.centery - t.get_height() // 2))
+    return r
+
+
 # ------------------------------------------------------------- map render --
 _MAP_CACHE = {}
 
@@ -107,6 +202,8 @@ class Journal:
         self.ql_scroll = 0
         self.ql_sel = None  # the quest selected in the Quest Log (T toggles its marker)
         self.cat = codex.CATEGORIES[0][0]
+        from game import settings
+        self.tags = {t for t in settings.get("dict_tags") if t in codex.TAGS}  # the picked filter chips
         self.query = ""
         self.query_all = False  # Ctrl+A selected the whole search text
         self.sel = None
@@ -153,13 +250,15 @@ class Journal:
         if entry_id and codex.entry(entry_id):
             e = codex.entry(entry_id)
             self.query, self.query_all = "", False
+            self.tags = set()  # a looked-up entry must be in the list (not saved - the chips come back next open)
             self.cat, self.sel = e["cat"], entry_id
-            ids = [x["id"] for x in self._list()]
-            self.list_scroll = max(0, ids.index(entry_id) - 5) if entry_id in ids else 0
+            row = self._row_index(entry_id)
+            self.list_scroll = max(0, row - 5) if row is not None else 0
             self.text_scroll = 0
-        elif self.sel is None:
+        else:
             lst = self._list()
-            self.sel = lst[0]["id"] if lst else None
+            if self.sel not in [x["id"] for x in lst]:
+                self.sel = lst[0]["id"] if lst else None
 
     def open_map(self, where=None, title="", note="", stack=True):
         if not stack:
@@ -169,7 +268,46 @@ class Journal:
         self.map_zoom, self.map_center = 1.0, None
 
     def _list(self):
-        return codex.search(self.query, None if self.query.strip() else self.cat)
+        """The selectable entries, in list order (world content, then tips & mechanics)."""
+        return codex.filter_entries(self.query, self.cat, self.tags)
+
+    def _rows(self):
+        """The list as drawn: [("entry", e) | ("header", text)] - a "Tips & mechanics"
+        sub-heading row sits between the world content and the notes."""
+        lst = self._list()
+        world = [("entry", e) for e in lst if not codex.is_note(e)]
+        notes = [("entry", e) for e in lst if codex.is_note(e)]
+        return world + ([("header", "Tips & mechanics")] + notes if notes else [])
+
+    def _row_index(self, entry_id):
+        for i, (kind, e) in enumerate(self._rows()):
+            if kind == "entry" and e["id"] == entry_id:
+                return i
+        return None
+
+    def toggle_tag(self, tag):
+        """A filter chip click: tag None = "All" (clear). Chips OR together; they AND with search."""
+        if tag is None:
+            self.tags = set()
+        else:
+            self.tags ^= {tag}
+        from game import settings
+        settings.change("dict_tags", sorted(self.tags))
+        self.list_scroll = 0
+        lst = self._list()
+        if self.sel not in [e["id"] for e in lst]:
+            self.sel, self.text_scroll = (lst[0]["id"] if lst else None), 0
+
+    def _pick_category(self, cat):
+        """Categories and chips are two ways to browse: picking a category drops the chips."""
+        self.cat = cat
+        if self.tags:
+            self.tags = set()
+            from game import settings
+            settings.change("dict_tags", [])
+        self._set_query("")
+        lst = self._list()
+        self.sel, self.text_scroll = (lst[0]["id"] if lst else None), 0
 
     # -------------------------------------------------------------- input --
     def handle_event(self, event, ctx):
@@ -249,15 +387,15 @@ class Journal:
                 i = ids.index(self.sel) if self.sel in ids else 0
                 i = max(0, min(len(ids) - 1, i + (1 if event.key == pygame.K_DOWN else -1)))
                 self.sel, self.text_scroll = ids[i], 0
+                row = self._row_index(self.sel) or 0
                 vis = self._list_rows_visible()
-                if i < self.list_scroll:
-                    self.list_scroll = i
-                elif i >= self.list_scroll + vis:
-                    self.list_scroll = i - vis + 1
+                if row < self.list_scroll + (1 if row > 0 else 0):  # keep a sub-heading above in view
+                    self.list_scroll = max(0, row - 1)
+                elif row >= self.list_scroll + vis:
+                    self.list_scroll = row - vis + 1
         elif event.key in (pygame.K_TAB,):
             cats = [c for c, _l in codex.CATEGORIES]
-            self.cat = cats[(cats.index(self.cat) + 1) % len(cats)]
-            self._set_query("")
+            self._pick_category(cats[(cats.index(self.cat) + 1) % len(cats)])
         elif event.unicode and event.unicode.isprintable() and not ctrl:
             base = "" if self.query_all else self.query
             self._set_query(base + event.unicode)
@@ -266,7 +404,12 @@ class Journal:
         self.query, self.query_all = q[:SEARCH_MAX], False
         self.list_scroll = 0
         lst = self._list()
-        if lst and self.sel not in [e["id"] for e in lst]:
+        words = self.query.lower().split()
+        best = next((e for e in lst if words and all(w in e["title"].lower() for w in words)), None)
+        if best is not None:  # typing a name picks that entry, even when it's a tip listed further down
+            self.sel, self.text_scroll = best["id"], 0
+            self.list_scroll = max(0, (self._row_index(best["id"]) or 0) - 2)
+        elif lst and self.sel not in [e["id"] for e in lst]:
             self.sel, self.text_scroll = lst[0]["id"], 0
 
     def _wheel(self, dy, pos, ctx):
@@ -280,7 +423,7 @@ class Journal:
             if pos is not None and r["right"].collidepoint(pos):
                 self.text_scroll = max(0, self.text_scroll - dy)
             else:
-                n = len(self._list())
+                n = len(self._rows())
                 self.list_scroll = max(0, min(max(0, n - self._list_rows_visible()), self.list_scroll - dy))
         elif mode == QUEST_MAP:
             self._zoom(dy, pos, ctx)
@@ -322,18 +465,19 @@ class Journal:
             if r["search"].collidepoint(pos):
                 self.query_all = bool(self.query)
                 return
+            for tag, cr in self._chip_rects(r):
+                if cr.collidepoint(pos):
+                    self.toggle_tag(tag)
+                    return
             for i, (cat, _label) in enumerate(codex.CATEGORIES):
                 if self._cat_rect(r, i).collidepoint(pos):
-                    self.cat = cat
-                    self._set_query("")
-                    lst = self._list()
-                    self.sel, self.text_scroll = (lst[0]["id"] if lst else None), 0
+                    self._pick_category(cat)
                     return
-            lst = self._list()
+            rows = self._rows()
             for i in range(self._list_rows_visible()):
                 idx = self.list_scroll + i
-                if idx < len(lst) and self._row_rect(r, i).collidepoint(pos):
-                    self.sel, self.text_scroll = lst[idx]["id"], 0
+                if idx < len(rows) and rows[idx][0] == "entry" and self._row_rect(r, i).collidepoint(pos):
+                    self.sel, self.text_scroll = rows[idx][1]["id"], 0
                     return
             e = codex.entry(self.sel) if self.sel else None
             if e is not None and self._where_has_points(e, ctx) and r["mapbtn"].collidepoint(pos):
@@ -561,18 +705,41 @@ class Journal:
         surf.blit(t, (r.centerx - t.get_width() // 2, r.centery - t.get_height() // 2))
 
     # ------------------------------------------------------- dictionary --
+    CHIP_GAP = 4
+
+    def _chip_flow(self, x0, y0, width):
+        """[(tag or None for "All", rect)] laid out left-to-right, wrapping inside `width`."""
+        f = _font(12, True)
+        out = []
+        x, y = x0, y0
+        h = f.get_height() + 6
+        for tag in [None] + list(codex.TAGS):
+            w = (f.size("ALL")[0] + 20) if tag is None else tag_chip_size(tag, False, f)[0]
+            if x + w > x0 + width and x > x0:
+                x, y = x0, y + h + 5
+            out.append((tag, pygame.Rect(x, y, w, h)))
+            x += w + self.CHIP_GAP
+        return out
+
     def _dict_rects(self):
         w = min(1080, C.SCREEN_W - 30)
         h = min(680, C.SCREEN_H - 30)
         win = pygame.Rect(C.SCREEN_W // 2 - w // 2, C.SCREEN_H // 2 - h // 2, w, h)
-        left = pygame.Rect(win.x + 16, win.y + 56, 200, h - 56 - 40)
-        mid = pygame.Rect(left.right + 12, left.y, 250, left.h)
+        chip_x = win.x + 16 + _font(13, True).size("Show:")[0] + 10
+        flow = self._chip_flow(chip_x, win.y + 50, win.right - 16 - chip_x)
+        top = flow[-1][1].bottom + 12
+        left = pygame.Rect(win.x + 16, top, 200, win.bottom - 40 - top)
+        mid = pygame.Rect(left.right + 12, left.y, 290, left.h)
         right = pygame.Rect(mid.right + 14, left.y, win.right - 16 - (mid.right + 14), left.h)
         search = pygame.Rect(left.x, left.y, left.w, 30)
-        mini = pygame.Rect(right.right - 210, right.bottom - 210, 210, 210)
-        text = pygame.Rect(right.x, right.y + 120, right.w, right.h - 120 - 220)
+        mini = pygame.Rect(right.right - 200, right.bottom - 200, 200, 200)
+        text = pygame.Rect(right.x, right.y + 128, right.w, right.h - 128 - 220)
         mapbtn = pygame.Rect(mini.x - 150, mini.bottom - 30, 140, 30)
-        return dict(win=win, left=left, mid=mid, right=right, search=search, mini=mini, text=text, mapbtn=mapbtn)
+        return dict(win=win, left=left, mid=mid, right=right, search=search, mini=mini, text=text, mapbtn=mapbtn,
+                    chips=flow)
+
+    def _chip_rects(self, r=None):
+        return (r or self._dict_rects())["chips"]
 
     @staticmethod
     def _cat_rect(r, i):
@@ -597,6 +764,21 @@ class Journal:
         surf.blit(panel, win.topleft)
         self._draw_close(surf, win, mouse)
         fs, fm = ui._FONT_S, ui._FONT_M
+        # tag filter chips (OR between chips, AND with the search)
+        flow = r["chips"]
+        surf.blit(_font(13, True).render("Show:", True, (200, 190, 150)),
+                  (win.x + 16, flow[0][1].centery - _font(13, True).get_height() // 2))
+        for tag, cr in flow:
+            hov = cr.collidepoint(mouse)
+            if tag is None:
+                on = not self.tags
+                pygame.draw.rect(surf, (92, 80, 52) if on else ((44, 42, 56) if hov else (30, 29, 38)), cr,
+                                 border_radius=cr.h // 2)
+                pygame.draw.rect(surf, ui.CHROME_GOLD if on else (90, 86, 100), cr, width=1, border_radius=cr.h // 2)
+                t = _font(12, True).render("ALL", True, (255, 245, 220) if on else (175, 172, 185))
+                surf.blit(t, (cr.centerx - t.get_width() // 2, cr.centery - t.get_height() // 2))
+            else:
+                draw_tag_chip(surf, tag, cr.x, cr.y, active=tag in self.tags, hovered=hov)
         # search bar
         sb = r["search"]
         pygame.draw.rect(surf, (16, 15, 22), sb, border_radius=4)
@@ -611,90 +793,144 @@ class Journal:
             cx = sb.x + 8 + t.get_width()
             pygame.draw.line(surf, (230, 230, 240), (cx, sb.y + 7), (cx, sb.bottom - 7))
         # categories
-        searching = bool(self.query.strip())
+        browsing_all = bool(self.query.strip() or self.tags)
         for i, (cat, label) in enumerate(codex.CATEGORIES):
             cr = self._cat_rect(r, i)
-            active = cat == self.cat and not searching
+            active = cat == self.cat and not browsing_all
             ui._bevel_button(surf, cr, (70, 60, 40) if active else (36, 34, 48), hovered=cr.collidepoint(mouse))
             n = sum(1 for e in codex.entries() if e["cat"] == cat)
             t = fs.render(f"{label} ({n})", True, (255, 235, 180) if active else (205, 202, 215))
             surf.blit(t, (cr.x + 10, cr.centery - t.get_height() // 2))
-        # entry list
-        lst = self._list()
-        pygame.draw.rect(surf, (18, 17, 25), r["mid"], border_radius=4)
-        if not lst:
-            surf.blit(fs.render("Nothing matches.", True, (150, 150, 160)), (r["mid"].x + 8, r["mid"].y + 8))
+        # entry list: world content, then a "Tips & mechanics" sub-heading and the notes
+        rows = self._rows()
+        mid = r["mid"]
+        pygame.draw.rect(surf, (18, 17, 25), mid, border_radius=4)
+        if not rows:
+            surf.blit(fs.render("Nothing matches.", True, (150, 150, 160)), (mid.x + 8, mid.y + 8))
+            if self.tags:
+                surf.blit(fs.render("Try fewer chips (or ALL).", True, (130, 128, 145)), (mid.x + 8, mid.y + 28))
         vis = self._list_rows_visible()
-        self.list_scroll = max(0, min(max(0, len(lst) - vis), self.list_scroll))
+        self.list_scroll = max(0, min(max(0, len(rows) - vis), self.list_scroll))
         for i in range(vis):
             idx = self.list_scroll + i
-            if idx >= len(lst):
+            if idx >= len(rows):
                 break
-            e = lst[idx]
+            kind, e = rows[idx]
             rr = self._row_rect(r, i)
+            if kind == "header":
+                t = _font(13, True).render(e.upper(), True, (230, 200, 120))
+                ty = rr.centery - t.get_height() // 2 + 2
+                surf.blit(t, (rr.x + 8, ty))
+                ly = rr.centery + 2
+                pygame.draw.line(surf, ui.CHROME_GOLD_DIM, (rr.x + 14 + t.get_width(), ly), (rr.right - 4, ly))
+                continue
             sel = e["id"] == self.sel
+            note = codex.is_note(e)
             if sel or rr.collidepoint(mouse):
                 pygame.draw.rect(surf, (60, 55, 85) if sel else (38, 36, 52), rr, border_radius=3)
+            chip = draw_tag_chip(surf, e["tag"], rr.x + 4, rr.centery - tag_chip_size(e["tag"], True)[1] // 2,
+                                 short=True)
+            tx = chip.right + 7
             title = e["title"]
-            while fs.size(title)[0] > rr.w - 14 and len(title) > 4:
+            while fs.size(title)[0] > rr.right - tx - 4 and len(title) > 4:
                 title = title[:-2]
             if title != e["title"]:
                 title = title.rstrip() + "."
-            surf.blit(fs.render(title, True, (255, 240, 200) if sel else (220, 218, 230)),
-                      (rr.x + 7, rr.centery - fs.get_height() // 2))
-        self._scrollbar(surf, pygame.Rect(r["mid"].x, r["mid"].y, r["mid"].w - 10, r["mid"].h),
-                        self.list_scroll * ROW_H, len(lst) * ROW_H)
+            col = (255, 240, 200) if sel else ((200, 205, 215) if note else (230, 226, 236))
+            surf.blit(fs.render(title, True, col), (tx, rr.centery - fs.get_height() // 2))
+        self._scrollbar(surf, pygame.Rect(mid.x, mid.y, mid.w - 10, mid.h),
+                        self.list_scroll * ROW_H, len(rows) * ROW_H)
         # detail pane
+        lst = [e for k, e in rows if k == "entry"]
         e = codex.entry(self.sel) if self.sel else None
-        if e is None and lst:
+        if (e is None or e not in lst) and lst:
             e = lst[0]
             self.sel = e["id"]
         if e is not None:
             self._draw_entry(surf, r, e, ctx, mouse)
-        hint = fs.render("Type to search - Tab: next category - Up/Down: select - wheel scrolls - Esc closes",
+        hint = fs.render("Type to search - chips filter (any picked) - Tab: next category - Up/Down - wheel - Esc",
                          True, (140, 138, 155))
         surf.blit(hint, (win.centerx - hint.get_width() // 2, win.bottom - 28))
+
+    def _draw_text_block(self, surf, tr, text, color, font=None):
+        ui = _ui()
+        fs = font or ui._FONT_S
+        lines = []
+        for para in text.split("\n"):
+            lines += ui._wrap_text(para, fs, tr.w - 10) if para.strip() else [""]
+        lh = fs.get_height() + 3
+        max_lines = max(1, tr.h // lh)
+        self.text_scroll = max(0, min(max(0, len(lines) - max_lines), self.text_scroll))
+        for i, line in enumerate(lines[self.text_scroll:self.text_scroll + max_lines]):
+            surf.blit(fs.render(line, True, color), (tr.x, tr.y + i * lh))
+        if len(lines) > max_lines:
+            more = fs.render("(scroll for more)", True, (130, 128, 145))
+            surf.blit(more, (tr.right - more.get_width() - 8, tr.bottom - lh + 4))
+
+    def _draw_note_card(self, surf, r, e, cat_label):
+        """TIP / MECHANIC: a lighter warm card with a big bulb / cog - advice, not world content."""
+        ui = _ui()
+        card = r["right"].inflate(-2, -2)
+        label, _abbr, col, icon = codex.TAGS[e["tag"]]
+        ui._vgrad(surf, card, (62, 56, 44), (46, 42, 34))
+        pygame.draw.rect(surf, col, card, width=2, border_radius=8)
+        # a folded corner
+        fx, fy = card.right - 22, card.y
+        pygame.draw.polygon(surf, (30, 28, 36), [(fx, fy), (card.right, fy), (card.right, fy + 22)])
+        pygame.draw.polygon(surf, (92, 84, 66), [(fx, fy + 1), (card.right - 1, fy + 22), (fx, fy + 22)])
+        pygame.draw.circle(surf, _dim(col, 0.35), (card.x + 34, card.y + 34), 22)
+        pygame.draw.circle(surf, col, (card.x + 34, card.y + 34), 22, width=2)
+        draw_tag_icon(surf, icon, card.x + 34, card.y + 34, 12, col, bg=_dim(col, 0.35))
+        tx = card.x + 66
+        title = e["title"]
+        fm = ui._FONT_M
+        while fm.size(title)[0] > card.right - tx - 30 and len(title) > 4:
+            title = title[:-2]
+        surf.blit(fm.render(title, True, (255, 238, 190)), (tx, card.y + 12))
+        chip = draw_tag_chip(surf, e["tag"], tx, card.y + 38)
+        what = "How-to advice" if e["tag"] == "tip" else "How the game works"
+        surf.blit(ui._FONT_S.render(f"{what}  -  {cat_label}", True, (200, 190, 165)),
+                  (chip.right + 10, chip.centery - ui._FONT_S.get_height() // 2))
+        pygame.draw.line(surf, _dim(col, 0.7), (card.x + 14, card.y + 70), (card.right - 14, card.y + 70))
+        return pygame.Rect(card.x + 16, card.y + 80, card.w - 30, card.h - 92)
 
     def _draw_entry(self, surf, r, e, ctx, mouse):
         ui = _ui()
         fs, fm = ui._FONT_S, ui._FONT_M
         right = r["right"]
         cat_label = dict(codex.CATEGORIES).get(e["cat"], e["cat"])
-        surf.blit(fm.render(e["title"], True, (245, 215, 130)), (right.x, right.y))
-        surf.blit(fs.render(cat_label, True, (150, 148, 165)), (right.x, right.y + 22))
-        box = pygame.Rect(right.x, right.y + 44, 72, 72)
-        img = _sprite_surface(e.get("sprite"), 64)
-        if img is not None:
-            pygame.draw.rect(surf, (22, 20, 30), box, border_radius=6)
-            pygame.draw.rect(surf, ui.CHROME_GOLD, box, width=1, border_radius=6)
-            surf.blit(img, (box.x + 4, box.y + 4))
-            sx = box.right + 14
-        else:
-            sx = right.x
-        col_w = max(150, (right.right - sx) // 2)
-        for i, (k, v) in enumerate(e["stats"][:8]):
-            cx, cy = sx + (i % 2) * col_w, right.y + 46 + (i // 2) * 18
-            t = fs.render(f"{k}: ", True, (160, 160, 175))
-            surf.blit(t, (cx, cy))
-            val = str(v)
-            while fs.size(val)[0] > col_w - t.get_width() - 8 and len(val) > 3:
-                val = val[:-2]
-            surf.blit(fs.render(val, True, (235, 232, 240)), (cx + t.get_width(), cy))
-        # text (wrapped, scrollable) - help pages (no sprite/stats/location) use the whole pane
         has_where = bool(e["where"].get("biomes") or e["where"].get("areas"))
-        top = right.y + 120 if (img is not None or e["stats"]) else right.y + 46
-        bottom = r["mini"].y - 26 if has_where else right.bottom
-        tr = pygame.Rect(right.x, top, right.w, bottom - top)
-        lines = []
-        for para in e["text"].split("\n"):
-            lines += ui._wrap_text(para, fs, tr.w - 10) if para.strip() else [""]
-        lh = fs.get_height() + 3
-        max_lines = max(1, tr.h // lh)
-        self.text_scroll = max(0, min(max(0, len(lines) - max_lines), self.text_scroll))
-        for i, line in enumerate(lines[self.text_scroll:self.text_scroll + max_lines]):
-            surf.blit(fs.render(line, True, (220, 218, 230)), (tr.x, tr.y + i * lh))
-        if len(lines) > max_lines:
-            surf.blit(fs.render("(scroll for more)", True, (130, 128, 145)), (tr.x, tr.bottom - lh + 4))
+        if codex.is_note(e):
+            tr = self._draw_note_card(surf, r, e, cat_label)
+            if has_where:
+                tr.h = r["mini"].y - 26 - tr.y
+            self._draw_text_block(surf, tr, e["text"], (238, 230, 212))
+        else:
+            surf.blit(fm.render(e["title"], True, (245, 215, 130)), (right.x, right.y))
+            chip = draw_tag_chip(surf, e["tag"], right.x, right.y + 24)
+            surf.blit(fs.render(cat_label, True, (150, 148, 165)),
+                      (chip.right + 10, chip.centery - fs.get_height() // 2))
+            box = pygame.Rect(right.x, right.y + 50, 72, 72)
+            img = _sprite_surface(e.get("sprite"), 64)
+            if img is not None:
+                pygame.draw.rect(surf, (22, 20, 30), box, border_radius=6)
+                pygame.draw.rect(surf, codex.TAGS[e["tag"]][2], box, width=1, border_radius=6)
+                surf.blit(img, (box.x + 4, box.y + 4))
+                sx = box.right + 14
+            else:
+                sx = right.x
+            col_w = max(150, (right.right - sx) // 2)
+            for i, (k, v) in enumerate(e["stats"][:8]):
+                cx, cy = sx + (i % 2) * col_w, right.y + 52 + (i // 2) * 18
+                t = fs.render(f"{k}: ", True, (160, 160, 175))
+                surf.blit(t, (cx, cy))
+                val = str(v)
+                while fs.size(val)[0] > col_w - t.get_width() - 8 and len(val) > 3:
+                    val = val[:-2]
+                surf.blit(fs.render(val, True, (235, 232, 240)), (cx + t.get_width(), cy))
+            top = right.y + 128 if (img is not None or e["stats"]) else right.y + 54
+            bottom = r["mini"].y - 26 if has_where else right.bottom
+            self._draw_text_block(surf, pygame.Rect(right.x, top, right.w, bottom - top), e["text"], (220, 218, 230))
         if not has_where:
             return
         # where to find

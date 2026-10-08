@@ -526,13 +526,36 @@ def _send_dialogue(s):
     conv = s.conversation
     view = conv.view() if conv is not None else None
     sfx = []
+    open_forge = False
     if conv is not None:
         s.story_feed.extend(conv.msgs)
         conv.msgs = []
         sfx, conv.sfx = list(conv.sfx), []
+        open_forge = bool(getattr(conv, "open_forge", False))  # "Open the Forge" -> the client opens its window
         if view is None:
             s.conversation = None
-    send_msg(s.sock, {"type": "dialogue", "view": view, "sfx": sfx})
+    send_msg(s.sock, {"type": "dialogue", "view": view, "sfx": sfx, "open_forge": open_forge})
+
+
+FORGE_REACH = 180  # px from Brother Hammerstein a "forge_apply" is accepted from
+
+
+def _forge_apply(state, s, action):
+    """The Forge window's FORGE: the server re-finds the exact recipe in its own copy of this
+    player's backpack (game/forge_menu.apply_request) - Nexus only, at the Anvil."""
+    from game import forge_menu
+    anvil = next((n for n in state.nexus_npcs if getattr(n, "npc_id", None) == "hammerstein"), None)
+    if s.zone != ZONE_NEXUS or anvil is None or s.player.pos.distance_to(anvil.pos) > FORGE_REACH:
+        res = dict(ok=False, msg="You need to stand at Brother Hammerstein's Anvil (Nexus) to forge.",
+                   color=forge_menu.FAIL, sfx="forge_fail", result=None, feed=[])
+    else:
+        res = forge_menu.apply_request(s.player, action)
+    s.story_feed.extend(res["feed"])
+    item = res["result"]
+    send_msg(s.sock, {"type": "forge_result", "ok": bool(res["ok"]), "msg": res["msg"],
+                      "color": list(res["color"] or forge_menu.FAIL), "sfx": res["sfx"],
+                      "result": item.to_json() if item is not None else None})
+    return res
 
 
 def _npcs_for_session(state, s):
@@ -958,6 +981,8 @@ def _apply_action(state, s, action):
         if s.conversation is not None:
             s.conversation.choose(int(action.get("idx", -1)))
             _send_dialogue(s)
+    elif kind == "forge_apply":
+        _forge_apply(state, s, action)
     elif kind == "dialogue_close":
         if s.conversation is not None:
             s.conversation.bye()

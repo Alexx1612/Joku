@@ -221,46 +221,65 @@ def _ingots(bag):
     return [it for it in bag if it is not None and it.slot == "material" and it.shape == "ingot"]
 
 
-def stonework_options(player, limit=4):
+def _plural(name):
+    return name[:-1] + "ies" if name.endswith("y") else name + ("es" if name.endswith("z") else "s")
+
+
+def stonework_options(player, limit=4, include_blocked=False):
     """The Anvil's stonework the player can do right now: set a backpack stone into the
     EQUIPPED weapon, combine 3 same stones into the next grade, pry a stone out.
-    Each: {kind, label, ...} - apply with apply_stonework()."""
+    Each: {kind, label, ok, why, needs, ...} - apply with apply_stonework().
+    include_blocked=True also lists what can't be done yet (ok=False + why) for the Forge
+    window; limit=None means no cap. needs = [(label, icon item, have, need)]."""
+    from game.items import make_forge_ingot
     bag = list(player.backpack)
     ingots = _ingots(bag)
+    ingot_icon = ingots[0] if ingots else make_forge_ingot()
     w = getattr(player, "weapon", None)
     out = []
+
+    def ingot_need(cost):
+        return [("Forge Ingot", ingot_icon, len(ingots), cost)] if cost else []
+
+    def ingot_why(cost):
+        return f"Need {cost} Forge Ingot{'s' if cost > 1 else ''} (you have {len(ingots)})" if len(ingots) < cost else ""
+
     seen = set()
-    if w is not None and free_sockets(w) > 0:
-        for it in sorted((i for i in bag if is_gem(i)), key=lambda i: -GRADES.index(i.gem_grade)):
-            key = (it.gem_kind, it.gem_grade)
-            if key in seen:
-                continue
-            seen.add(key)
-            cost = SET_INGOTS[it.gem_grade]
-            if len(ingots) < cost:
-                continue
-            extra = f" ({cost} Ingot{'s' if cost > 1 else ''})" if cost else ""
-            out.append(dict(kind="set", gem=it, ingots=ingots[:cost],
-                            label=f"Set {it.name} into {w.name}{extra}"))
+    for it in sorted((i for i in bag if is_gem(i)), key=lambda i: -GRADES.index(i.gem_grade)):
+        key = (it.gem_kind, it.gem_grade)
+        if key in seen:
+            continue
+        seen.add(key)
+        cost = SET_INGOTS[it.gem_grade]
+        why = ("Equip a weapon first - stones go into the weapon in your hand" if w is None else
+               f"No free socket on {w.name} - pry a stone out first" if free_sockets(w) <= 0 else ingot_why(cost))
+        if why and not include_blocked:
+            continue
+        extra = f" ({cost} Ingot{'s' if cost > 1 else ''})" if cost else ""
+        out.append(dict(kind="set", gem=it, ingots=ingots[:cost], ok=not why, why=why,
+                        needs=[(it.name, it, 1, 1)] + ingot_need(cost),
+                        label=f"Set {it.name} into {w.name if w is not None else 'your weapon'}{extra}"))
     groups = {}
     for it in bag:
         if is_gem(it) and it.gem_grade != GRADES[-1]:
             groups.setdefault((it.gem_kind, it.gem_grade), []).append(it)
     for (k, g), its in sorted(groups.items(), key=lambda kv: -GRADES.index(kv[0][1])):
-        if len(its) < 3:
-            continue
         cost = COMBINE_INGOTS.get(g, 0)
-        if len(ingots) < cost:
+        why = f"Need 3 {stone_name(k, g)} stones (you have {len(its)})" if len(its) < 3 else ingot_why(cost)
+        if why and not include_blocked:
             continue
         nxt = GRADES[GRADES.index(g) + 1]
         extra = f" + {cost} Ingot" if cost else ""
-        out.append(dict(kind="combine", use=its[:3], ingots=ingots[:cost], grade=nxt, gem_kind=k,
-                        label=f"Combine 3 {stone_name(k, g)}{'' if k == 'topaz' else 's'}{extra} -> "
+        out.append(dict(kind="combine", use=its[:3], ingots=ingots[:cost], grade=nxt, gem_kind=k, ok=not why,
+                        why=why, result=make_gem(k, nxt),
+                        needs=[(stone_name(k, g), its[0], len(its), 3)] + ingot_need(cost),
+                        label=f"Combine 3 {_plural(stone_name(k, g))}{extra} -> "
                               f"{stone_name(k, nxt)}"))
     if w is not None and stones_in(w):
         k, g = stones_in(w)[-1]
-        out.append(dict(kind="pry", label=f"Pry the {stone_name(k, g)} out of {w.name} (it shatters)"))
-    return out[:limit]
+        out.append(dict(kind="pry", ok=True, why="", needs=[], stone=(k, g),
+                        label=f"Pry the {stone_name(k, g)} out of {w.name} (it shatters)"))
+    return out if limit is None else out[:limit]
 
 
 def _take(bag, it):

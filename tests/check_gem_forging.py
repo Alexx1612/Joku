@@ -76,21 +76,13 @@ def check_anvil_set_combine_pry():
     # fill every socket: no more "set" options
     p.weapon.gems = [["ruby", "regular"]] * 3
     assert not any(o["kind"] == "set" for o in G.stonework_options(p, 10))
-    # through the real Anvil conversation
+    # through the Forge window's catalog (the chat only opens it now)
+    from game import forge_menu
     p.weapon.gems = []
     p.backpack = [G.make_gem("sapphire", "regular")]
-    conv = dialogue.start_conversation(p, npc=type("N", (), {"npc_id": "hammerstein"})()) \
-        if "hammerstein" in dialogue.NPCS else None
-    if conv is None:
-        anvil = next(k for k, d in dialogue.NPCS.items() if d.get("anvil"))
-        conv = dialogue.Conversation(p, npc_id=anvil)
-        conv.start()
-    i = next(i for i, o in enumerate(conv.view()["options"]) if o.startswith("Stonework"))
-    conv.choose(i)
-    assert "socket" in conv.view()["text"]
-    i = next(i for i, o in enumerate(conv.view()["options"]) if o.startswith("Set"))
-    conv.choose(i)
-    assert G.stones_in(p.weapon) == [("sapphire", "regular")] and "gem_set" in conv.sfx
+    o = next(o for o in forge_menu.catalog(p)["stonework"] if o["kind"] == "set")
+    res = forge_menu.apply(p, o)
+    assert res["ok"] and G.stones_in(p.weapon) == [("sapphire", "regular")] and res["sfx"] == "gem_set"
     print("check_anvil_set_combine_pry: PASSED")
 
 
