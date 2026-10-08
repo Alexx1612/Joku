@@ -248,13 +248,17 @@ class NightDirector:
         if self.event == "lanterns_out":
             weights["lantern_eater"] *= 2
         kinds, w = list(weights), list(weights.values())
+        sim = self.sim
         for p in exposed:
-            near = sum(1 for e in self.sim.enemies
+            # players together share one night-mob allowance, +25% per extra player (doc 43)
+            k = len(sim.players_near(p.pos)) if hasattr(sim, "players_near") else 1
+            group_cap = int(round(cap * (1.0 + 0.25 * max(0, k - 1))))
+            near = sum(1 for e in sim.enemies
                        if e.alive and e.kind in NIGHT_MOB_KINDS and e.pos.distance_to(p.pos) < 1100)
-            if near >= cap:
+            if near >= group_cap:
                 continue
             pos = self._spawn_point(p)
-            if pos is not None:
+            if pos is not None and (not hasattr(sim, "crowd_ok") or sim.crowd_ok(pos)):
                 self._make(random.choices(kinds, weights=w)[0], pos)
 
     def _spawn_hunter(self, victim):
@@ -435,8 +439,13 @@ class NightDirector:
         self._horde_cd -= dt
         if self._horde_cd <= 0 and exposed:
             self._horde_cd = BLOOD_HORDE_EVERY
+            done = []  # one horde per GROUP of players, sized up for the group (doc 43)
             for p in exposed:
-                self._horde(p)
+                if any(p.pos.distance_to(q.pos) <= 900 for q in done):
+                    continue
+                done.append(p)
+                k = len(sim.players_near(p.pos)) if hasattr(sim, "players_near") else 1
+                self._horde(p, 1.0 + 0.25 * max(0, k - 1))
         from game import realm_sim as rs
         half = (rs.NIGHT_END - rs.NIGHT_START) / rs.BLOOD_MOON_NIGHT_SPEED / 2
         if not self._harvester_done and self._night_t >= half and alive:
@@ -454,7 +463,7 @@ class NightDirector:
             sim.vfx_events.append(("boss_appear", pos.x, pos.y, (230, 30, 40)))
             sim.sound_events.append(("sfx", "harvester_roar", pos.x, pos.y))
 
-    def _horde(self, p):
+    def _horde(self, p, size_mult=1.0):
         sim = self.sim
         from game import realm_sim as rs
         from game.entities import Enemy, ENEMY_KINDS
@@ -463,13 +472,15 @@ class NightDirector:
         pool = [k for kinds, _w in sets for k in kinds if not ENEMY_KINDS.get(k, {}).get("neutral")]
         if not pool:
             return
-        n = random.randint(*BLOOD_HORDE_SIZE)
+        n = int(round(random.randint(*BLOOD_HORDE_SIZE) * size_mult))
         for i in range(n):
             ang = 360.0 * i / n + random.uniform(-12, 12)
             dist = random.uniform(*BLOOD_HORDE_RING) * TILE
             pos = p.pos + pygame.Vector2(1, 0).rotate(ang) * dist
             if sim.is_solid(pos.x, pos.y) or sim.is_sheltered_tile(pos):
                 continue
+            if hasattr(sim, "crowd_ok") and not sim.crowd_ok(pos):
+                break  # the crowd limit around the players
             e = Enemy(random.choice(pool), pos, level_scale=sim.story_scale * 1.3)
             e.moonlit = True
             e.aggro = True

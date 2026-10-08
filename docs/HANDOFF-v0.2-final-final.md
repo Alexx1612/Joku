@@ -112,6 +112,11 @@ It is committed **locally only**: not pushed, and the release has not been rebui
     - island danger (`danger.set_islands / island_frac / island_mults`, `e.island_danger`)
     - hamlets, island outposts, more shacks (`RealmSim._stamp_house` etc.), `_repair_house_doors`
     - one character in single-player and co-op (`characters.validate / pick_for_join`, `CoopClient._mirror_character`)
+14. **Crowd limit, animated players, repaint (doc 43)**
+    - `RealmSim.crowd_ok / crowd_cap / group_mult` (18 near a player, +25% per extra player together); every spawn path asks; one Blood Moon horde per group
+    - `sprites.player_frames` + `Player.note_shot` / `_face_x` (idle 4 / walk 6 / shoot 3), `CoopClient._animate_players`
+    - repainted: 8 classes, 19 wildlife, 30 island mobs + mini-bosses, Demon Lord, all 4 Mad God forms (`tools/paint_*_sprites.py`)
+    - sweep fixes: feed beside the quest panel, black dungeon void, Shards caption
 
 ## Checkpoint commits (local, on top of 23123be)
 - `cf3a9ec`: telegraphs, story v2, NetLink fix
@@ -120,7 +125,7 @@ It is committed **locally only**: not pushed, and the release has not been rebui
 - `2b134b5`: Mad God's Room, effects wiring, docs
 
 ## Conventions (unchanged, keep following)
-- Run `python tests/run_all_checks.py` after every batch. There are now **87 scripts** (doc 40 added `check_forge_menu`, doc 41 `check_ux_batch_a` / `_b`, doc 42 `check_world_tuning`). `check_areas_trees_bosses` and `check_big_islands` can flake on the random map or timing; re-run them alone.
+- Run `python tests/run_all_checks.py` after every batch. There are now **88 scripts** (doc 40 added `check_forge_menu`, doc 41 `check_ux_batch_a` / `_b`, doc 42 `check_world_tuning`, doc 43 `check_crowd_and_animation`). `check_areas_trees_bosses` and `check_big_islands` can flake on the random map or timing; re-run them alone.
 - Look at headless screenshots for visual work: set `RR_SHOT_DIR` for the new checks.
 - All art and music must be original.
 - Don't commit, push or release without the user's OK.
@@ -130,6 +135,6 @@ It is committed **locally only**: not pushed, and the release has not been rebui
 ## Open items
 - **Night update not pushed / not released:** everything after be3256b. The user decides. Releasing means pushing `main` and moving/force-pushing the `v0.2` tag, or a new tag if they want one.
 - **Pacing:** not re-measured for the 7-act arc. The old bot figure was about 66 minutes for 5 acts.
-- **Art:** the new sprites are original grid art (Hammerstein, the two Mad God evolutions) and procedural icons (ingot, key). There are no hand-painted PNG versions yet. Heroic bosses reuse the normal boss sprite plus the crimson aura and tint.
+- **Art:** doc 43 repainted the players, wildlife, island mobs, the Demon Lord and every Mad God form with the part-based painter. Hammerstein and the procedural icons (ingot, key) are still grid art. Heroic bosses reuse the normal boss sprite plus the crimson aura and tint.
 - **Co-op map payload:** about 5.5 MB of JSON before; still uncompressed and now ~40% bigger (zlib would cut it about 50x).
 - **World-gen budget:** it passes at ~2.2-2.9 s against a 3 s limit on this machine while PyCharm indexes. It's tight; the next easy win is `_decorate_realm` / `_realm_fields`, which scale with map area.

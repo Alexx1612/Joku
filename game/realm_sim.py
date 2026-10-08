@@ -198,6 +198,18 @@ REALM_ENEMY_CAP = LAIR_COUNT * LAIR_CAP  # a hard ceiling on total live enemies 
 # replacements back, one at a time, once no player is within LAIR_RESPAWN_SIGHT_RANGE,
 # no faster than once per LAIR_RESPAWN_INTERVAL seconds per lair.
 LAIR_RESPAWN_SIGHT_RANGE = 700
+# The crowd limit (doc 43): around any player - about what a screen shows - there are at most
+# CROWD_BASE hostile (non-boss) mobs for ONE player, +25% for every other player standing with
+# them (2 players 125%, 3 players 150%, 5 players 200%). Every spawn path asks crowd_ok() first:
+# lair refills, night spawns, Blood Moon hordes, island-wave escorts. Bosses are never blocked.
+CROWD_VIEW_R = 900
+CROWD_BASE = 18
+CROWD_PER_EXTRA_PLAYER = 0.25
+
+
+def group_mult(k):
+    """The crowd multiplier for k players together: 1.0, 1.25, 1.5, ..."""
+    return 1.0 + CROWD_PER_EXTRA_PLAYER * max(0, k - 1)
 LAIR_RESPAWN_INTERVAL = 5.0
 # Profiled: Enemy.update() (movement/wander/aggro/firing) is ~79% of RealmSim.update()'s
 # total cost with the continent's ~800 pre-populated enemies, REGARDLESS of whether any
@@ -1647,6 +1659,7 @@ class RealmSim:
         self._players_by_pid = players
         self._refresh_story_scale(alive)
         was_night = self._was_night
+        self._crowd_alive = list(alive)  # the crowd limit (crowd_ok) counts these players
         self._update_day_night(dt)
         self._tick_night_watch(was_night, alive)
         self._update_fishing(dt, players)
@@ -1982,6 +1995,28 @@ class RealmSim:
             out.append(row)
         return out
 
+    def _crowd_players(self):
+        return [p for p in getattr(self, "_crowd_alive", ()) if getattr(p, "alive", True)]
+
+    def players_near(self, pos, radius=CROWD_VIEW_R):
+        return [p for p in self._crowd_players() if p.pos.distance_to(pos) <= radius]
+
+    def crowd_cap(self, player):
+        return int(round(CROWD_BASE * group_mult(len(self.players_near(player.pos)))))
+
+    def crowd_count(self, player):
+        r2 = CROWD_VIEW_R * CROWD_VIEW_R
+        px, py = player.pos.x, player.pos.y
+        return sum(1 for e in self.enemies if e.alive and not e.neutral and e.rank != "boss"
+                   and (e.pos.x - px) ** 2 + (e.pos.y - py) ** 2 <= r2)
+
+    def crowd_ok(self, pos, extra=1):
+        """May `extra` more hostiles appear at `pos`? No if any player who'd see them is at the limit."""
+        for p in self.players_near(pos):
+            if self.crowd_count(p) + extra > self.crowd_cap(p):
+                return False
+        return True
+
     def _spawn_enemy(self, alive):
         # bonus rooms no longer ambient-spawn here at all (see update()'s spawn
         # gate) - their trash is a fixed per-room pod from _populate_fixed_rooms
@@ -2008,7 +2043,7 @@ class RealmSim:
         idx = random.choice(eligible)
         lair = self.lairs[idx]
         pos = self._find_spawn_pos_near(lair["pos"], avoid_players=alive)
-        if pos is None:
+        if pos is None or not self.crowd_ok(pos):  # the crowd limit around players
             return
         kind = random.choices(lair["kinds"], weights=lair["weights"])[0]
         avg_level = sum(p.level for p in alive) / len(alive)
@@ -2060,11 +2095,13 @@ class RealmSim:
                 wave = [mini_boss] + [random.choice(theme["guardians"]) for _ in range(ISLAND_ESCORT_SIZE)]
             else:
                 wave = [theme["anchor"]] + [random.choice(theme["guardians"]) for _ in range(ISLAND_WAVE_SIZE - 1)]
-            for kind in wave:
+            for wi, kind in enumerate(wave):
                 pos = self._find_spawn_pos_near(isl["pos"], min_px=6 * TILE, max_px=24 * TILE,
                                                 avoid_players=self._story_players)
                 if pos is None:
                     pos = pygame.Vector2(isl["pos"])
+                if wi > 0 and not self.crowd_ok(pos):
+                    continue  # escorts respect the crowd limit; the wave's leader always comes
                 enemy = Enemy(kind, pos, level_scale=self.story_scale * ISLAND_WAVE_SCALE)
                 enemy.island_idx = isl["slot"]
                 enemy.loot_source = "island"  # mythic T12-T13 odds + Forge Ingots (items.LOOT_SOURCES)
@@ -3674,6 +3711,8 @@ class RealmSim:
         """
         from game import runes as _runes
         p._fire_flash_t = p.FIRE_FLASH_DURATION  # brief recoil-nudge + tint - see Player.draw()
+        if hasattr(p, "note_shot"):
+            p.note_shot((direction[0], direction[1]))  # the shoot frames, facing the aim
         # precise combat: slower shots (entities.PLAYER_FIRE_RATE_MULT) that hit much harder; a roll
         # in the top 15% of the weapon's range is a "heavy" hit (gold popup)
         mn, mx = sorted((p.weapon.min_dmg, p.weapon.max_dmg))

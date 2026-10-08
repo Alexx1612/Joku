@@ -2382,6 +2382,68 @@ def player_sprite(cls_name: str) -> pygame.Surface:
     return _cache[key]
 
 
+PLAYER_ANIMS = {"idle": 4, "walk": 6, "shoot": 3}  # frames per strip (players/player_<cls>_<anim>.png)
+
+
+def _procedural_player_frames(still, which):
+    """Frames made from the still when a class has no painted strip: idle breathes, walk steps
+    (the legs - the bottom third - alternate up/down while the body bobs), shoot recoils."""
+    w, h = still.get_size()
+    legs_y = int(h * 0.70)
+    out = []
+    n = PLAYER_ANIMS[which]
+    for i in range(n):
+        f = pygame.Surface((w, h), pygame.SRCALPHA)
+        if which == "idle":
+            rise = [0, 1, 1, 0][i]
+            body = still.subsurface((0, 0, w, legs_y))
+            f.blit(still.subsurface((0, legs_y, w, h - legs_y)), (0, legs_y))
+            f.blit(pygame.transform.smoothscale(body, (w, legs_y + rise)), (0, -rise))
+        elif which == "walk":
+            ph = 2 * math.pi * i / n
+            lift = max(1, h // 24)
+            bob = int(round(abs(math.sin(ph)) * lift))
+            left = still.subsurface((0, legs_y, w // 2, h - legs_y))
+            right = still.subsurface((w // 2, legs_y, w - w // 2, h - legs_y))
+            dl, dr = int(round(math.sin(ph) * lift)), int(round(-math.sin(ph) * lift))
+            f.blit(left, (int(round(math.cos(ph) * lift)), legs_y + min(0, dl)))
+            f.blit(right, (w // 2 - int(round(math.cos(ph) * lift)), legs_y + min(0, dr)))
+            f.blit(still.subsurface((0, 0, w, legs_y)), (0, -bob))
+        else:  # shoot: wind-up (squash), release (lean forward), recover
+            sx, sy, dx = [(1.0, 0.94, -1), (1.06, 1.0, 2), (1.0, 1.0, 1)][i]
+            img = pygame.transform.smoothscale(still, (int(w * sx), int(h * sy)))
+            f.blit(img, ((w - img.get_width()) // 2 + dx * max(1, w // 48), h - img.get_height()))
+        out.append(f)
+    return out
+
+
+def player_frames(cls_name, which="idle", flip=False):
+    """Animation frames for a class at the in-game size: painted strips
+    (players/player_<cls>_idle|walk|shoot.png, frames as wide as the still) when present,
+    otherwise frames made from the still. Characters face right; flip=True faces left."""
+    key = ("pframes", cls_name, which, flip)
+    if key in _cache:
+        return _cache[key]
+    frames = []
+    path = os.path.join(_SPRITE_DIR, "players", f"player_{cls_name}_{which}.png")
+    still_size = _art_native_size(f"players/player_{cls_name}.png")
+    if still_size and os.path.isfile(path):
+        try:
+            sheet = pygame.image.load(path).convert_alpha()
+            fw, fh = still_size
+            for i in range(max(1, sheet.get_width() // fw)):
+                fr = sheet.subsurface((i * fw, 0, fw, min(fh, sheet.get_height()))).copy()
+                frames.append(pygame.transform.smoothscale(fr, (FINAL_SIZE, FINAL_SIZE)))
+        except Exception:
+            frames = []
+    if not frames:
+        frames = _procedural_player_frames(player_sprite(cls_name), which)
+    if flip:
+        frames = [pygame.transform.flip(f, True, False) for f in frames]
+    _cache[key] = frames
+    return frames
+
+
 BOSS_KINDS = {"boss", "frost_monarch", "ash_behemoth", "void_reaper", "thorn_warden", "sand_wyrm",
               "boss_phase2", "frost_monarch_phase2", "ash_behemoth_phase2", "void_reaper_phase2",
               "thorn_warden_phase2", "sand_wyrm_phase2",

@@ -2241,6 +2241,8 @@ class Game:
                                    enemies=sim.enemies, quest_marks=qmarks)
             return
         s = view_scale.world_begin(self.screen, self.cam)  # Options > Display > Zoom: the world, bigger
+        if sim.is_bonus_room:
+            s.fill((2, 2, 6))  # the dungeon's void - beyond the map edge too
         fog = mm.explored if sim.is_bonus_room else None
         sim.realm_map.canopy_overlay = True  # trunks in the floor pass, canopies drawn over entities below
         world.render_rotated_world(s, self.cam, lambda surf, cam: sim.realm_map.draw(surf, cam, surf.get_size(), fog=fog))

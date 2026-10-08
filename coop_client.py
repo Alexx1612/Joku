@@ -437,6 +437,7 @@ class CoopClient:
 
         self.you = None
         self.peers = []
+        self._anim = {}  # pid -> walk / face / shoot state across snapshots (see _animate_players)
         self.zone = "nexus"
         self.tilemap = None
         self.enemies, self.bullets, self.ground_items, self.portals = [], [], [], []
@@ -1746,6 +1747,29 @@ class CoopClient:
 
     CHAR_MIRROR_EVERY = 10.0  # s - how often the server's copy of you is mirrored to your own save
 
+    ANIM_MOVE_HOLD = 0.18  # s a player still counts as walking after their last position change
+
+    def _animate_players(self, players):
+        """Snapshots rebuild every Player, so the walk / face / shoot state lives here, worked out
+        from how each player moved since the last snapshot (Player.draw reads it)."""
+        if not hasattr(self, "_anim"):
+            self._anim = {}
+        now = pygame.time.get_ticks() / 1000.0
+        for p in players:
+            if p is None:
+                continue
+            st = self._anim.setdefault(p.pid, {"pos": (p.pos.x, p.pos.y), "move_until": 0.0, "face": 1.0,
+                                                "shoot_until": 0.0})
+            dx, dy = p.pos.x - st["pos"][0], p.pos.y - st["pos"][1]
+            if dx * dx + dy * dy > 0.25:
+                st["move_until"] = now + self.ANIM_MOVE_HOLD
+                if abs(dx) > 0.3 and now >= st.get("shoot_until", 0.0):
+                    st["face"] = 1.0 if dx > 0 else -1.0
+            st["pos"] = (p.pos.x, p.pos.y)
+            p._is_moving = now < st["move_until"]
+            p._face_x = st.get("face", 1.0)
+            p._shoot_anim_t = max(0.0, st.get("shoot_until", 0.0) - now)
+
     def _mirror_character(self, dt, force=False):
         """Keeps the local save in step with the server's copy of you (so single-player picks up
         where co-op left off); a co-op death deletes it - permadeath is the same everywhere."""
@@ -1951,6 +1975,7 @@ class CoopClient:
         self._last_level = you.level
         self.you = you
         self.peers = [Player.from_net_state(d) for d in snap.get("players", [])]
+        self._animate_players([you] + self.peers)
         for pid, text in snap.get("chats", []):
             if pid is None:  # a server notice ("[Ana and Ben are trading]") - it used to read "???: ..."
                 self.feed.insert(0, [text, (230, 210, 150), 4.0])
@@ -2195,6 +2220,11 @@ class CoopClient:
                 aim = auto_aim_direction(self.you.pos, aim, self.enemies, cone_deg=cone_deg)
         fire = ((self.auto_fire_enabled or bool(pygame.mouse.get_pressed()[0])) and self.zone in ("realm", "bonus")
                 and not self._ui_click_active)
+        if fire and self.you is not None:  # your own shoot frames, facing the aim
+            st = self._anim.setdefault(self.you.pid, {})
+            st["shoot_until"] = pygame.time.get_ticks() / 1000.0 + Player.SHOOT_ANIM
+            st["face"] = 1.0 if aim.x >= 0 else -1.0
+            self.you.note_shot((aim.x, aim.y))
         dash = self._dash_pending
         self._dash_pending = False  # one-shot per keypress, not held-key-repeat like move/fire
         self.link.send({"type": "input", "auto_loot": bool(settings.get("auto_loot")),
@@ -2448,6 +2478,8 @@ class CoopClient:
                                    quest_marks=qmarks)
             return
         s = view_scale.world_begin(self.screen, self.cam)  # Options > Display > Zoom: the world, bigger
+        if self.zone == "bonus":
+            s.fill((2, 2, 6))  # the dungeon's void - beyond the map edge too
         fog = mm.explored if (self.zone == "bonus" and mm is not None) else None
         self.tilemap.canopy_overlay = True  # trunks in the floor pass, canopies drawn over entities below
         world.render_rotated_world(s, self.cam, lambda surf, cam: self.tilemap.draw(surf, cam, surf.get_size(), fog=fog))

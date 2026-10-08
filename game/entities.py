@@ -128,6 +128,8 @@ class Player:
         self._t = 0.0  # time accumulator for draw-only animation (walk cycle/idle bob) -
         # same shape as Enemy._t, just never previously existed on Player. Incremented
         # every net_update() tick; never affects gameplay, purely a draw()-time visual.
+        self._shoot_anim_t = 0.0  # >0 while the shoot animation plays (sprites.player_frames "shoot")
+        self._face_x = 1.0        # which way the sprite faces: +1 right, -1 left (last horizontal move / aim)
         self._fire_flash_t = 0.0  # >0 briefly after a real shot - see player_fire() in
         # realm_sim.py (the single choke point every class's shot goes through) and draw()
         self._is_moving = False  # set every net_update() tick - draw()-only, drives walk-cycle vs idle bob
@@ -655,6 +657,8 @@ class Player:
             if self._is_moving:
                 move = pygame.Vector2(move).normalize()
                 self.facing = move
+                if abs(move.x) > 0.2 and self._shoot_anim_t <= 0:
+                    self._face_x = 1.0 if move.x > 0 else -1.0
                 mult = speed_mult_fn(self.pos.x, self.pos.y) if speed_mult_fn else 1.0
                 delta = move * self.speed() * mult * dt
                 if is_solid is None:
@@ -675,6 +679,7 @@ class Player:
 
         self._t += dt  # draw-only animation clock - ticks regardless of movement (idle bob needs it too)
         self._fire_flash_t = max(0.0, self._fire_flash_t - dt)
+        self._shoot_anim_t = max(0.0, getattr(self, "_shoot_anim_t", 0.0) - dt)
         self._fire_cd = max(0.0, self._fire_cd - dt)
         self._hit_flash = max(0.0, self._hit_flash - dt)
         self.ability_cd = max(0.0, self.ability_cd - dt)
@@ -744,6 +749,15 @@ class Player:
         return real
 
     WALK_CYCLE_SPEED = 9.0    # rad/sec-equivalent - tuned for a natural walking cadence
+    WALK_FPS = 10.0           # walk-cycle frames per second (6-frame strip)
+    IDLE_FPS = 4.0
+    SHOOT_ANIM = 0.24         # s - the 3-frame shoot animation
+
+    def note_shot(self, direction):
+        """A shot was fired toward `direction`: play the shoot frames, face that way."""
+        self._shoot_anim_t = self.SHOOT_ANIM
+        if abs(direction[0]) > 0.05:
+            self._face_x = 1.0 if direction[0] > 0 else -1.0
     IDLE_BOB_SPEED = 2.2
     IDLE_BOB_AMPLITUDE = 1.5  # px
     FIRE_FLASH_DURATION = 0.12
@@ -762,31 +776,27 @@ class Player:
         # a wrong/mismatched walk-cycle - an honest, proportionate scope for a
         # lightweight visual, not a new networked-animation-state system.
         t = pygame.time.get_ticks() / 1000.0
-        img = sprites.player_sprite(self.cls_name)
         is_moving = self._is_moving
-        if is_moving:
-            leg_phase = math.sin(t * self.WALK_CYCLE_SPEED)
-            offset_y = 0.0
+        flip = getattr(self, "_face_x", 1.0) < 0
+        shoot_t = getattr(self, "_shoot_anim_t", 0.0)
+        # real frame animation (sprites.player_frames): shoot > walk > idle, facing left / right
+        if shoot_t > 0:
+            frames = sprites.player_frames(self.cls_name, "shoot", flip)
+            idx = min(len(frames) - 1, int((1.0 - shoot_t / self.SHOOT_ANIM) * len(frames)))
+        elif is_moving:
+            frames = sprites.player_frames(self.cls_name, "walk", flip)
+            idx = int(t * self.WALK_FPS) % len(frames)
         else:
-            leg_phase = 0.0
-            offset_y = math.sin(t * self.IDLE_BOB_SPEED) * self.IDLE_BOB_AMPLITUDE
+            frames = sprites.player_frames(self.cls_name, "idle", flip)
+            idx = int(t * self.IDLE_FPS + (hash(self.pid) % 7) * 0.37) % len(frames)
+        img = frames[idx]
         cx, cy = cam(self.pos)
-        cy += offset_y
         if self._fire_flash_t > 0:
             nudge_frac = self._fire_flash_t / self.FIRE_FLASH_DURATION
             cx += self.facing.x * self.FIRE_FLASH_NUDGE * nudge_frac
             cy += self.facing.y * self.FIRE_FLASH_NUDGE * nudge_frac
         r = img.get_rect(center=(cx, cy))
         surf.blit(img, r)
-        if is_moving:
-            # two small leg accents at the sprite's bottom edge, alternating -
-            # "move the legs a little" - drawn as a thin extra step after the
-            # cached base sprite blit, never baked into the cached surface, so
-            # sprites.player_sprite()'s cache is completely untouched
-            leg_dx = leg_phase * 4
-            leg_y = r.bottom - 3
-            pygame.draw.circle(surf, (30, 30, 35), (int(r.centerx - 5 + leg_dx), int(leg_y)), 3)
-            pygame.draw.circle(surf, (30, 30, 35), (int(r.centerx + 5 - leg_dx), int(leg_y)), 3)
         if self._hit_flash > 0:
             flash = img.copy()
             flash.fill((255, 60, 60, 120), special_flags=pygame.BLEND_RGBA_MULT)

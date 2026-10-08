@@ -32,6 +32,7 @@ Doc 40. No balance numbers changed. The new UI's own values:
 | Map zoom | full map 0.5x .. 10x, minimap 1x .. 10x, x1.2 per notch; Quest Map up to 10x | `minimap.MAX_ZOOM` |
 | Aggro | non-bosses x0.75 of the table range | `entities.AGGRO_SCALE` |
 | Night rules | HP x1.5, dmg x1.45, cooldowns x0.75, speed x1.2, aggro x1.3 (dark x1.55), leash x1.5 | `night.NIGHT_RULES` |
+| Crowd limit | max 18 hostiles within 900 px of a player; x(1 + 0.25 per extra player within 900 px); bosses exempt; one Blood Moon horde per group | `realm_sim.CROWD_BASE` / `group_mult` |
 | Blood Moon rules | HP x2.0, dmg x1.75, cooldowns x0.62, speed x1.3, aggro x1.6 (dark x1.9), leash x2.0 | `night.BLOOD_RULES` |
 | Island danger | 0.45 x rank (nearest island to the beach 0 .. furthest 1) + 0.55 x shore->centre; HP x0.7..x1.7, dmg x0.8..x1.35, XP x0.9..x1.6, extra loot 0..49% | `danger.island_frac`, `island_mults` |
 | Shelters | wayside shacks 3 per biome (was 2), a hamlet per biome (2 houses), an outpost + a shelter per island | `RealmSim.SHACKS_PER_BIOME`, `_stamp_hamlets`, `_stamp_island_outposts` |

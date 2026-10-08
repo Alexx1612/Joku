@@ -599,7 +599,7 @@ def _draw_container(surf, player, mode, mouse_pos, dragging_from):
         # a header in the gap above the grid: what the ACTIVE row is doing to your shots
         fx = runes.active_effects(items)
         txt = ("ACTIVE: " + ", ".join(runes.EFFECTS[e][0] for e in sorted(fx))) if fx else \
-            "ACTIVE row = sockets on your weapon"
+            "ACTIVE = shot sockets"
         width = rects[3].right - rects[0].x
         t = _FONT_S.render(txt, True, (255, 205, 110))
         while t.get_width() > width and len(txt) > 8:
@@ -1856,16 +1856,22 @@ def draw_item_feed(surf, messages, y=90):
     # centred on the PLAY AREA (left of the dock) and wrapped to fit it - centred on the whole
     # screen, long lines ran under the dock (worse on a zoomed / small canvas)
     play_w = max(200, dock_frame_rect().x - 8)
+    qs = quest_slot_rect()  # the quest panel (top-left): lines level with it sit to its right
     for msg, color, t in messages:
         alpha = min(255, int(255 * min(1.0, t)))
-        for line in _wrap_text(msg, _FONT_M, play_w - 24) or [msg]:
+        beside = qs is not None and y < qs.bottom + 4 and qs.right < play_w // 2
+        left = qs.right + 12 if beside else 8
+        for line in _wrap_text(msg, _FONT_M, play_w - left - 16) or [msg]:
+            beside = qs is not None and y < qs.bottom + 4 and qs.right < play_w // 2
+            left = qs.right + 12 if beside else 8
             txt = _FONT_M.render(line, True, color)
             shadow = _FONT_M.render(line, True, (0, 0, 0))
             holder = pygame.Surface((txt.get_width() + 2, txt.get_height() + 2), pygame.SRCALPHA)
             holder.blit(shadow, (1, 2))
             holder.blit(txt, (0, 0))
             holder.set_alpha(alpha)
-            surf.blit(holder, (play_w // 2 - txt.get_width() // 2, y))
+            cx = max(left + txt.get_width() // 2, (left + play_w) // 2 if beside else play_w // 2)
+            surf.blit(holder, (min(play_w - txt.get_width(), cx - txt.get_width() // 2), y))
             y += 26
 
 
@@ -2595,7 +2601,9 @@ def draw_class_select(surf, selected_idx, mouse_pos=(-1, -1)):
         selected = i == selected_idx
         hovered = rect.collidepoint(mouse_pos)
         color = C.COL_XP if selected else (150, 150, 160)
-        img = sprites.player_sprite(cls)
+        t = pygame.time.get_ticks() / 1000.0
+        frames = sprites.player_frames(cls, "walk" if selected else "idle")  # the picked class walks
+        img = frames[int(t * (10 if selected else 4) + i * 0.6) % len(frames)]
         _slot_frame(surf, rect, filled=True, accent=CHROME_GOLD if selected else None, hovered=hovered)
         surf.blit(pygame.transform.smoothscale(img, (56, 56)), (rect.x + 8, rect.y + 8))
         label = _FONT_M.render(cls.title(), True, color)

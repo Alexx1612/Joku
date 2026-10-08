@@ -596,7 +596,7 @@ docs/unity-rebuild/  feature-by-feature docs for rebuilding the game in Unity (0
 `run_all_checks.py` finds every `tests/check_*.py` and runs each as its own
 headless process (`SDL_VIDEODRIVER=dummy`, throwaway settings, no music
 rendering, no event rotation) and prints a PASS/FAIL summary - currently
-**87/87**. The checks are plain asserts that drive the real game objects:
+**88/88**. The checks are plain asserts that drive the real game objects:
 single-player `Game`, the co-op server's action handler and real
 client-server sockets, rendered screenshots, timing budgets (e.g. world
 generation < 3 s) and fixed-seed input fuzzing.
@@ -675,6 +675,13 @@ Built in batches; each has a detailed doc in `docs/unity-rebuild/`.
   (doc 28)**, released together as **Ends of V0.2 (65552b4)**.
 
 ### Ends of V0.2 - "final final fin" UI round (current, still v0.2)
+- **Crowds, animation, new art** (doc 43): no more than **18 monsters**
+  crowd around you (+25% for each friend standing with you - 22 for two,
+  27 for three...), and a Blood Moon sends **one horde per group**, not one
+  each; every class now **breathes, walks and shoots** with its own
+  animation (facing where you aim or walk, in co-op too); the classes,
+  the wildlife, both island families with their mini-bosses, the Demon Lord
+  and every form of the Mad God are **repainted** with far more detail.
 - **World tuning** (doc 42): the world is drawn **1.25x bigger** by default
   while the HUD stays full size (Options > Display > Zoom: 100-150%);
   **/help** now explains every command with examples (/help <command>,

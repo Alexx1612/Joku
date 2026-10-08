@@ -375,6 +375,72 @@ def world_shots():
     sh.write("More buildings: hamlets on the continent, outposts on the islands")
 
 
+def art_shots():
+    """Doc 43: the repainted mobs, bosses and players, in the game at real size (not a contact sheet)."""
+    from game.entities import Enemy, Player
+    sh = Shots("art_in_game")
+    g = TS._game()
+    sim = g.realm_sim
+    sim.day_time = 120
+    _settle(g, 2)
+    base = pygame.Vector2(g.player.pos)
+    groups = [
+        ("01_wildlife", "Wildlife, repainted (idle / move strips)",
+         ["forest_hare", "snow_fox", "deer", "elk", "mountain_goat", "tortoise", "tree_frog", "fire_beetle",
+          "flamingo", "ice_penguin", "songbird", "owl", "mushroom_folk", "desert_lizard", "moonpetal"]),
+        ("02_shard_island", "Shard-island mobs + mini-bosses, repainted",
+         ["ember_wisp", "fury_shard", "rubble_crawler", "spite_spirit", "shard_sentinel", "echo_knight",
+          "shattered_golem", "fracture_hound", "cinder_colossus", "ashreach_revenant", "thornrock_colossus"]),
+        ("03_choir_island", "Choir-island mobs + mini-bosses, repainted",
+         ["tide_wisp", "pearl_acolyte", "brine_crawler", "abyssal_chorister", "coral_sentinel", "kelp_stalker",
+          "siren_wraith", "choir_sovereign", "coral_leviathan", "driftbell_matriarch", "abyssal_choirmaster"]),
+        ("04_bosses", "The Demon Lord and the Mad God's forms, repainted",
+         ["boss", "boss_phase2", "mad_god", "mad_god_phase2", "mad_god_unhinged", "mad_god_livid"]),
+    ]
+    for name, cap, kinds in groups:
+        sim.enemies = []
+        cols = 6 if len(kinds) > 6 else 3
+        step = 120 if len(kinds) > 6 else 230
+        for i, k in enumerate(kinds):
+            try:
+                e = Enemy(k, base + pygame.Vector2((i % cols - (cols - 1) / 2) * step,
+                                                   -140 + (i // cols) * (step * 0.85)))
+            except Exception as ex:  # an unknown kind: say so in the notes, keep going
+                print("skip", k, ex)
+                continue
+            e.speed = 0
+            e.aggro_range = 0
+            sim.enemies.append(e)
+        for _ in range(3):
+            for e in sim.enemies:
+                e.speed = 0
+            _settle(g, 1)
+        sh.save(g, name, cap)
+    sim.enemies = []
+    others = []
+    for i, cls in enumerate(("warrior", "archer", "priest", "paladin", "rogue", "assassin", "necromancer")):
+        o = Player(cls, cls.title(), pid=f"art_{cls}")
+        o.pos = base + pygame.Vector2((i - 3) * 90, 110)
+        o._is_moving = i % 2 == 0
+        o._face_x = -1.0 if i % 3 == 0 else 1.0
+        others.append(o)
+    g._art_others = others
+    orig = g.player.draw
+
+    def draw_all(surf, cam, *a, **kw):
+        for o in others:
+            o.draw(surf, cam)
+        return orig(surf, cam, *a, **kw)
+    g.player.draw = draw_all
+    g.player.note_shot((1.0, 0.0))
+    _settle(g, 1)
+    g.player.note_shot((1.0, 0.0))
+    sh.save(g, "05_players", "All 8 classes in the world: walking ones step, idle ones breathe, the wizard shoots "
+                             "(frames flip with facing)")
+    g.player.draw = orig
+    sh.write("The repainted art, in the game at real size")
+
+
 def pins_shots():
     """Doc 42: 'Been there / Not yet' in the Quest Log, and your own map pins."""
     from game.constants import TILE
@@ -406,7 +472,63 @@ def pins_shots():
     sh.write("Quest places + map pins")
 
 
+def sweep_shots():
+    """A visual sweep of every screen / zone / panel (the 'recheck all there is visually' pass)."""
+    from game import realm_sim as rs, items as I
+    sh = Shots("visual_sweep")
+    g = TS._game()
+    g.state = main.STATE_CLASS_SELECT
+    sh.save(g, "01_class_select", "Class select")
+    g.state = main.STATE_REALM
+    _settle(g)
+    sh.save(g, "02_realm_day", "The Realm by day (Tavern Town)")
+    g.right_panel_mode = "bag2"
+    sh.save(g, "03_dock_bag2", "Dock: Bag 2")
+    g.right_panel_mode = "shards"
+    sh.save(g, "04_dock_shards", "Dock: Shards")
+    g.right_panel_mode = "inventory"
+    g.realm_sim.day_time = rs.NIGHT_START + 60
+    _settle(g, 4)
+    g.realm_sim.day_time = rs.NIGHT_START + 60
+    if hasattr(g, "_eyes"):
+        g._eyes.level, g._eyes._was_night = 1.0, True
+    sh.save(g, "05_realm_night", "The Realm at night")
+    g.realm_sim.day_time = 120
+    g.go_nexus()
+    _settle(g, 4)
+    sh.save(g, "06_nexus", "The Nexus")
+    g.echo_shop_open = True
+    sh.save(g, "07_echo_shop", "The Echo Keeper's shop")
+    g.echo_shop_open = False
+    try:
+        g.enter_vault_room()
+        _settle(g, 3)
+        sh.save(g, "08_vault_room", "The Vault room")
+    except Exception as e:
+        sh.notes.append(f"- (vault room failed: {e})")
+    try:
+        from game import admin
+        g.go_nexus()
+        admin.run(admin.SPCtx(g), "goto bazaar")
+        _settle(g, 3)
+        sh.save(g, "09_bazaar", "The Bazaar")
+        g.go_nexus()
+        admin.run(admin.SPCtx(g), "dungeon frozen_crypt medium")
+        _settle(g, 6)
+        sh.save(g, "10_dungeon", "A dungeon (Frozen Crypt, Medium)")
+    except Exception as e:
+        sh.notes.append(f"- (bazaar / dungeon failed: {e})")
+    g.player.take_damage(9999, pierce_armor=True, source=("Frost Wraith", "Ice Lance", True))
+    g.die()
+    sh.save(g, "11_death", "The death screen with its recap")
+    sh.write("Visual sweep - every screen")
+
+
 def run(which):
+    if "art" in which:
+        art_shots()
+    if "sweep" in which:
+        sweep_shots()
     if "pins" in which:
         pins_shots()
     if "world" in which:
