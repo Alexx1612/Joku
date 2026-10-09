@@ -56,3 +56,6 @@ references/
 
 # Local AI sprite pipeline (ComfyUI + SDXL models, ~10 GB) - see docs/unity-rebuild/44-extra-ai-sprite-forge.md
 pixel-sprite-forge/
+
+# Per-version local installs (exes + their own saves) - see README "Release folders"
+releases/

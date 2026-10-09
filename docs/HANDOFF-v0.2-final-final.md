@@ -118,6 +118,10 @@ It is committed **locally only**: not pushed, and the release has not been rebui
     - repainted: 19 wildlife, 30 island mobs + mini-bosses, Demon Lord, all 4 Mad God forms (`tools/paint_*_sprites.py`)
     - players and NPCs **stay chunky pixel art** (user rule); their strips come from `tools/pixel_player_strips.py`. Don't run `tools/paint_player_sprites.py`
     - sweep fixes: feed beside the quest panel, black dungeon void, Shards caption
+16. **v0.2 FINAL (2026-10-09).** Fully re-tested: 89/89, plus every screenshot set re-shot and reviewed. Players are back to the chunky pixel art.
+    - Fixed: the event feed overwrote a quest panel that had been dragged.
+    - Release folders: `releases/v0.2/` holds the final exes plus a copy of all accounts.
+    - **The model remake (new classes, weapons, mob img2img, bigger bosses, part rigs) is v0.3, on the `v0.3` branch.**
 15. **Extra: AI sprite forge (doc 44)**
     - `pixel-sprite-forge/` (git-ignored) installed: ComfyUI portable + SDXL + Pixel Art XL + LCM-LoRA
     - fast route `4_generate_sprites.bat fast`, `--fast` by default, `generate.py --batch`
@@ -130,7 +134,7 @@ It is committed **locally only**: not pushed, and the release has not been rebui
 - `2b134b5`: Mad God's Room, effects wiring, docs
 
 ## Conventions (unchanged, keep following)
-- Run `python tests/run_all_checks.py` after every batch. There are now **88 scripts** (doc 40 added `check_forge_menu`, doc 41 `check_ux_batch_a` / `_b`, doc 42 `check_world_tuning`, doc 43 `check_crowd_and_animation`). `check_areas_trees_bosses` and `check_big_islands` can flake on the random map or timing; re-run them alone.
+- Run `python tests/run_all_checks.py` after every batch. There are now **89 scripts** (doc 40 added `check_forge_menu`, doc 41 `check_ux_batch_a` / `_b`, doc 42 `check_world_tuning`, doc 43 `check_crowd_and_animation` + `check_feed_clear_of_quest_panel`). `check_areas_trees_bosses` and `check_big_islands` can flake on the random map or timing; re-run them alone.
 - Look at headless screenshots for visual work: set `RR_SHOT_DIR` for the new checks.
 - All art and music must be original.
 - Don't commit, push or release without the user's OK.

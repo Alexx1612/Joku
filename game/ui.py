@@ -1856,22 +1856,26 @@ def draw_item_feed(surf, messages, y=90):
     # centred on the PLAY AREA (left of the dock) and wrapped to fit it - centred on the whole
     # screen, long lines ran under the dock (worse on a zoomed / small canvas)
     play_w = max(200, dock_frame_rect().x - 8)
-    qs = quest_slot_rect()  # the quest panel (top-left): lines level with it sit to its right
+    qs = quest_slot_rect()  # the quest panel - players can drag it anywhere, so never write over it
     for msg, color, t in messages:
         alpha = min(255, int(255 * min(1.0, t)))
-        beside = qs is not None and y < qs.bottom + 4 and qs.right < play_w // 2
-        left = qs.right + 12 if beside else 8
-        for line in _wrap_text(msg, _FONT_M, play_w - left - 16) or [msg]:
-            beside = qs is not None and y < qs.bottom + 4 and qs.right < play_w // 2
-            left = qs.right + 12 if beside else 8
+        for line in _wrap_text(msg, _FONT_M, play_w - 24) or [msg]:
             txt = _FONT_M.render(line, True, color)
+            x = max(8, min(play_w - txt.get_width(), play_w // 2 - txt.get_width() // 2))
+            box = pygame.Rect(x, y, txt.get_width() + 2, txt.get_height() + 2)
+            if qs is not None and box.colliderect(qs.inflate(8, 4)):
+                if qs.left - 12 - 8 >= txt.get_width():  # room on its left: sit there
+                    x = qs.left - 12 - txt.get_width()
+                elif play_w - (qs.right + 12) >= txt.get_width():  # room on its right
+                    x = max(qs.right + 12, min(play_w - txt.get_width(), x))
+                else:  # no room beside it: carry on below it
+                    y = qs.bottom + 6
             shadow = _FONT_M.render(line, True, (0, 0, 0))
             holder = pygame.Surface((txt.get_width() + 2, txt.get_height() + 2), pygame.SRCALPHA)
             holder.blit(shadow, (1, 2))
             holder.blit(txt, (0, 0))
             holder.set_alpha(alpha)
-            cx = max(left + txt.get_width() // 2, (left + play_w) // 2 if beside else play_w // 2)
-            surf.blit(holder, (min(play_w - txt.get_width(), cx - txt.get_width() // 2), y))
+            surf.blit(holder, (x, y))
             y += 26
 
 

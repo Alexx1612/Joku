@@ -56,7 +56,7 @@ The art rules stay the same:
   - Measured here: ComfyUI 0.39.0 with PyTorch **2.14.0+cu130** (CUDA 13.0); the supported architectures include **sm_120**, and `torch.cuda.is_available()` is True
 - **Laptops with two GPUs (Intel + NVIDIA):** CUDA always runs on the NVIDIA card. The Windows "Graphics preference" setting only affects which GPU *displays* an app, so it doesn't need changing.
 - **Power:** plug the laptop in (on battery the GPU clocks down hard) and set Windows power mode to **Best performance**. In the vendor tool (Armoury Crate, Vantage, etc.), pick Performance / Turbo.
-- **VRAM:** SDXL in fp16 with the LoRAs needs about 6–7 GB of the 8 GB. Close the game, browsers with hardware acceleration and video players while generating. With `--lowvram` it still works, but slower.
+- **VRAM:** SDXL in fp16 with the LoRAs needs about 6–7 GB of the 8 GB. Close the game, browsers with hardware acceleration, video players and **local LLM apps** while generating. During testing on this machine, LM Studio's `llama-server` was holding about 7 GB of VRAM at 100% GPU load, and SDXL dropped from 0.7 to about 6 s per step. `nvidia-smi --query-compute-apps=pid,process_name --format=csv` shows what's on the GPU. With `--lowvram` it still works, but slower.
 - **Keep ComfyUI open.** The first image loads the model (cold start **48.5 s** for the first image, which includes loading the model from disk); after that it stays in VRAM and every request starts immediately.
 
 ## Making it as fast as possible
@@ -81,6 +81,7 @@ So use the fast route to explore (lots of cheap variants, pick from the contact 
 - **`--fast`**, the default in `3_start_comfyui.bat`. It turns on fp16 accumulation and fp8 matrix maths where the GPU supports them, which Blackwell does. `3_start_comfyui.bat safe` turns it off if a driver ever rejects it.
 - **`--preview-method none`.** Live previews cost time on every step.
 - **The LCM-LoRA fast route.** 8 steps instead of 30: 3.4× faster per image and about 2× faster per *usable* sprite (tuned to CFG 2.0, pixel LoRA 1.2). The style stays because the pixel LoRA runs first; postprocess snaps everything to the grid anyway.
+- **Batch 4 only on the fast route.** On the 30-step quality route, batch 4 at 1024² doesn't fit in 8 GB. It used 7.2 GB, ran at 10 s per step instead of about 0.7 s, and took about 75 s per image instead of 22.6 s. Use `--variants N --batch 1` there.
 - **Batching (`--batch 4`).** Four images in one GPU pass share the overhead. That's a small gain here (7.5 → 6.6 s); the bigger win is that a single command gives you four variants to choose from.
 - **A warm model.** ComfyUI's default smart memory keeps SDXL loaded between requests.
 

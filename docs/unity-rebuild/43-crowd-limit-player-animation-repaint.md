@@ -58,7 +58,9 @@ The contact sheets are in `screenshots/2026-10-08/art_*`. In-game shots at real 
 
 ## Visual sweep fixes
 I re-shot every screen (`tools/snap_ui_windows.py sweep`, 11 shots) and fixed what read badly:
-- **Event messages and the quest panel:** messages no longer run over the quest panel in the top-left. Lines level with it start to its right (`ui.draw_item_feed`).
+- **Event messages and the quest panel:** messages never run over the quest panel, wherever it was dragged. Each line goes beside the panel if there's room, otherwise below it (`ui.draw_item_feed`).
+  - The first fix only handled a panel at the left edge. The v0.2 final test pass caught a panel dragged to the middle still being overwritten.
+  - `tests/check_feed_clear_of_quest_panel.py` covers 4 panel positions × 3 screen sizes.
 - **Dungeon edges:** the void beyond the map edge is black, not the grey screen fill. This is fixed in single-player and co-op.
 - **The Shards tab:** the caption was cut off and now reads "ACTIVE = shot sockets".
 - **Class select:** it shows the new animated art.

@@ -591,6 +591,24 @@ packaging/           Linux play/host/join.sh, Windows join.bat
 docs/unity-rebuild/  feature-by-feature docs for rebuilding the game in Unity (00-29)
 ```
 
+## Release folders (one per version)
+
+Every version is its own GitHub release (`v0.2` = the final v0.2, `v0.3` = the next one, marked
+pre-release while in progress), and locally its own folder, so an old version can always be
+played again with its own accounts:
+
+```
+releases/
+  v0.2/   RealmReforged.exe, -Server.exe, -CoopClient.exe, join.bat
+          + accounts/ characters/ vaults/ achievements/ friends/ crews/ settings.json
+  v0.3/   the same layout, its own saves
+```
+
+A build keeps its saves **next to its exe** (`game/paths.py`), so the folders never touch each
+other. From v0.3 on, a new version's first start **copies** every account from the previous
+version's folder (never moves them): all v0.2 accounts carry forward, and v0.2 still has its own.
+`releases/` is git-ignored.
+
 ## Extras: AI sprite forge (local, optional)
 
 `pixel-sprite-forge/` (git-ignored, ~10 GB, never shipped) is a local, free
@@ -612,7 +630,7 @@ Players and NPCs stay chunky pixel art; detailed art is for monsters and bosses.
 `run_all_checks.py` finds every `tests/check_*.py` and runs each as its own
 headless process (`SDL_VIDEODRIVER=dummy`, throwaway settings, no music
 rendering, no event rotation) and prints a PASS/FAIL summary - currently
-**88/88**. The checks are plain asserts that drive the real game objects:
+**89/89**. The checks are plain asserts that drive the real game objects:
 single-player `Game`, the co-op server's action handler and real
 client-server sockets, rendered screenshots, timing budgets (e.g. world
 generation < 3 s) and fixed-seed input fuzzing.
