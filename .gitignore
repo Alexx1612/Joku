@@ -50,3 +50,6 @@ music_cache/
 *.prof
 RealmReforged-linux/
 RealmReforged-linux-*.tar.gz
+
+# Your reference pictures for art (study only, never shipped)
+references/

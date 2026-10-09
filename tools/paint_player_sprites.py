@@ -1,4 +1,7 @@
 """
+RETIRED (2026-10-09): players and NPCs stay chunky pixel art - use tools/pixel_player_strips.py.
+Running this would overwrite the pixel stills with the detailed style.
+
 Paints the 8 player classes (archer, assassin, necromancer, paladin, priest, rogue, warrior,
 wizard) with the part-based painter from tools/paint_night_sprites.py (lit, dithered,
 outlined parts) - a still plus three animation strips each. Wholly original.

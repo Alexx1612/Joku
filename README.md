@@ -679,8 +679,8 @@ Built in batches; each has a detailed doc in `docs/unity-rebuild/`.
   crowd around you (+25% for each friend standing with you - 22 for two,
   27 for three...), and a Blood Moon sends **one horde per group**, not one
   each; every class now **breathes, walks and shoots** with its own
-  animation (facing where you aim or walk, in co-op too); the classes,
-  the wildlife, both island families with their mini-bosses, the Demon Lord
+  animation (facing where you aim or walk, in co-op too) while keeping its
+  chunky pixel look; the wildlife, both island families with their mini-bosses, the Demon Lord
   and every form of the Mad God are **repainted** with far more detail.
 - **World tuning** (doc 42): the world is drawn **1.25x bigger** by default
   while the HUD stays full size (Options > Display > Zoom: 100-150%);

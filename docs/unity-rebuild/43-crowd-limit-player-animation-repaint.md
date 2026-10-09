@@ -47,7 +47,7 @@ Each kind has a still, a move strip and an attack strip, plus glow layers where 
 
 | Set | Script | Kinds |
 |---|---|---|
-| Players | `tools/paint_player_sprites.py` | all 8 classes: still + idle / walk / shoot, facing right, feet on one line |
+| Players | `tools/pixel_player_strips.py` | **kept as the chunky pixel art** (your call, 2026-10-09: players and NPCs stay pixelated, a bit bigger than ROTMG). The idle / walk / shoot strips are built from the 128 px stills by moving whole blocks (legs lift, body breathes, lean + chunky muzzle flash), with no repainting or smoothing. The detailed repaint (`tools/paint_player_sprites.py`) is retired. |
 | Wildlife | `tools/paint_wildlife_sprites.py` | 19 kinds: hare, snow fox, deer, elk, goat, rat, tortoise, frog, fire beetle, flamingo, heron, penguin, songbird, owl, moth, mushroom folk, lizard, moonpetal, ghostbloom (idle / move; glows: moonpetal, ghostbloom, owl eyes) |
 | Shard islands | `tools/paint_shard_island_sprites.py` | 10 mobs + 5 mini-bosses (Cinder Colossus, Rubble Warlord, Ashreach Revenant, Thornrock Colossus, Ashenreach Devourer) |
 | Choir islands | `tools/paint_choir_island_sprites.py` | 10 mobs + 5 mini-bosses (Choir Sovereign, Coral Leviathan, Tideglass Warden, Driftbell Matriarch, Abyssal Choirmaster) |

@@ -115,7 +115,8 @@ It is committed **locally only**: not pushed, and the release has not been rebui
 14. **Crowd limit, animated players, repaint (doc 43)**
     - `RealmSim.crowd_ok / crowd_cap / group_mult` (18 near a player, +25% per extra player together); every spawn path asks; one Blood Moon horde per group
     - `sprites.player_frames` + `Player.note_shot` / `_face_x` (idle 4 / walk 6 / shoot 3), `CoopClient._animate_players`
-    - repainted: 8 classes, 19 wildlife, 30 island mobs + mini-bosses, Demon Lord, all 4 Mad God forms (`tools/paint_*_sprites.py`)
+    - repainted: 19 wildlife, 30 island mobs + mini-bosses, Demon Lord, all 4 Mad God forms (`tools/paint_*_sprites.py`)
+    - players and NPCs **stay chunky pixel art** (user rule); their strips come from `tools/pixel_player_strips.py`. Don't run `tools/paint_player_sprites.py`
     - sweep fixes: feed beside the quest panel, black dungeon void, Shards caption
 
 ## Checkpoint commits (local, on top of 23123be)
