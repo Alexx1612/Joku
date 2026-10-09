@@ -9,6 +9,11 @@ synthesized compositions (no covers, no borrowed melodies), and the stat
 formulas are re-derived independently from the public RotMG wiki in
 `game/constants.py`.
 
+**A fully AI-made game:** a human directed it (ideas, feedback, play-testing);
+the code, design numbers, docs, tests, sprites and music were all made by AI
+(Claude Code). See [Extras: AI sprite forge](#extras-ai-sprite-forge-local-optional)
+for the optional local pipeline that keeps making art the same way.
+
 **Current version: "Ends of V0.2"** - the last release of the v0.2 line
 (GitHub release tag `v0.2`). There is no v0.3 yet: everything below is v0.2.
 
@@ -585,6 +590,17 @@ tests/               63 regression check scripts (tests/check_*.py)
 packaging/           Linux play/host/join.sh, Windows join.bat
 docs/unity-rebuild/  feature-by-feature docs for rebuilding the game in Unity (00-29)
 ```
+
+## Extras: AI sprite forge (local, optional)
+
+`pixel-sprite-forge/` (git-ignored, ~10 GB, never shipped) is a local, free
+text-to-pixel-art pipeline: ComfyUI + SDXL + the Pixel Art XL LoRA on your own
+NVIDIA GPU, plus scripts that turn the raw images into clean 48 px sprites with
+a contact sheet to pick from. A fast route (LCM-LoRA, 8 steps, batches of 4)
+and `--fast` GPU mode are set up. Install steps, what full GPU use needs, and
+every way to make it faster (with timings measured on an RTX 5050 Laptop):
+[docs/unity-rebuild/44-extra-ai-sprite-forge.md](docs/unity-rebuild/44-extra-ai-sprite-forge.md).
+Players and NPCs stay chunky pixel art; detailed art is for monsters and bosses.
 
 ## Tests
 

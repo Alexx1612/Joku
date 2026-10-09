@@ -53,3 +53,6 @@ RealmReforged-linux-*.tar.gz
 
 # Your reference pictures for art (study only, never shipped)
 references/
+
+# Local AI sprite pipeline (ComfyUI + SDXL models, ~10 GB) - see docs/unity-rebuild/44-extra-ai-sprite-forge.md
+pixel-sprite-forge/

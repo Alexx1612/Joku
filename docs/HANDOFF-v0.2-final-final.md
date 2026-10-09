@@ -118,6 +118,10 @@ It is committed **locally only**: not pushed, and the release has not been rebui
     - repainted: 19 wildlife, 30 island mobs + mini-bosses, Demon Lord, all 4 Mad God forms (`tools/paint_*_sprites.py`)
     - players and NPCs **stay chunky pixel art** (user rule); their strips come from `tools/pixel_player_strips.py`. Don't run `tools/paint_player_sprites.py`
     - sweep fixes: feed beside the quest panel, black dungeon void, Shards caption
+15. **Extra: AI sprite forge (doc 44)**
+    - `pixel-sprite-forge/` (git-ignored) installed: ComfyUI portable + SDXL + Pixel Art XL + LCM-LoRA
+    - fast route `4_generate_sprites.bat fast`, `--fast` by default, `generate.py --batch`
+    - the README now says this is a fully AI-made game
 
 ## Checkpoint commits (local, on top of 23123be)
 - `cf3a9ec`: telegraphs, story v2, NetLink fix
